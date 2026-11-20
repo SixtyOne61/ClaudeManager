@@ -46,6 +46,20 @@ let scan: ScanResult = {
   ],
 };
 
+// Conversations de worktree, rangées sous « SiteVitrine » (fichier dans le dossier du worktree).
+{
+  const parent = scan.projects[0];
+  for (const [n, name, title, h, exists] of [
+    [101, "amazing-chatelet-759adf", "Essai d'un nouveau thème", 2, true],
+    [102, "old-branch-1a2b3c", "Ancienne expérience", 120, false],
+  ] as const) {
+    const path = `${parent.path}\\.claude\\worktrees\\${name}`;
+    const s = session(path.replace(/[^A-Za-z0-9]/g, "-"), n, title, h);
+    parent.sessions.push({ ...s, cwd: path, worktree: { name, path, exists } });
+  }
+  parent.sessions.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+}
+
 let config: Config = {
   version: 1,
   categories: [
@@ -73,7 +87,8 @@ export function installDevMock() {
       case "search_sessions":
         return [];
       case "archive_session": {
-        const p = scan.projects.find((x) => x.key === a.projectKey)!;
+        // Une conversation de worktree a une clé de stockage différente de son projet : recherche par id.
+        const p = scan.projects.find((x) => x.sessions.some((s) => s.id === a.sessionId))!;
         const s = p.sessions.find((x) => x.id === a.sessionId)!;
         p.sessions = p.sessions.filter((x) => x !== s);
         scan = { ...scan };

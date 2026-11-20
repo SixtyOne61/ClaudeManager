@@ -200,3 +200,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c3240; border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* Badge « worktree » d'une conversation rangée sous son projet parent. */
+.badge.worktree { display: inline-flex; align-items: center; gap: 3px; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
+.badge.worktree.gone { color: var(--warn); border-color: currentColor; }

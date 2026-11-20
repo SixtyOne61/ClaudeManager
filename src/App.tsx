@@ -255,7 +255,7 @@ export default function App() {
           project={selectedProject}
           config={config}
           terminal={scan.terminal}
-          onLaunch={(id) => launch(selectedProject.path, id)}
+          onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
           onArchive={archiveSession}
           onTrash={trashSession}
           onRename={() => setDialog({ kind: "renameProject", project: selectedProject })}

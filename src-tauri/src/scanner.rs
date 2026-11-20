@@ -5,6 +5,7 @@
 //! seuls les fichiers nouveaux ou modifiés sont relus.
 
 use crate::sessions::{encode_project_path, file_stamp, read_session, SessionInfo};
+use crate::worktrees;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -136,11 +137,10 @@ impl Scanner {
                 by_key.entry(key.clone()).or_default().push(info);
             }
         }
-        by_key
+        group_worktrees(by_key)
             .into_iter()
-            .map(|(key, mut sessions)| {
+            .map(|(key, (path, mut sessions))| {
                 sessions.sort_by(|a, b| sort_key(b).cmp(&sort_key(a)));
-                let path = project_path(&key, &sessions);
                 Self::make_project(key, path, sessions)
             })
             .collect()
@@ -202,6 +202,37 @@ fn project_path(key: &str, sessions: &[SessionInfo]) -> Option<String> {
     cwds().find(|c| encode_project_path(c) == key).or_else(|| cwds().next())
 }
 
+/// Range les conversations de worktree sous leur projet parent (déduit du `cwd`).
+/// Entrée : sessions par clé de stockage. Sortie : (chemin, sessions) par clé de projet affiché.
+/// Chaque session garde sa clé de stockage dans `project_key`.
+fn group_worktrees(by_key: HashMap<String, Vec<SessionInfo>>) -> HashMap<String, (Option<String>, Vec<SessionInfo>)> {
+    let keys: Vec<String> = by_key.keys().cloned().collect();
+    let mut out: HashMap<String, (Option<String>, Vec<SessionInfo>)> = HashMap::new();
+    for (key, sessions) in by_key {
+        let path = project_path(&key, &sessions);
+        for mut s in sessions {
+            match s.cwd.as_deref().or(path.as_deref()).and_then(worktrees::detect) {
+                Some((parent, wt)) => {
+                    let pk = worktrees::parent_key(&parent, &keys);
+                    s.worktree = Some(wt);
+                    let e = out.entry(pk).or_default();
+                    e.0.get_or_insert(parent);
+                    e.1.push(s);
+                }
+                None => {
+                    let e = out.entry(key.clone()).or_default();
+                    // Le chemin lu dans les conversations du projet lui-même fait foi.
+                    if path.is_some() {
+                        e.0 = path.clone();
+                    }
+                    e.1.push(s);
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +259,16 @@ mod tests {
         println!("{} projets, {sessions} sessions, {skipped} lignes ignorées, {no_path} projets sans chemin", projects.len());
         println!("lecture à froid {cold:?}, avec cache {warm:?}");
         assert_eq!(sessions, again.iter().map(|p| p.sessions.len()).sum::<usize>());
+        let wt_projects = projects.iter().filter(|p| worktrees::is_worktree_key(&p.key)).count();
+        println!("{wt_projects} projets de worktree restants (attendu : 0)");
+        for p in projects.iter().filter(|p| p.sessions.iter().any(|s| s.worktree.is_some())) {
+            let names: std::collections::BTreeSet<String> = p
+                .sessions
+                .iter()
+                .filter_map(|s| s.worktree.as_ref().map(|w| format!("{} (existe={})", w.name, w.exists)))
+                .collect();
+            println!("  {} <- worktrees {:?}", p.key, names);
+        }
         let mut sorted = projects.clone();
         sorted.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
         for p in sorted.iter().take(4) {
@@ -243,5 +284,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn session(id: &str, key: &str, cwd: Option<&str>) -> SessionInfo {
+        SessionInfo {
+            id: id.into(),
+            project_key: key.into(),
+            cwd: cwd.map(Into::into),
+            title: id.into(),
+            title_source: crate::sessions::TitleSource::None,
+            first_prompt: None,
+            created_at: None,
+            updated_at: None,
+            message_count: 0,
+            file_size: 0,
+            modified_ms: 0,
+            skipped_lines: 0,
+            worktree: None,
+        }
+    }
+
+    #[test]
+    fn groups_worktree_sessions_under_parent() {
+        let parent = "C--Work-Foo";
+        let wt = "C--Work-Foo--claude-worktrees-bar";
+        let mut by_key = HashMap::new();
+        by_key.insert(parent.to_string(), vec![session("a", parent, Some(r"C:\Work\Foo"))]);
+        by_key.insert(wt.to_string(), vec![session("b", wt, Some(r"c:\Work\Foo\.claude\worktrees\bar"))]);
+        // Worktree d'un projet sans conversation propre.
+        let solo = "C--Work-Solo--claude-worktrees-x";
+        by_key.insert(solo.to_string(), vec![session("c", solo, Some("C:/Work/Solo/.claude/worktrees/x/sub"))]);
+
+        let out = group_worktrees(by_key);
+        assert_eq!(out.len(), 2);
+        let (path, sessions) = &out[parent];
+        assert_eq!(path.as_deref(), Some(r"C:\Work\Foo"));
+        let b = sessions.iter().find(|s| s.id == "b").unwrap();
+        assert_eq!(b.project_key, wt, "la clé de stockage est conservée");
+        assert_eq!(b.worktree.as_ref().unwrap().name, "bar");
+        assert!(!b.worktree.as_ref().unwrap().exists);
+        assert!(sessions.iter().find(|s| s.id == "a").unwrap().worktree.is_none());
+        let (path, sessions) = &out["C--Work-Solo"];
+        assert_eq!(path.as_deref(), Some("C:/Work/Solo"));
+        assert_eq!(sessions[0].worktree.as_ref().unwrap().path, "C:/Work/Solo/.claude/worktrees/x");
     }
 }
