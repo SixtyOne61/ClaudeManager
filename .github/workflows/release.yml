@@ -1,0 +1,58 @@
+# Publie une version : pousser un tag vX.Y.Z (identique à la version de src-tauri/Cargo.toml).
+# Le workflow compile l'installateur NSIS, le signe pour le module de mise à jour et crée
+# une release GitHub en brouillon avec l'installateur, sa signature et latest.json.
+# Les utilisateurs ne voient la mise à jour qu'une fois le brouillon publié.
+#
+# Secrets requis (Settings > Secrets and variables > Actions) :
+#   TAURI_SIGNING_PRIVATE_KEY           contenu de la clé privée générée par `tauri signer generate`
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  son mot de passe (vide si aucun)
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier que le tag correspond à la version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Error "Le tag ${{ github.ref_name }} ne correspond pas à la version v$version de src-tauri/Cargo.toml"
+            exit 1
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Claude Manager ${{ github.ref_name }}
+          # Ce texte devient les notes affichées dans la fenêtre « Mise à jour disponible ».
+          releaseBody: Nouvelle version de Claude Manager.
+          releaseDraft: true
+          prerelease: false

@@ -32,6 +32,7 @@ import {
 import type { Category, Config, ProjectInfo } from "../api";
 import { colorStyle, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
+import { UpdateButton } from "./UpdateButton";
 
 /** Conteneur « Non classés » (pas une vraie catégorie). */
 const NONE = "none";
@@ -273,6 +274,7 @@ export function Sidebar(props: Props) {
             Afficher les projets temporaires ({hiddenTemp})
           </label>
         )}
+        <UpdateButton />
       </div>
     </aside>
   );

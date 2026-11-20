@@ -89,8 +89,15 @@ export function installDevMock() {
         return config;
       case "plugin:dialog|ask":
         return window.confirm(String(a.message));
+      case "plugin:dialog|message":
+        window.alert(String(a.message));
+        return null;
       case "plugin:event|listen":
         return 1;
+      case "plugin:app|version":
+        return "0.1.0";
+      case "plugin:updater|check":
+        return null; // « Vous utilisez la dernière version »
       default:
         return null;
     }

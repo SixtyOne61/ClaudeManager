@@ -3,7 +3,7 @@
 Petite application de bureau Windows pour organiser ses projets et conversations **Claude Code** :
 catégories colorées, glisser-déposer, reprise d'une conversation en un clic, archives et Corbeille.
 
-Tout est local : aucune connexion réseau (la politique de sécurité de la fenêtre l'interdit).
+Tout est local. La seule connexion réseau est la vérification des mises à jour, et elle n'a lieu que si vous cliquez sur **Vérifier les mises à jour** (voir plus bas). La fenêtre elle-même n'a aucun accès réseau (sa politique de sécurité l'interdit).
 
 ## Fonctionnement
 
@@ -73,7 +73,43 @@ npm run tauri build
 Ce que produit la commande :
 
 - l'exécutable : `src-tauri\target\release\claude-manager.exe`
-- l'installateur : `src-tauri\target\release\bundle\nsis\Claude Manager_0.1.0_x64-setup.exe` (installation pour l'utilisateur courant, sans droits administrateur)
+- l'installateur : `src-tauri\target\release\bundle\nsis\Claude Manager_<version>_x64-setup.exe` (installation pour l'utilisateur courant, sans droits administrateur)
+- sa signature `.sig`, utilisée par le module de mise à jour
+
+La signature exige la clé privée dans l'environnement, sinon la compilation échoue :
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw "$HOME\.tauri\claude-manager.key"; $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "Mot de passe de la clé"
+```
+
+Installer un nouveau `setup.exe` par-dessus l'ancien met l'application à jour ; les données de `%APPDATA%\claude-manager` sont conservées.
+
+## Mises à jour
+
+Le bouton **Vérifier les mises à jour** (bas de la barre latérale) lit `latest.json` dans la dernière release GitHub publiée. Si une version plus récente existe, il demande avant de la télécharger. L'installateur téléchargé est vérifié avec la clé publique inscrite dans `tauri.conf.json`, puis installé : l'application se ferme et se relance.
+
+### Mise en place (une seule fois)
+
+1. Générer la paire de clés de signature et choisir un mot de passe :
+
+   ```powershell
+   npm run tauri signer generate -- -w "$HOME\.tauri\claude-manager.key"
+   ```
+
+   Gardez la clé privée (`claude-manager.key`) et son mot de passe en lieu sûr. **Si vous les perdez, les installations existantes ne pourront plus se mettre à jour.** Ne les commitez jamais.
+2. Copier le contenu de `claude-manager.key.pub` dans `plugins.updater.pubkey` de `src-tauri/tauri.conf.json`.
+3. Sur GitHub, dans *Settings > Secrets and variables > Actions*, créer les secrets `TAURI_SIGNING_PRIVATE_KEY` (contenu de `claude-manager.key`) et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+### Publier une version
+
+1. Changer la version dans `src-tauri/Cargo.toml` : c'est la seule source, `tauri.conf.json` n'en a plus. Mettre `package.json` à la même valeur par cohérence.
+2. Commiter, puis créer et pousser le tag correspondant :
+
+   ```powershell
+   git tag v0.2.0; git push origin v0.2.0
+   ```
+
+3. Le workflow `.github/workflows/release.yml` compile, signe et crée une release **en brouillon**. Son texte s'affiche dans la fenêtre « Mise à jour disponible » : relisez-le, puis publiez la release. Les utilisateurs la verront à leur prochaine vérification.
 
 ## Structure du code
 
@@ -88,6 +124,7 @@ src/                      Interface React + TypeScript
     ProjectView.tsx       Conversations d'un projet, recherche
     ArchivesView.tsx      Archives
     ColorPicker.tsx       Sélecteur de couleur
+    UpdateButton.tsx      Vérification et installation des mises à jour
     Dialogs.tsx           Saisie de texte, nouveau projet
 src-tauri/src/            Backend Rust
   sessions.rs             Lecture tolérante d'un .jsonl (titre, dates, nombre de messages)

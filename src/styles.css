@@ -104,6 +104,8 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .nav-item:hover { background: var(--bg-hover); }
 .nav-item.selected { border-color: var(--accent); }
 .nav-item .count { margin-left: auto; }
+.nav-item.small { padding: 5px 10px; font-size: 12px; color: var(--text-muted); }
+.nav-item:disabled { cursor: default; opacity: .7; }
 
 .checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .checkbox.small { font-size: 12px; color: var(--text-muted); padding: 0 10px; }

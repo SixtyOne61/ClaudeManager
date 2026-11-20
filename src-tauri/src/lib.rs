@@ -294,6 +294,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Mises à jour : uniquement quand l'utilisateur clique sur « Vérifier les mises à jour ».
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
         .setup(|app| {
             let root = app.state::<AppState>().paths.claude_projects.clone();
