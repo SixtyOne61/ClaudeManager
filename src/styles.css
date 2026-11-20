@@ -200,3 +200,31 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c3240; border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* ---------- Recherche globale ---------- */
+.search-status { font-size: 12px; white-space: nowrap; }
+.search-summary { display: flex; gap: 6px; padding: 2px 26px 0; font-size: 12px; color: var(--text-muted); }
+.search-summary .dot { opacity: .5; }
+.search-group { margin-bottom: 14px; }
+.search-group-title {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+}
+.search-group-title .count { font-weight: 400; }
+.search-result { border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-elev); margin-bottom: 6px; overflow: hidden; }
+.search-result-head, .search-excerpt {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; border: none; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.search-result-head { padding: 8px 12px 4px; }
+.search-result-head .session-title { flex: 0 1 auto; min-width: 0; }
+.search-result-head .session-meta { margin: 0 0 0 auto; white-space: nowrap; }
+.search-result-head .tag { font-size: 11px; color: var(--text-muted); }
+.search-excerpt { padding: 4px 12px; font-size: 13px; color: var(--text-muted); }
+.search-excerpt:last-child { padding-bottom: 8px; }
+.search-result-head:hover .session-title { text-decoration: underline; }
+.search-excerpt:hover { background: var(--bg-hover); color: var(--text); }
+.search-excerpt mark { background: rgba(217,119,87,.35); color: var(--text); border-radius: 3px; padding: 0 2px; }
+.search-role { flex: none; width: 48px; font-size: 11px; font-weight: 600; color: var(--accent); }
+.search-more { padding: 0 12px 8px 68px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+.session-row.search-focused { border-color: var(--accent); background: rgba(217,119,87,.12); transition: background .4s; }
