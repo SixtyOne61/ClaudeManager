@@ -86,6 +86,9 @@ export const api = {
   launchClaude: (path: string, sessionId?: string) =>
     invoke<void>("launch_claude", { path, sessionId: sessionId ?? null }),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
+  /** `claude --desktop --resume <id>` sans fenêtre ; erreur `WORKTREE_MISSING` si le worktree a disparu (sans `force`). */
+  openInDesktop: (sessionCwd: string | null, projectPath: string | null, sessionId: string, force: boolean) =>
+    invoke<void>("open_in_desktop", { sessionCwd, projectPath, sessionId, force }),
   archiveSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<Config>("archive_session", { projectKey, sessionId, force }),
   restoreArchive: (sessionId: string) => invoke<Config>("restore_archive", { sessionId }),

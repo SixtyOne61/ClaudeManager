@@ -20,6 +20,7 @@ import { ProjectView } from "./components/ProjectView";
 import { ArchivesView } from "./components/ArchivesView";
 import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
 import { newId, projectName } from "./util";
+import { openInDesktop } from "./desktop";
 
 /** Boîte de dialogue ouverte (une seule à la fois). */
 type DialogState =
@@ -256,6 +257,9 @@ export default function App() {
           config={config}
           terminal={scan.terminal}
           onLaunch={(id) => launch(selectedProject.path, id)}
+          onOpenInDesktop={(s) =>
+            openInDesktop(s, { projectPath: selectedProject.path, toast, openInExternalTerminal: () => launch(selectedProject.path, s.id) })
+          }
           onArchive={archiveSession}
           onTrash={trashSession}
           onRename={() => setDialog({ kind: "renameProject", project: selectedProject })}
