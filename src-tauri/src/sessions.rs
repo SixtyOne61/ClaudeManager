@@ -49,7 +49,8 @@ pub enum TitleSource {
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub id: String,
-    /// Nom du dossier projet encodé (clé stable du projet).
+    /// Nom du dossier projet encodé où est rangé le fichier (clé de stockage). Pour une
+    /// conversation de worktree, ce n'est pas la clé du projet affiché (le parent).
     pub project_key: String,
     /// Premier répertoire de travail rencontré : c'est là qu'il faut relancer `claude --resume`.
     pub cwd: Option<String>,
@@ -66,6 +67,10 @@ pub struct SessionInfo {
     pub modified_ms: u64,
     /// Nombre de lignes illisibles ignorées (fichier corrompu ou en cours d'écriture).
     pub skipped_lines: u32,
+    /// Worktree de la conversation, si elle est rangée sous son projet parent
+    /// (renseigné au regroupement, jamais lu depuis le fichier).
+    #[serde(default)]
+    pub worktree: Option<crate::worktrees::WorktreeInfo>,
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +443,7 @@ pub fn read_session(path: &Path, project_key: &str) -> Option<SessionInfo> {
         file_size,
         modified_ms,
         skipped_lines,
+        worktree: None,
     })
 }
 

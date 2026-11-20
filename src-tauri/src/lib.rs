@@ -10,6 +10,7 @@ mod config;
 mod desktop;
 mod scanner;
 mod sessions;
+mod worktrees;
 
 use actions::{SessionFiles, Terminal};
 use config::{AppPaths, ArchiveEntry, Config};
@@ -56,7 +57,14 @@ struct ScanResult {
 #[tauri::command(async)]
 fn scan(state: State<AppState>) -> ScanResult {
     let mut projects = state.scanner.scan();
-    let cfg = state.config.lock().unwrap().clone();
+    let cfg = {
+        let mut cfg = state.config.lock().unwrap();
+        // Anciennes entrées qui rangeaient un worktree comme un projet : nettoyées en silence.
+        if worktrees::clean_config(&mut cfg, &HashSet::new()) {
+            let _ = state.save_config(&cfg);
+        }
+        cfg.clone()
+    };
     let found: HashSet<String> = projects.iter().map(|p| p.key.clone()).collect();
 
     let mut known: Vec<String> = cfg.categories.iter().flat_map(|c| c.project_keys.clone()).collect();
@@ -93,10 +101,13 @@ fn search_sessions(state: State<AppState>, project_key: String, query: String) -
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    let dir = state.scanner.root().join(&project_key);
-    let files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "jsonl")).collect())
-        .unwrap_or_default();
+    // Le projet et ses worktrees (dont les conversations sont rangées dans d'autres dossiers).
+    let files: Vec<PathBuf> = worktrees::storage_keys(state.scanner.root(), &project_key)
+        .iter()
+        .flat_map(|k| std::fs::read_dir(state.scanner.root().join(k)).into_iter().flatten().flatten())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
     // Un thread par fichier (limité par le nombre de fichiers du projet, généralement faible).
     let hits = Mutex::new(Vec::new());
     std::thread::scope(|s| {
@@ -212,9 +223,14 @@ fn archive_session(state: State<AppState>, project_key: String, session_id: Stri
 
     let mut cfg = state.config.lock().unwrap();
     // Mémorise le chemin du projet : il reste affiché même sans conversation restante.
-    let prefs = cfg.projects.entry(project_key).or_default();
+    // Pour une conversation de worktree, c'est le projet parent qui est mémorisé.
+    let (prefs_key, prefs_path) = match project_path.as_deref().and_then(worktrees::detect) {
+        Some((parent, _)) => (worktrees::parent_key(&parent, cfg.projects.keys()), Some(parent)),
+        None => (project_key, project_path),
+    };
+    let prefs = cfg.projects.entry(prefs_key).or_default();
     if prefs.path.is_none() {
-        prefs.path = project_path;
+        prefs.path = prefs_path;
     }
     cfg.archives.retain(|a| a.session_id != session_id);
     cfg.archives.push(entry);

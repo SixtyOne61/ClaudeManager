@@ -256,7 +256,7 @@ export default function App() {
           project={selectedProject}
           config={config}
           terminal={scan.terminal}
-          onLaunch={(id) => launch(selectedProject.path, id)}
+          onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
           onOpenInDesktop={(s) =>
             openInDesktop(s, { projectPath: selectedProject.path, toast, openInExternalTerminal: () => launch(selectedProject.path, s.id) })
           }

@@ -10,6 +10,7 @@ import {
   Pencil,
   Play,
   Search,
+  GitBranch,
   Trash2,
   TriangleAlert,
   X,
@@ -22,7 +23,8 @@ interface Props {
   project: ProjectInfo;
   config: Config;
   terminal: string;
-  onLaunch: (sessionId?: string) => void;
+  /** `path` : dossier où relancer (worktree), sinon celui du projet. */
+  onLaunch: (sessionId?: string, path?: string) => void;
   onOpenInDesktop: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
@@ -84,6 +86,10 @@ export function ProjectView(props: Props) {
   const categoryId = config.categories.find((c) => c.projectKeys.includes(p.key))?.id ?? "";
   const color = config.projects[p.key]?.color;
   const canLaunch = p.exists && !!p.path;
+
+  /** Une conversation de worktree se reprend dans le dossier du worktree. */
+  const resumePath = (s: SessionInfo) => (s.worktree && s.projectKey !== p.key ? s.worktree.path : undefined);
+  const canResume = (s: SessionInfo) => (s.worktree && s.projectKey !== p.key ? s.worktree.exists : canLaunch);
 
   return (
     <main className="main">
@@ -148,7 +154,7 @@ export function ProjectView(props: Props) {
           <div className="empty">{p.sessions.length === 0 ? "Aucune conversation dans ce projet." : "Aucune conversation ne correspond à la recherche."}</div>
         )}
         {sessions.map((s) => (
-          <div key={s.id} className="session-row" onDoubleClick={() => canLaunch && props.onLaunch(s.id)}>
+          <div key={s.id} className="session-row" onDoubleClick={() => canResume(s) && props.onLaunch(s.id, resumePath(s))}>
             <div className="session-main">
               <div className="session-title" title={s.firstPrompt ?? s.title}>
                 {s.title}
@@ -161,6 +167,14 @@ export function ProjectView(props: Props) {
                 <span>
                   {s.messageCount} message{s.messageCount > 1 ? "s" : ""}
                 </span>
+                {s.worktree && (
+                  <span
+                    className={"badge worktree" + (s.worktree.exists ? "" : " gone")}
+                    title={s.worktree.exists ? s.worktree.path : `Ce worktree n'existe plus : ${s.worktree.path}`}
+                  >
+                    <GitBranch size={11} /> {s.worktree.exists ? `worktree ${s.worktree.name}` : `worktree supprimé (${s.worktree.name})`}
+                  </span>
+                )}
                 {s.skippedLines > 0 && (
                   <span className="warn" title="Lignes illisibles ignorées dans le fichier">
                     · {s.skippedLines} ligne(s) ignorée(s)
@@ -170,7 +184,7 @@ export function ProjectView(props: Props) {
               </div>
             </div>
             <div className="session-actions">
-              <button className="btn small primary" disabled={!canLaunch} onClick={() => props.onLaunch(s.id)} title="claude --resume">
+              <button className="btn small primary" disabled={!canResume(s)} onClick={() => props.onLaunch(s.id, resumePath(s))} title="claude --resume">
                 <Play size={13} /> Reprendre
               </button>
               <button className="icon-btn" onClick={() => props.onOpenInDesktop(s)} title="Ouvrir dans Desktop (claude --desktop --resume)">

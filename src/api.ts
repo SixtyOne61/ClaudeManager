@@ -5,8 +5,17 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type TitleSource = "custom" | "ai" | "prompt" | "none";
 
+/** Worktree (`<projet>\.claude\worktrees\<nom>`) dans lequel tourne une conversation. */
+export interface WorktreeInfo {
+  name: string;
+  /** Dossier du worktree : c'est là que `claude --resume` doit être lancé. */
+  path: string;
+  exists: boolean;
+}
+
 export interface SessionInfo {
   id: string;
+  /** Dossier où est rangé le fichier (clé de stockage) ; pour un worktree, différent du projet affiché. */
   projectKey: string;
   cwd: string | null;
   title: string;
@@ -18,6 +27,8 @@ export interface SessionInfo {
   fileSize: number;
   modifiedMs: number;
   skippedLines: number;
+  /** Conversation d'un worktree, rangée sous son projet parent. */
+  worktree?: WorktreeInfo | null;
 }
 
 export interface ProjectInfo {
