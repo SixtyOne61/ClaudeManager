@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  AppWindow,
   Archive,
   FileSearch,
   FolderOpen,
@@ -22,6 +23,7 @@ interface Props {
   config: Config;
   terminal: string;
   onLaunch: (sessionId?: string) => void;
+  onOpenInDesktop: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
   onRename: () => void;
@@ -170,6 +172,9 @@ export function ProjectView(props: Props) {
             <div className="session-actions">
               <button className="btn small primary" disabled={!canLaunch} onClick={() => props.onLaunch(s.id)} title="claude --resume">
                 <Play size={13} /> Reprendre
+              </button>
+              <button className="icon-btn" onClick={() => props.onOpenInDesktop(s)} title="Ouvrir dans Desktop (claude --desktop --resume)">
+                <AppWindow size={15} />
               </button>
               <button className="icon-btn" title="Archiver" onClick={() => props.onArchive(s)}>
                 <Archive size={15} />

@@ -70,6 +70,10 @@ export function installDevMock() {
       case "save_config":
         config = { ...(a.cfg as Config), archives: config.archives };
         return config;
+      case "open_in_desktop":
+        // Simule le worktree supprimé, puis l'échec de Claude Code (pour voir les dialogues).
+        if (!a.force) throw "WORKTREE_MISSING: le dossier de cette conversation n'existe plus (worktree supprimé ?) : C:\\Users\\moi\\wt\nClaude Desktop affichera probablement « Failed to load session ».";
+        throw "Error: Claude Desktop is not installed.";
       case "search_sessions":
         return [];
       case "archive_session": {
