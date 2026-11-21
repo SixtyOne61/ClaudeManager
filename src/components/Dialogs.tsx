@@ -60,6 +60,45 @@ export function TextPrompt(props: {
   );
 }
 
+/**
+ * Nouvelle conversation dans un nouveau worktree : nom facultatif (vide = nom choisi par
+ * Claude Code), vérifié avec `validate` avant de valider.
+ */
+export function WorktreePrompt(props: {
+  validate: (name: string) => string | null;
+  onSubmit: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const error = props.validate(value);
+  return (
+    <Modal title="Nouvelle conversation dans un nouveau worktree" onClose={props.onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!error) props.onSubmit(value.trim());
+        }}
+      >
+        <label className="field">
+          <span>Nom du worktree (facultatif)</span>
+          <input value={value} placeholder="ex. correction-connexion" onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
+          <small>
+            {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
+          </small>
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={props.onClose}>
+            Annuler
+          </button>
+          <button type="submit" className="btn primary" disabled={!!error}>
+            Démarrer
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export interface NewProjectResult {
   path: string;
   categoryId: string | null;

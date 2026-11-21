@@ -420,6 +420,7 @@ pub fn run() {
             pty::commands::pty_list,
             pty::commands::pty_quit,
             activity::activity_list,
+            worktrees::commands::is_git_repo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

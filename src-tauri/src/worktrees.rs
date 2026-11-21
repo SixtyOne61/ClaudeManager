@@ -93,6 +93,22 @@ fn uppercase_drive(key: &str) -> String {
     }
 }
 
+/// Le dossier est-il la racine d'un dépôt git ? Repéré par une entrée `.git` (dossier, ou
+/// fichier pour un worktree git), sans lancer `git` (donc sans fenêtre). Seule la racine
+/// compte : `claude --worktree` crée le worktree à la racine du dépôt, et la conversation
+/// doit se ranger sous ce projet-ci (ticket 08).
+pub fn is_git_repo(path: &str) -> bool {
+    !path.trim().is_empty() && Path::new(path.trim()).join(".git").exists()
+}
+
+pub mod commands {
+    /// Propose-t-on « Dans un nouveau worktree » pour ce projet ?
+    #[tauri::command]
+    pub fn is_git_repo(path: String) -> bool {
+        super::is_git_repo(&path)
+    }
+}
+
 /// La clé de projet désigne-t-elle un dossier de worktree ?
 pub fn is_worktree_key(key: &str) -> bool {
     key.to_ascii_lowercase().contains(KEY_MARKER)
@@ -186,6 +202,26 @@ mod tests {
         assert!(is_worktree_of(&wt_key.to_lowercase(), &expected));
         assert!(!is_worktree_of(&expected, &expected));
         assert!(!is_worktree_key(&expected));
+    }
+
+    #[test]
+    fn detects_git_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        assert!(!is_git_repo(&root));
+        assert!(!is_git_repo(""));
+        // Dépôt classique : dossier `.git`.
+        std::fs::create_dir(tmp.path().join(".git")).unwrap();
+        assert!(is_git_repo(&root));
+        // Sous-dossier d'un dépôt : pas proposé (le worktree irait à la racine du dépôt).
+        std::fs::create_dir(tmp.path().join("sous")).unwrap();
+        assert!(!is_git_repo(&tmp.path().join("sous").to_string_lossy()));
+        // Worktree git : fichier `.git`.
+        let wt = tmp.path().join("wt");
+        std::fs::create_dir(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ailleurs\n").unwrap();
+        assert!(is_git_repo(&wt.to_string_lossy()));
+        assert!(!is_git_repo(&tmp.path().join("absent").to_string_lossy()));
     }
 
     #[test]

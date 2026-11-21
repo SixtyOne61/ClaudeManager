@@ -127,15 +127,25 @@ const archived = new Map<string, SessionInfo>();
 // Nouvelle conversation (`--session-id`) : le premier message crée son « fichier » (elle
 // apparaît dans le scan avec ce message pour titre) ; « /exit » avant tout message la laisse sans fichier.
 
-const fakePtys = new Map<string, { cwd: string; line: string }>();
+// Nouveau worktree (`--worktree [nom]`) : le « fichier » est rangé dans le dossier du worktree
+// et la conversation apparaît sous le projet parent, avec le badge « worktree » (ticket 08).
+// Faux dépôts git : SiteVitrine et JeuDeCartes.
+
+const fakePtys = new Map<string, { cwd: string; line: string; worktree?: string }>();
 const ptyOut = (key: string, data: string) => setTimeout(() => emit("pty-output", { key, data }), 0);
+const fakeGitRepos = () => [site.path, jeu.path];
 
 /** Simule l'écriture du `.jsonl` d'une nouvelle conversation au premier message. */
-function fakeFirstMessage(id: string, cwd: string, text: string) {
+function fakeFirstMessage(id: string, cwd: string, text: string, worktree?: string) {
   if (scan.projects.some((p) => p.sessions.some((s) => s.id === id))) return;
   const p = scan.projects.find((x) => x.path === cwd);
   if (!p) return;
-  const s: SessionInfo = { ...session(p.key, 0, text, 0), id, title: text, titleSource: "prompt", firstPrompt: text, messageCount: 2 };
+  let s: SessionInfo = { ...session(p.key, 0, text, 0), id, title: text, titleSource: "prompt", firstPrompt: text, messageCount: 2 };
+  if (worktree !== undefined) {
+    const name = worktree || "brave-jumping-otter";
+    const path = `${p.path}\\.claude\\worktrees\\${name}`;
+    s = { ...s, projectKey: path.replace(/[^A-Za-z0-9]/g, "-"), cwd: path, worktree: { name, path, exists: true } };
+  }
   p.sessions = [s, ...p.sessions];
   scan = { ...scan };
   setTimeout(() => emit("sessions-changed", null), 300);
@@ -196,9 +206,13 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
     case "pty_new_session": {
       const cwd = String(a.cwd);
       const exists = scan.projects.some((p) => p.sessions.some((s) => s.id === key));
-      const args = cmd === "pty_new_session" && !exists ? `--session-id ${key}` : `--resume ${key}`;
+      const wt = cmd === "pty_new_session" && !exists && typeof a.worktree === "string" ? a.worktree : undefined;
+      const args =
+        cmd === "pty_new_session" && !exists
+          ? `${wt === undefined ? "" : `--worktree ${wt ? wt + " " : ""}`}--session-id ${key}`
+          : `--resume ${key}`;
       if (!fakePtys.has(key)) {
-        fakePtys.set(key, { cwd, line: "" });
+        fakePtys.set(key, { cwd, line: "", worktree: wt });
         ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude ${args}\r\n  dans ${cwd}\r\n\r\n> `);
         setActivity(key, { state: "waiting", kind: "start" });
       }
@@ -218,7 +232,7 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
             setActivity(key, null);
             return null;
           }
-          if (line) fakeFirstMessage(key, t.cwd, line);
+          if (line) fakeFirstMessage(key, t.cwd, line, t.worktree);
           ptyOut(key, `\r\n\x1b[2m(réponse fictive à « ${line} »)\x1b[0m\r\n> `);
           fakeTurn(key, line);
         } else if (ch === "\x7f") {
@@ -256,6 +270,8 @@ export function installDevMock() {
         return scan;
       case "get_config":
         return config;
+      case "is_git_repo":
+        return fakeGitRepos().includes(String(a.path));
       case "save_config":
         config = { ...(a.cfg as Config), archives: config.archives };
         return config;
