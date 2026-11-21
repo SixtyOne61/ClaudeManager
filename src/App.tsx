@@ -263,6 +263,7 @@ export default function App() {
           onMove={(cat) => moveProject(selectedProject.key, cat)}
           onForget={() => forgetProject(selectedProject)}
           onError={showError}
+          onConfigChange={updateConfig}
         />
       ) : (
         <main className="main empty-main">Sélectionnez un projet.</main>

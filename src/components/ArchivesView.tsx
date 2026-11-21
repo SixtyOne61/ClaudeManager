@@ -2,7 +2,8 @@
 
 import { ArchiveRestore, Trash2 } from "lucide-react";
 import type { ArchiveEntry, Config } from "../api";
-import { formatDate } from "../util";
+import { colorStyle, formatDate } from "../util";
+import { conversationColor } from "../sections";
 
 interface Props {
   config: Config;
@@ -28,7 +29,7 @@ export function ArchivesView({ config, onRestore, onTrash }: Props) {
       <div className="session-list">
         {archives.length === 0 && <div className="empty">Aucune conversation archivée.</div>}
         {archives.map((a) => (
-          <div key={a.sessionId} className="session-row">
+          <div key={a.sessionId} className={"session-row" + (conversationColor(config, a.sessionId) ? " colored" : "")} style={colorStyle(conversationColor(config, a.sessionId))}>
             <div className="session-main">
               <div className="session-title">{a.title}</div>
               <div className="session-meta">

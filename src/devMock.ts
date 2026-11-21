@@ -46,16 +46,34 @@ let scan: ScanResult = {
   ],
 };
 
+const site = scan.projects[0];
+const jeu = scan.projects[1];
+
 let config: Config = {
-  version: 1,
+  version: 2,
   categories: [
-    { id: "perso", name: "Perso", color: "#7c3aed", projectKeys: [scan.projects[1].key] },
-    { id: "travail", name: "Travail", color: null, projectKeys: [scan.projects[0].key, scan.projects[2].key] },
+    { id: "perso", name: "Perso", color: "#7c3aed", projectKeys: [jeu.key] },
+    { id: "travail", name: "Travail", color: null, projectKeys: [site.key, scan.projects[2].key] },
   ],
-  projects: { [scan.projects[0].key]: { color: "#fde68a", displayName: "Site vitrine" } },
+  projects: {
+    [site.key]: {
+      color: "#fde68a",
+      displayName: "Site vitrine",
+      sections: [
+        { id: "sec-front", name: "Interface", color: "#2563eb", conversationIds: [site.sessions[0].id, site.sessions[2].id], collapsed: false },
+        // « id-disparu » : conversation qui n'existe plus, ignorée à l'affichage.
+        { id: "sec-back", name: "Formulaires", color: null, conversationIds: ["id-disparu"], collapsed: false },
+      ],
+    },
+    [jeu.key]: { sections: [{ id: "sec-regles", name: "Règles", color: "#059669", conversationIds: [jeu.sessions[0].id], collapsed: true }] },
+  },
+  conversations: { [site.sessions[1].id]: { color: "#dc2626" }, [site.sessions[2].id]: { color: "#fde68a" } },
   archives: [],
   showTempProjects: false,
 };
+
+/** Conversations archivées, pour pouvoir les restaurer. */
+const archived = new Map<string, SessionInfo>();
 
 export function installDevMock() {
   mockWindows("main");
@@ -76,6 +94,7 @@ export function installDevMock() {
         const p = scan.projects.find((x) => x.key === a.projectKey)!;
         const s = p.sessions.find((x) => x.id === a.sessionId)!;
         p.sessions = p.sessions.filter((x) => x !== s);
+        archived.set(s.id, s);
         scan = { ...scan };
         config = {
           ...config,
@@ -83,15 +102,30 @@ export function installDevMock() {
         };
         return config;
       }
-      case "restore_archive":
+      case "restore_archive": {
+        // Remet la conversation dans son projet : elle retrouve sa section et sa couleur.
+        const s = archived.get(String(a.sessionId));
+        const p = s && scan.projects.find((x) => x.key === s.projectKey);
+        if (s && p) {
+          p.sessions = [...p.sessions, s].sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? ""));
+          archived.delete(s.id);
+          scan = { ...scan };
+        }
+        config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
+        return config;
+      }
       case "trash_archive":
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
         return config;
       case "plugin:dialog|ask":
         return window.confirm(String(a.message));
-      case "plugin:dialog|message":
+      case "plugin:dialog|message": {
+        // `ask` avec des libellés personnalisés passe par ici : renvoie le libellé choisi.
+        const custom = (a.buttons as { OkCancelCustom?: [string, string] } | undefined)?.OkCancelCustom;
+        if (custom) return window.confirm(String(a.message)) ? custom[0] : custom[1];
         window.alert(String(a.message));
         return null;
+      }
       case "plugin:event|listen":
         return 1;
       case "plugin:app|version":

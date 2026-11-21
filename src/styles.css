@@ -157,6 +157,34 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .session-id { font-family: "Cascadia Code", Consolas, monospace; opacity: .5; margin-left: auto; user-select: text; }
 .session-actions { display: flex; align-items: center; gap: 4px; opacity: .55; }
 .session-row:hover .session-actions { opacity: 1; }
+.session-row { touch-action: none; }
+.session-row.colored .session-meta { color: var(--fg-muted); }
+.session-row.colored:hover { filter: brightness(1.08); border-color: transparent; }
+.session-row.colored .btn:not(.primary) { background: rgba(0,0,0,.18); border-color: rgba(0,0,0,.2); }
+.session-row.overlay { background: var(--bg-hover); box-shadow: 0 8px 24px rgba(0,0,0,.5); cursor: grabbing; }
+/* Place réservée à la pastille d'activité (ticket 04), à gauche du titre. */
+.session-activity { flex: none; width: 10px; height: 10px; }
+.session-actions .popover { left: auto; right: 0; }
+
+/* ---------- Sections d'un projet ---------- */
+.section { border-radius: var(--radius); margin-bottom: 10px; border: 1px solid var(--border); background: var(--bg-elev); }
+.section.drop-over { border-color: var(--accent); }
+.section.unsectioned { background: transparent; border-style: dashed; padding: 0 4px 4px; }
+.section.unsectioned.drop-over { border-style: solid; }
+.section.overlay { box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.section-header {
+  display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 4px; border-radius: var(--radius) var(--radius) 0 0;
+  font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; cursor: grab;
+}
+.section-header.static { cursor: default; padding-left: 12px; color: var(--text-muted); }
+.section-header .grip { opacity: .35; flex: none; }
+.section-header:hover .hover-actions { display: inline-flex; }
+.section-header:hover .count { display: none; }
+.section-header .popover { left: auto; right: 0; }
+.section-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-body { padding: 0 4px 4px; min-height: 8px; }
+.section .session-row { margin: 2px 0; }
+
 .tag { background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
 .empty { color: var(--text-muted); padding: 30px 0; text-align: center; }
 

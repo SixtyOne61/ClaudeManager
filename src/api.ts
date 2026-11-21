@@ -49,6 +49,23 @@ export interface ProjectPrefs {
   displayName?: string | null;
   color?: string | null;
   path?: string | null;
+  /** Sections du projet, dans l'ordre d'affichage (absent dans un vieux fichier). */
+  sections?: Section[];
+}
+
+/** Regroupement de conversations à l'intérieur d'un projet (voir src/sections.ts). */
+export interface Section {
+  id: string;
+  name: string;
+  color: string | null;
+  /** Conversations de la section ; une conversation archivée y reste. */
+  conversationIds: string[];
+  collapsed: boolean;
+}
+
+/** Préférences d'une conversation, conservées à l'archivage. */
+export interface ConversationPrefs {
+  color?: string | null;
 }
 
 export interface ArchiveEntry {
@@ -69,6 +86,8 @@ export interface Config {
   version: number;
   categories: Category[];
   projects: Record<string, ProjectPrefs>;
+  /** Préférences par identifiant de conversation. */
+  conversations: Record<string, ConversationPrefs>;
   archives: ArchiveEntry[];
   showTempProjects: boolean;
 }
