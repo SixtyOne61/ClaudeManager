@@ -1,7 +1,7 @@
 // Vue d'un projet : en-tête (nom, couleur, catégorie, actions) et liste des conversations,
 // regroupées en sections (« Sans section » en haut, puis les sections dans l'ordre choisi).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -24,8 +24,10 @@ import {
   ChevronRight,
   ExternalLink,
   FileSearch,
+  FolderInput,
   FolderOpen,
   GripVertical,
+  ListChecks,
   ListPlus,
   MessageSquarePlus,
   Pencil,
@@ -46,6 +48,7 @@ import {
   deleteSection,
   groupBySection,
   moveSection,
+  projectSections,
   putConversationInSection,
   renameSection,
   setConversationColor,
@@ -78,6 +81,12 @@ interface Props {
   onOpen: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
+  /**
+   * Archive / met à la Corbeille plusieurs conversations du projet (sélection multiple).
+   * Renvoie `false` si l'utilisateur a annulé (la sélection est alors gardée).
+   */
+  onArchiveMany: (list: SessionInfo[]) => Promise<boolean>;
+  onTrashMany: (list: SessionInfo[]) => Promise<boolean>;
   onRename: () => void;
   onColor: (color: string | null) => void;
   onMove: (categoryId: string | null) => void;
@@ -175,6 +184,88 @@ export function ProjectView(props: Props) {
   const filtering = query.trim().length > 0;
   const change = props.onConfigChange;
 
+  // ---- Sélection multiple ---------------------------------------------------------------
+  // Ctrl+clic ajoute ou retire une conversation, Maj+clic sélectionne une plage (dans l'ordre
+  // affiché), la case à cocher fait comme Ctrl+clic. Tant qu'une sélection existe, un simple
+  // clic sur une ligne la coche ou la décoche au lieu d'ouvrir la conversation.
+  // Limitée au projet affiché ; les conversations provisoires (sans fichier) en sont exclues.
+
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  /** Point de départ d'une plage Maj+clic : dernière conversation cochée ou décochée. */
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [sectionForSelection, setSectionForSelection] = useState(false);
+
+  useEffect(() => {
+    setSelected(new Set());
+    setAnchor(null);
+  }, [p.key]);
+
+  /**
+   * Conversations sélectionnées encore présentes (une conversation archivée ou supprimée
+   * disparaît d'elle-même). Celles masquées par la recherche restent sélectionnées.
+   */
+  const selectedSessions = useMemo(() => p.sessions.filter((s) => !s.provisional && selected.has(s.id)), [p.sessions, selected]);
+  const selecting = selectedSessions.length > 0;
+
+  /** Conversations sélectionnables, dans l'ordre affiché (sections repliées exclues). */
+  const displayed = useMemo(
+    () => [...groups.unsectioned, ...groups.sections.flatMap((g) => (g.section.collapsed ? [] : g.sessions))].filter((s) => !s.provisional),
+    [groups],
+  );
+  const allDisplayedSelected = displayed.length > 0 && displayed.every((s) => selected.has(s.id));
+
+  const clearSelection = () => {
+    setSelected(new Set());
+    setAnchor(null);
+  };
+  const selectAll = () => setSelected((sel) => new Set([...sel, ...displayed.map((s) => s.id)]));
+
+  /** Clic sur la case à cocher (`toggle`) ou sur la ligne d'une conversation. */
+  const selectClick = (s: SessionInfo, e: React.MouseEvent, toggle: boolean) => {
+    const from = anchor ? displayed.findIndex((x) => x.id === anchor) : -1;
+    const to = displayed.findIndex((x) => x.id === s.id);
+    if (e.shiftKey && from >= 0 && to >= 0) {
+      // Plage, comme dans l'Explorateur : remplace la sélection (Ctrl+Maj : s'y ajoute).
+      const range = displayed.slice(Math.min(from, to), Math.max(from, to) + 1).map((x) => x.id);
+      setSelected((sel) => new Set([...(e.ctrlKey || e.metaKey ? sel : []), ...range]));
+      return;
+    }
+    if (!toggle && !(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    setSelected((sel) => {
+      const next = new Set(sel);
+      if (next.has(s.id)) next.delete(s.id);
+      else next.add(s.id);
+      return next;
+    });
+    setAnchor(s.id);
+  };
+
+  // Échap vide la sélection (sauf si un menu ou une boîte de dialogue est ouvert : Échap le ferme).
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".popover, .modal-backdrop")) return;
+      setSelected(new Set());
+      setAnchor(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting]);
+
+  /** Range des conversations dans une section (`null` = « Sans section »). */
+  const putInSection = (cfg: Config, sectionId: string | null, ids: string[]) =>
+    ids.reduce((c, id) => putConversationInSection(c, p.key, sectionId, id), cfg);
+
+  /** Couleur commune des conversations sélectionnées (aucune si elles diffèrent). */
+  const selectionColor = useMemo(() => {
+    const colors = new Set(selectedSessions.map((s) => conversationColor(config, s.id)));
+    return colors.size === 1 ? [...colors][0] : null;
+  }, [selectedSessions, config]);
+
+  const bulk = async (run: (list: SessionInfo[]) => Promise<boolean>) => {
+    if (await run(selectedSessions)) clearSelection();
+  };
+
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -206,11 +297,16 @@ export function ProjectView(props: Props) {
     }
     const target = o.startsWith("zone:") ? o.slice(5) : o.startsWith("s:") ? o.slice(2) : null;
     if (!target || !a.startsWith("v:")) return;
-    const id = a.slice(2);
-    const current = groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE;
-    if (current === target) return;
-    change((c) => putConversationInSection(c, p.key, target === NONE ? null : target, id));
+    // Une conversation sélectionnée emmène toute la sélection.
+    const ids = draggedIds(a.slice(2)).filter(
+      (id) => (groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE) !== target,
+    );
+    if (ids.length === 0) return;
+    change((c) => putInSection(c, target === NONE ? null : target, ids));
   };
+
+  /** Conversations déplacées en glissant `id` : toute la sélection si elle en fait partie. */
+  const draggedIds = (id: string) => (selected.has(id) && selecting ? selectedSessions.map((s) => s.id) : [id]);
 
   const confirmDeleteSection = async (section: Section) => {
     const n = section.conversationIds.length;
@@ -223,6 +319,9 @@ export function ProjectView(props: Props) {
 
   const draggedSession = dragId?.startsWith("v:") ? p.sessions.find((s) => s.id === dragId.slice(2)) : undefined;
   const draggedSection = dragId?.startsWith("s:") ? groups.sections.find((g) => g.section.id === dragId.slice(2))?.section : undefined;
+  /** Nombre de conversations glissées ensemble (sélection). */
+  const draggedCount = draggedSession ? draggedIds(draggedSession.id).length : 0;
+  const draggingSelection = draggedCount > 1;
 
   const row = (s: SessionInfo) => (
     <SessionRow
@@ -231,6 +330,10 @@ export function ProjectView(props: Props) {
       color={conversationColor(config, s.id)}
       activity={activities.get(s.id)}
       canLaunch={canResume(s)}
+      selected={!s.provisional && selected.has(s.id)}
+      selecting={selecting}
+      dimmed={draggingSelection && selected.has(s.id)}
+      onSelect={(e, toggle) => selectClick(s, e, toggle)}
       onLaunch={() => props.onLaunch(s.id, resumePath(s))}
       onOpen={() => props.onOpen(s)}
       terminal={props.terminal}
@@ -314,6 +417,14 @@ export function ProjectView(props: Props) {
           <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
           <FileSearch size={14} /> Dans le contenu {searching && "…"}
         </label>
+        <button
+          className="icon-btn"
+          disabled={displayed.length === 0 || allDisplayedSelected}
+          onClick={selectAll}
+          title="Tout sélectionner (conversations affichées) — ou Ctrl+clic, Maj+clic sur les conversations"
+        >
+          <ListChecks size={15} />
+        </button>
         <button className="btn small" onClick={() => setSectionDialog({ kind: "new" })} title="Regrouper des conversations de ce projet">
           <ListPlus size={14} /> Section
         </button>
@@ -382,6 +493,7 @@ export function ProjectView(props: Props) {
             {draggedSession && (
               <div className="session-row overlay" style={colorStyle(conversationColor(config, draggedSession.id))}>
                 <div className="session-title">{draggedSession.title}</div>
+                {draggingSelection && <span className="badge drag-count">{draggedCount} conversations</span>}
               </div>
             )}
             {draggedSection && (
@@ -392,6 +504,37 @@ export function ProjectView(props: Props) {
           </DragOverlay>
         </DndContext>
       </div>
+
+      {selecting && (
+        <div className="selection-bar">
+          <span className="selection-count">
+            {selectedSessions.length} sélectionnée{selectedSessions.length > 1 ? "s" : ""}
+          </span>
+          <button className="btn small ghost" disabled={allDisplayedSelected} onClick={selectAll} title="Sélectionne toutes les conversations affichées">
+            Tout sélectionner
+          </button>
+          <button className="btn small ghost" onClick={clearSelection} title="Échap">
+            Tout désélectionner
+          </button>
+          <span className="selection-spacer" />
+          <SectionMenu
+            sections={projectSections(config, p.key)}
+            onPick={(sectionId) => change((c) => putInSection(c, sectionId, selectedSessions.map((s) => s.id)))}
+            onNew={() => setSectionForSelection(true)}
+          />
+          <ColorPicker
+            value={selectionColor}
+            onChange={(color) => change((c) => selectedSessions.reduce((cfg, s) => setConversationColor(cfg, s.id, color), c))}
+            title="Couleur"
+          />
+          <button className="btn small" onClick={() => bulk(props.onArchiveMany)}>
+            <Archive size={13} /> Archiver
+          </button>
+          <button className="btn small danger" onClick={() => bulk(props.onTrashMany)}>
+            <Trash2 size={13} /> Corbeille
+          </button>
+        </div>
+      )}
 
       {worktreeFor && (
         <WorktreePrompt
@@ -411,6 +554,23 @@ export function ProjectView(props: Props) {
           onSubmit={(name) => {
             change((c) => addSection(c, p.key, name));
             setSectionDialog(null);
+          }}
+        />
+      )}
+      {sectionForSelection && (
+        <TextPrompt
+          title="Nouvelle section"
+          label="Nom"
+          onClose={() => setSectionForSelection(false)}
+          onSubmit={(name) => {
+            const ids = selectedSessions.map((s) => s.id);
+            change((c) => {
+              const next = addSection(c, p.key, name);
+              const list = projectSections(next, p.key);
+              const created = list[list.length - 1];
+              return created ? putInSection(next, created.id, ids) : next;
+            });
+            setSectionForSelection(false);
           }}
         />
       )}
@@ -506,12 +666,69 @@ function SectionBlock(props: {
   );
 }
 
+/** Menu « Ranger dans une section… » de la barre de sélection. */
+function SectionMenu(props: { sections: Section[]; onPick: (sectionId: string | null) => void; onNew: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Fermeture au clic à l'extérieur ou sur Échap (comme le sélecteur de couleur).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const pick = (run: () => void) => {
+    setOpen(false);
+    run();
+  };
+  return (
+    <div className="color-picker" ref={ref}>
+      <button className="btn small" onClick={() => setOpen((o) => !o)}>
+        <FolderInput size={13} /> Ranger dans une section…
+      </button>
+      {open && (
+        <div className="popover menu">
+          <button className="menu-item" onClick={() => pick(() => props.onPick(null))}>
+            Sans section
+          </button>
+          {props.sections.map((s) => (
+            <button key={s.id} className="menu-item" onClick={() => pick(() => props.onPick(s.id))}>
+              <span className="swatch-dot" style={{ background: s.color ?? "transparent" }} /> {s.name}
+            </button>
+          ))}
+          <div className="menu-separator" />
+          <button className="menu-item" onClick={() => pick(props.onNew)}>
+            <Plus size={13} /> Nouvelle section…
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SessionRow(props: {
   session: SessionInfo;
   color: string | null;
   /** État de la conversation (absent : fermée). */
   activity?: Activity;
   canLaunch: boolean;
+  /** Fait partie de la sélection multiple. */
+  selected: boolean;
+  /** Une sélection existe : la case à cocher reste visible et un clic coche au lieu d'ouvrir. */
+  selecting: boolean;
+  /** Emmenée avec la sélection en cours de glisser-déposer. */
+  dimmed: boolean;
+  /** Clic de sélection : `toggle` pour la case à cocher, sinon selon Ctrl / Maj. */
+  onSelect: (e: React.MouseEvent, toggle: boolean) => void;
   onLaunch: () => void;
   /** Ouvre la conversation dans le terminal intégré. */
   onOpen: () => void;
@@ -525,16 +742,39 @@ function SessionRow(props: {
   const drag = useDraggable({ id: "v:" + s.id });
   // Les boutons ne doivent pas déclencher le glisser-déposer.
   const stop = (e: React.PointerEvent) => e.stopPropagation();
+  const onClick = (e: React.MouseEvent) => {
+    // Une conversation provisoire (sans fichier) ne se sélectionne pas.
+    if (!s.provisional && (props.selecting || e.ctrlKey || e.metaKey || e.shiftKey)) props.onSelect(e, props.selecting);
+    else if (!props.selecting && canLaunch) props.onOpen();
+  };
   return (
     <div
       ref={drag.setNodeRef}
       data-session-id={s.id}
-      className={"session-row" + (props.color ? " colored" : "")}
-      style={{ ...colorStyle(props.color), opacity: drag.isDragging ? 0.35 : 1 }}
-      onClick={() => canLaunch && props.onOpen()}
+      className={"session-row" + (props.color ? " colored" : "") + (props.selected ? " selected" : "") + (props.selecting ? " selecting" : "")}
+      style={{ ...colorStyle(props.color), opacity: drag.isDragging || props.dimmed ? 0.35 : 1 }}
+      onClick={onClick}
+      // Maj+clic : pas de sélection de texte.
+      onMouseDown={(e) => e.shiftKey && e.preventDefault()}
       {...drag.attributes}
       {...drag.listeners}
     >
+      {s.provisional ? (
+        <span className="session-check" />
+      ) : (
+        <input
+          type="checkbox"
+          className="session-check"
+          checked={props.selected}
+          readOnly
+          title="Sélectionner (Ctrl+clic, Maj+clic pour une plage)"
+          onPointerDown={stop}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onSelect(e, true);
+          }}
+        />
+      )}
       {/* Pastille d'activité : elle garde ses propres couleurs, séparée de la couleur de
           la conversation (le fond de la ligne). */}
       <ActivityDot activity={props.activity} />
