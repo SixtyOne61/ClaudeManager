@@ -84,6 +84,51 @@ pub fn new_or_resume_args(session_id: &str, file_exists: bool) -> Result<Vec<Str
     if file_exists { resume_args(session_id) } else { new_session_args(session_id) }
 }
 
+/// Vérifie un nom de worktree choisi par l'utilisateur. Claude Code en fait un dossier
+/// (`.claude\worktrees\<nom>`) et une branche (`worktree-<nom>`) : on n'accepte que des
+/// caractères sûrs pour les deux (lettres, chiffres, `-`, `_`, `.`), commençant par une
+/// lettre ou un chiffre, sans `..`, sans `.` final ni `.lock` final, 64 caractères au plus.
+pub fn validate_worktree_name(name: &str) -> Result<(), String> {
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && !name.ends_with('.')
+        && !name.contains("..")
+        && !name.to_ascii_lowercase().ends_with(".lock");
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "Nom de worktree invalide : « {name} ». Utilisez des lettres, chiffres, « - », « _ » ou « . » (sans espace, 64 caractères au plus)."
+        ))
+    }
+}
+
+/// Arguments pour démarrer une nouvelle conversation dans un nouveau worktree :
+/// `--worktree [nom] --session-id <id>`. Sans nom (`None` ou vide), Claude Code en choisit un.
+/// Le worktree est créé dans `<dépôt>\.claude\worktrees\<nom>` (branche `worktree-<nom>`) et
+/// la conversation y tourne : son `cwd` enregistré est le worktree.
+pub fn new_worktree_session_args(session_id: &str, name: Option<&str>) -> Result<Vec<String>, String> {
+    let mut args = vec!["--worktree".to_string()];
+    if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
+        validate_worktree_name(n)?;
+        args.push(n.to_string());
+    }
+    args.extend(new_session_args(session_id)?);
+    Ok(args)
+}
+
+/// Comme [`new_or_resume_args`], avec l'option worktree : `worktree` vaut `None` pour une
+/// conversation normale, `Some(nom)` (éventuellement vide) pour un nouveau worktree. Une fois
+/// le fichier créé, `--resume` suffit : Claude Code retourne de lui-même dans le worktree.
+pub fn new_or_resume_worktree_args(session_id: &str, file_exists: bool, worktree: Option<&str>) -> Result<Vec<String>, String> {
+    match worktree {
+        Some(name) if !file_exists => new_worktree_session_args(session_id, Some(name)),
+        _ => new_or_resume_args(session_id, file_exists),
+    }
+}
+
 /// Vrai si `<id>.jsonl` existe dans l'un des dossiers de projets de Claude Code.
 pub fn session_file_exists(projects_root: &Path, session_id: &str) -> bool {
     let name = format!("{session_id}.jsonl");
@@ -415,6 +460,33 @@ mod tests {
     }
 
     #[test]
+    fn builds_worktree_args() {
+        let id = "28cde7fb-e61a-4bd9-a66f-10ba27d395a5";
+        assert_eq!(new_worktree_session_args(id, Some("ma-branche")).unwrap(), ["--worktree", "ma-branche", "--session-id", id]);
+        assert_eq!(new_worktree_session_args(id, None).unwrap(), ["--worktree", "--session-id", id]);
+        assert_eq!(new_worktree_session_args(id, Some("  ")).unwrap(), ["--worktree", "--session-id", id]);
+        assert!(new_worktree_session_args(id, Some("a b")).is_err());
+        assert!(new_worktree_session_args("x;y", Some("ok")).is_err());
+        // Sans fichier : worktree ; avec fichier : simple reprise ; sans option : comme avant.
+        assert_eq!(new_or_resume_worktree_args(id, false, Some("w1")).unwrap(), ["--worktree", "w1", "--session-id", id]);
+        assert_eq!(new_or_resume_worktree_args(id, false, Some("")).unwrap(), ["--worktree", "--session-id", id]);
+        assert_eq!(new_or_resume_worktree_args(id, true, Some("w1")).unwrap(), ["--resume", id]);
+        assert_eq!(new_or_resume_worktree_args(id, false, None).unwrap(), ["--session-id", id]);
+    }
+
+    #[test]
+    fn validates_worktree_names() {
+        for ok in ["feature-auth", "fix_42", "v1.2", "A", "abc.def-ghi_jkl"] {
+            assert!(validate_worktree_name(ok).is_ok(), "{ok}");
+        }
+        let long = "a".repeat(65);
+        let bad = ["", "a b", "-x", ".x", "_x", "x.", "a..b", "x.lock", "a/b", r"a\b", "#12", "é", "a:b", "a~b", "a^b", "a*b", "a\"b", &long];
+        for b in bad {
+            assert!(validate_worktree_name(b).is_err(), "{b}");
+        }
+    }
+
+    #[test]
     fn finds_session_file_in_any_project() {
         let tmp = tempfile::tempdir().unwrap();
         let id = "28cde7fb-e61a-4bd9-a66f-10ba27d395a5";
@@ -465,7 +537,7 @@ mod tests {
 
 /// Commandes Tauri du terminal intégré (voir `src/pty.ts` côté interface).
 pub mod commands {
-    use super::{new_or_resume_args, resume_args, session_file_exists, LaunchSpec, PtyInfo, PtyManager};
+    use super::{new_or_resume_worktree_args, resume_args, session_file_exists, LaunchSpec, PtyInfo, PtyManager};
     use tauri::{AppHandle, State};
 
     /// Ouvre (ou retrouve) le terminal d'une conversation et y lance `claude --resume <id>`.
@@ -477,7 +549,9 @@ pub mod commands {
 
     /// Nouvelle conversation créée par l'app : lance `claude --session-id <id>` (identifiant
     /// choisi par l'interface) dans le dossier du projet, ou `--resume` si son fichier existe
-    /// déjà (relance après un premier message).
+    /// déjà (relance après un premier message). `worktree` : absent pour une conversation
+    /// normale, sinon nom du nouveau worktree (vide : nom choisi par Claude Code), lancé avec
+    /// `claude --worktree [nom] --session-id <id>` (ticket 11).
     #[tauri::command]
     pub fn pty_new_session(
         app: AppHandle,
@@ -487,9 +561,10 @@ pub mod commands {
         cwd: String,
         cols: u16,
         rows: u16,
+        worktree: Option<String>,
     ) -> Result<PtyInfo, String> {
         let exists = session_file_exists(state.scanner.root(), &session_id);
-        let args = new_or_resume_args(&session_id, exists)?;
+        let args = new_or_resume_worktree_args(&session_id, exists, worktree.as_deref())?;
         ptys.launch(&app, LaunchSpec { key: session_id, cwd, args, cols, rows })
     }
 

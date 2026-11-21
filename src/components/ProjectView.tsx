@@ -34,6 +34,7 @@ import {
   Plus,
   Search,
   GitBranch,
+  GitBranchPlus,
   Trash2,
   TriangleAlert,
   X,
@@ -54,7 +55,8 @@ import {
 } from "../sections";
 import { ColorPicker } from "./ColorPicker";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
-import { TextPrompt } from "./Dialogs";
+import { TextPrompt, WorktreePrompt } from "./Dialogs";
+import { worktreeNameError } from "../pty";
 import { ActivityDot } from "./Activity";
 import { useActivities, type Activity } from "../activity";
 
@@ -70,8 +72,9 @@ interface Props {
   /**
    * Nouvelle conversation dans le terminal intégré, rangée dans `sectionId` : bouton « + »
    * de l'en-tête d'une section, ou `null` (« Sans section ») pour le bouton principal.
+   * `worktree` : dans un nouveau worktree, avec ce nom (vide = nom choisi par Claude Code).
    */
-  onNew: (sectionId: string | null) => void;
+  onNew: (sectionId: string | null, worktree?: string) => void;
   onOpenInDesktop: (s: SessionInfo) => void;
   /** Ouvre la conversation dans le terminal intégré. */
   onOpen: (s: SessionInfo) => void;
@@ -151,6 +154,19 @@ export function ProjectView(props: Props) {
   /** Une conversation de worktree se reprend dans le dossier du worktree. */
   const resumePath = (s: SessionInfo) => (s.worktree && s.projectKey !== p.key ? s.worktree.path : undefined);
   const canResume = (s: SessionInfo) => (s.worktree && s.projectKey !== p.key ? s.worktree.exists : canLaunch);
+
+  // « Dans un nouveau worktree » : proposé seulement si le dossier du projet est un dépôt git.
+  const [isGit, setIsGit] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setIsGit(false);
+    if (canLaunch && p.path) api.isGitRepo(p.path).then((g) => !cancelled && setIsGit(g)).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [p.path, canLaunch]);
+  /** Section de la nouvelle conversation en worktree dont on demande le nom (null = « Sans section »). */
+  const [worktreeFor, setWorktreeFor] = useState<{ sectionId: string | null } | null>(null);
 
   // ---- Sections -------------------------------------------------------------------------
 
@@ -253,6 +269,16 @@ export function ProjectView(props: Props) {
           >
             <MessageSquarePlus size={15} /> Nouvelle conversation
           </button>
+          {isGit && (
+            <button
+              className="btn ghost"
+              disabled={!canLaunch}
+              onClick={() => setWorktreeFor({ sectionId: null })}
+              title="Nouvelle conversation dans un nouveau worktree : copie de travail séparée (claude --worktree)"
+            >
+              <GitBranchPlus size={14} /> Dans un nouveau worktree
+            </button>
+          )}
           <button className="btn ghost" disabled={!canLaunch} onClick={() => props.onLaunch()} title={`Ouvre ${props.terminal} et lance « claude »`}>
             <ExternalLink size={14} /> Nouveau dans un terminal externe
           </button>
@@ -340,6 +366,14 @@ export function ProjectView(props: Props) {
                         }
                       : undefined
                   }
+                  onNewWorktree={
+                    canLaunch && isGit
+                      ? () => {
+                          if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
+                          setWorktreeFor({ sectionId: section.id });
+                        }
+                      : undefined
+                  }
                 >
                   {list.map(row)}
                 </SectionBlock>
@@ -362,6 +396,16 @@ export function ProjectView(props: Props) {
         </DndContext>
       </div>
 
+      {worktreeFor && (
+        <WorktreePrompt
+          validate={worktreeNameError}
+          onClose={() => setWorktreeFor(null)}
+          onSubmit={(name) => {
+            props.onNew(worktreeFor.sectionId, name);
+            setWorktreeFor(null);
+          }}
+        />
+      )}
       {sectionDialog?.kind === "new" && (
         <TextPrompt
           title="Nouvelle section"
@@ -408,6 +452,8 @@ function SectionBlock(props: {
   onColor: (c: string | null) => void;
   /** Nouvelle conversation dans cette section (absent si le projet ne peut pas lancer Claude). */
   onNew?: () => void;
+  /** Idem, dans un nouveau worktree (absent si le projet n'est pas un dépôt git). */
+  onNewWorktree?: () => void;
   children: React.ReactNode;
 }) {
   const { section } = props;
@@ -439,6 +485,11 @@ function SectionBlock(props: {
           {props.onNew && (
             <button className="icon-btn" title="Nouvelle conversation dans cette section (terminal intégré)" onClick={props.onNew}>
               <Plus size={13} />
+            </button>
+          )}
+          {props.onNewWorktree && (
+            <button className="icon-btn" title="Nouvelle conversation dans un nouveau worktree, dans cette section" onClick={props.onNewWorktree}>
+              <GitBranchPlus size={13} />
             </button>
           )}
           <button className="icon-btn" title="Renommer" onClick={props.onRename}>
@@ -498,6 +549,11 @@ function SessionRow(props: {
         {s.provisional ? (
           <div className="session-meta">
             <span>Pas encore de message : envoyez-en un dans le terminal intégré</span>
+            {s.worktree && (
+              <span className="badge worktree" title={`Nouveau worktree : ${s.worktree.path}`}>
+                <GitBranch size={11} /> worktree {s.worktree.name}
+              </span>
+            )}
             <span className="session-id">{s.id.slice(0, 8)}</span>
           </div>
         ) : (

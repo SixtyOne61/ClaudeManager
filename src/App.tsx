@@ -25,7 +25,7 @@ import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
 import { newId, projectName } from "./util";
 import { openInDesktop } from "./desktop";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
-import { isTerminalRunning, killTerminal, ptyApi } from "./pty";
+import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
 import { putConversationInSection } from "./sections";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
@@ -268,10 +268,14 @@ export default function App() {
    * dossier du projet, avec un identifiant choisi ici. Elle apparaît tout de suite dans la
    * liste (titre provisoire) et sera rangée dans `sectionId` (null = « Sans section »).
    */
-  const startNewConversation = (projectKey: string, path: string | null, sectionId: string | null) => {
+  const startNewConversation = (projectKey: string, path: string | null, sectionId: string | null, worktree?: string) => {
     if (!path) return;
     const id = newId();
     const now = new Date();
+    // Dans un nouveau worktree (`worktree` défini, vide = nom choisi par Claude Code) :
+    // badge « worktree » tout de suite ; le vrai chemin arrive avec le fichier (ticket 08).
+    if (worktree !== undefined) startInNewWorktree(id, worktree);
+    const wtName = worktree?.trim();
     const session: SessionInfo = {
       id,
       projectKey,
@@ -286,6 +290,14 @@ export default function App() {
       modifiedMs: now.getTime(),
       skippedLines: 0,
       provisional: true,
+      worktree:
+        worktree === undefined
+          ? null
+          : {
+              name: wtName || "(nom automatique)",
+              path: wtName ? `${path.replace(/[\\/]+$/, "")}\\.claude\\worktrees\\${wtName}` : `${path.replace(/[\\/]+$/, "")}\\.claude\\worktrees`,
+              exists: true,
+            },
     };
     placeIn.current.set(id, { projectKey, sectionId });
     setPending((ps) => [...ps, session]);
@@ -484,7 +496,7 @@ export default function App() {
           config={config}
           terminal={scan.terminal}
           onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
-          onNew={(sectionId) => startNewConversation(selectedProject.key, selectedProject.path, sectionId)}
+          onNew={(sectionId, worktree) => startNewConversation(selectedProject.key, selectedProject.path, sectionId, worktree)}
           onOpenInDesktop={(s) =>
             openInDesktop(s, { projectPath: selectedProject.path, toast, openInExternalTerminal: () => launch(selectedProject.path, s.id),
               closeEmbeddedTerminal: async () => {
