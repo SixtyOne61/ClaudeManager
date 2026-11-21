@@ -410,10 +410,21 @@ export function installDevMock() {
       }
       case "search_all":
         return mockSearchAll(String(a.query ?? ""));
+      case "trash_session": {
+        const p = scan.projects.find((x) => x.sessions.some((s) => s.id === a.sessionId))!;
+        const s = p.sessions.find((x) => x.id === a.sessionId)!;
+        if (!a.force && Date.now() - s.modifiedMs < 120_000)
+          throw "SESSION_ACTIVE: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal.";
+        p.sessions = p.sessions.filter((x) => x !== s);
+        scan = { ...scan };
+        return null;
+      }
       case "archive_session": {
         // Une conversation de worktree a une clé de stockage différente de son projet : recherche par id.
         const p = scan.projects.find((x) => x.sessions.some((s) => s.id === a.sessionId))!;
         const s = p.sessions.find((x) => x.id === a.sessionId)!;
+        if (!a.force && Date.now() - s.modifiedMs < 120_000)
+          throw "SESSION_ACTIVE: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal.";
         p.sessions = p.sessions.filter((x) => x !== s);
         archived.set(s.id, s);
         scan = { ...scan };

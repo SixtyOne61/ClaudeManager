@@ -414,6 +414,80 @@ export default function App() {
     refresh();
   };
 
+  /**
+   * Archive ou met à la Corbeille plusieurs conversations (sélection multiple d'un projet) :
+   * une seule confirmation, un seul avertissement pour celles modifiées il y a moins de
+   * 2 minutes (toutes continuées ou toutes ignorées), un seul message pour les échecs et
+   * un seul rafraîchissement à la fin. Renvoie `false` si l'utilisateur a annulé.
+   */
+  const bulkSessionAction = async (list: SessionInfo[], kind: "archive" | "trash") => {
+    if (list.length === 0) return false;
+    const trash = kind === "trash";
+    const count = (n: number) => `${n} conversation${n > 1 ? "s" : ""}`;
+    const titles = (l: SessionInfo[]) =>
+      l.slice(0, 8).map((s) => `• ${s.title}`).join("\n") + (l.length > 8 ? `\n… et ${l.length - 8} autre(s)` : "");
+    const plural = list.length > 1;
+    const ok = await ask(
+      trash
+        ? `Mettre ${count(list.length)} à la Corbeille ?\n${plural ? "Elles pourront être récupérées" : "Elle pourra être récupérée"} depuis la Corbeille Windows.\n\n${titles(list)}`
+        : `Archiver ${count(list.length)} ?\n${plural ? "Elles pourront être restaurées" : "Elle pourra être restaurée"} depuis les Archives.\n\n${titles(list)}`,
+      {
+        title: trash ? "Supprimer les conversations" : "Archiver les conversations",
+        kind: "warning",
+        okLabel: trash ? "Mettre à la Corbeille" : "Archiver",
+        cancelLabel: "Annuler",
+      },
+    );
+    if (!ok) return false;
+
+    const run = async (s: SessionInfo, force: boolean) => {
+      if (trash) await api.trashSession(s.projectKey, s.id, force);
+      else setConfig(await api.archiveSession(s.projectKey, s.id, force));
+    };
+    let done = 0;
+    const active: SessionInfo[] = [];
+    const failed: string[] = [];
+    const attempt = async (s: SessionInfo, force: boolean) => {
+      try {
+        await run(s, force);
+        done++;
+      } catch (e) {
+        const msg = errorMessage(e);
+        if (!force && msg.startsWith(ERR_ACTIVE)) active.push(s);
+        else failed.push(`« ${s.title} » : ${msg}`);
+      }
+    };
+    for (const s of list) await attempt(s, false);
+
+    let skipped = 0;
+    if (active.length > 0) {
+      const go = await ask(
+        `${count(active.length)} ${active.length > 1 ? "ont été modifiées" : "a été modifiée"} il y a moins de 2 minutes : ` +
+          `peut-être ouverte${active.length > 1 ? "s" : ""} dans Claude Desktop ou dans un autre terminal.\n\n${titles(active)}`,
+        {
+          title: "Conversations peut-être en cours",
+          kind: "warning",
+          okLabel: trash ? "Les mettre aussi à la Corbeille" : "Les archiver aussi",
+          cancelLabel: "Les ignorer",
+        },
+      );
+      if (go) for (const s of active) await attempt(s, true);
+      else skipped = active.length;
+    }
+
+    if (done > 0) {
+      const what = trash ? (done > 1 ? "envoyées à la Corbeille" : "envoyée à la Corbeille") : done > 1 ? "archivées" : "archivée";
+      toast(`${count(done)} ${what}` + (skipped ? ` (${skipped} ignorée${skipped > 1 ? "s" : ""})` : ""));
+    } else if (skipped) {
+      toast(`Aucune conversation ${trash ? "supprimée" : "archivée"} (${skipped} ignorée${skipped > 1 ? "s" : ""})`);
+    }
+    if (failed.length > 0) {
+      toast(`Échec pour ${count(failed.length)} :\n` + failed.slice(0, 5).join("\n") + (failed.length > 5 ? `\n… et ${failed.length - 5} autre(s)` : ""), true);
+    }
+    await refresh();
+    return true;
+  };
+
   const restoreArchive = async (a: ArchiveEntry) => {
     try {
       setConfig(await api.restoreArchive(a.sessionId));
@@ -519,6 +593,8 @@ export default function App() {
           onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
+          onArchiveMany={(list) => bulkSessionAction(list, "archive")}
+          onTrashMany={(list) => bulkSessionAction(list, "trash")}
           onRename={() => setDialog({ kind: "renameProject", project: selectedProject })}
           onColor={(color) => setProjectPref(selectedProject.key, { color })}
           onMove={(cat) => moveProject(selectedProject.key, cat)}
