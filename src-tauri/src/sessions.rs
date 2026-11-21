@@ -169,7 +169,7 @@ fn content_text(content: &Value) -> String {
 
 /// Sections injectées par Claude Code qui ne sont pas écrites par l'utilisateur :
 /// on les retire entièrement (balises + contenu).
-const NOISE_SECTIONS: [&str; 6] = [
+pub(crate) const NOISE_SECTIONS: [&str; 6] = [
     "system-reminder",
     "local-command-stdout",
     "local-command-stderr",
@@ -179,7 +179,7 @@ const NOISE_SECTIONS: [&str; 6] = [
 ];
 
 /// Retire `<tag ...>...</tag>` (toutes les occurrences) d'un texte.
-fn remove_section(text: &str, tag: &str) -> String {
+pub(crate) fn remove_section(text: &str, tag: &str) -> String {
     let open = format!("<{tag}");
     let close = format!("</{tag}>");
     let mut out = String::with_capacity(text.len());
@@ -199,7 +199,7 @@ fn remove_section(text: &str, tag: &str) -> String {
 }
 
 /// Renvoie le contenu de la première balise `<tag>...</tag>`, s'il y en a une.
-fn tag_content<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+pub(crate) fn tag_content<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = text.find(&open)? + open.len();

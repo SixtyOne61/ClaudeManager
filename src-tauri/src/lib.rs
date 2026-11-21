@@ -8,6 +8,7 @@
 mod activity;
 mod actions;
 mod config;
+mod conversation;
 mod desktop;
 mod pty;
 mod scanner;
@@ -24,7 +25,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
 /// État partagé entre les commandes.
@@ -148,6 +149,18 @@ fn search_sessions(state: State<AppState>, project_key: String, query: String) -
         }
     });
     Ok(hits.into_inner().unwrap())
+}
+
+/// Lit la conversation affichée (interface de conversation) à partir de `offset` (octets)
+/// et `line` (numéro de la ligne qui y commence) : seule la suite du fichier est relue à
+/// chaque changement. Fichier pas encore créé : morceau vide avec `exists: false`.
+#[tauri::command(async)]
+fn conversation_read(state: State<AppState>, session_id: String, cwd: Option<String>, offset: u64, line: u32) -> Result<conversation::Chunk, String> {
+    actions::validate_session_id(&session_id)?;
+    Ok(match conversation::locate(state.scanner.root(), &session_id, cwd.as_deref()) {
+        Some(path) => conversation::read_chunk(&path, offset, line),
+        None => conversation::Chunk::default(),
+    })
 }
 
 /// Recherche dans le contenu de toutes les conversations, archives comprises.
@@ -327,19 +340,28 @@ fn trash_archive(state: State<AppState>, session_id: String) -> Result<Config, S
 // ---------------------------------------------------------------------------
 
 /// Observe `~/.claude/projects` et émet `sessions-changed` (au plus une fois toutes
-/// les ~1,5 s) quand un `.jsonl` ou un titre de session change.
+/// les ~1,5 s) quand un `.jsonl` ou un titre de session change. Émet aussi
+/// `conversation-changed` (identifiant de la conversation) dès qu'un `.jsonl` change, au
+/// plus toutes les ~250 ms, pour l'interface de conversation affichée en direct.
 fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
     let (tx, rx) = mpsc::channel::<()>();
+    let (tx_conv, rx_conv) = mpsc::channel::<String>();
     let root_for_filter = root.clone();
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
-        let relevant = event.paths.iter().any(|p| {
+        let mut relevant = false;
+        for p in &event.paths {
             let depth = p.strip_prefix(&root_for_filter).map(|r| r.components().count()).unwrap_or(0);
             let is_jsonl = p.extension().is_some_and(|x| x == "jsonl");
             let is_title = p.file_name().is_some_and(|n| n == "custom-title.json");
             // projet/session.jsonl (2), nouveau dossier projet (1), projet/session/custom-title.json (3)
-            (is_jsonl && depth == 2) || depth == 1 || (is_title && depth == 3)
-        });
+            relevant |= (is_jsonl && depth == 2) || depth == 1 || (is_title && depth == 3);
+            if is_jsonl && depth == 2 {
+                if let Some(stem) = p.file_stem() {
+                    let _ = tx_conv.send(stem.to_string_lossy().to_string());
+                }
+            }
+        }
         if relevant {
             let _ = tx.send(());
         }
@@ -348,6 +370,7 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
     if watcher.watch(&root, RecursiveMode::Recursive).is_err() {
         return;
     }
+    let app_conv = app.clone();
     std::thread::spawn(move || {
         // Le watcher vit aussi longtemps que ce thread.
         let _watcher = watcher;
@@ -355,6 +378,25 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
             // Regroupe les rafales d'évènements (une session active écrit en continu).
             while rx.recv_timeout(Duration::from_millis(1500)).is_ok() {}
             let _ = app.emit("sessions-changed", ());
+        }
+    });
+    std::thread::spawn(move || {
+        while let Ok(first) = rx_conv.recv() {
+            // Regroupe les évènements reçus pendant 250 ms : une émission par conversation.
+            let mut ids = HashSet::from([first]);
+            let until = Instant::now() + Duration::from_millis(250);
+            while let Some(left) = until.checked_duration_since(Instant::now()) {
+                match rx_conv.recv_timeout(left) {
+                    Ok(id) => {
+                        ids.insert(id);
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            for id in ids {
+                let _ = app_conv.emit("conversation-changed", id);
+            }
         }
     });
 }
@@ -401,6 +443,7 @@ pub fn run() {
             scan,
             search_sessions,
             search_all,
+            conversation_read,
             get_config,
             save_config,
             add_project,

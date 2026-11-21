@@ -434,6 +434,13 @@ export default function App() {
   const openSearchResult = (s: SessionHits, hit: SearchHit | undefined) => {
     const archived = s.archived || !projects.has(s.projectKey);
     setSearchFocus({ projectKey: s.projectKey, sessionId: s.sessionId, archived, line: hit?.line ?? null, uuid: hit?.uuid ?? null });
+    // Conversation ouverte dans un onglet : on y va, et l'interface de conversation défile
+    // jusqu'au message trouvé.
+    if (!s.archived && terminals.some((t) => t.sessionId === s.sessionId)) {
+      setSearchOpen(false);
+      setActiveTerminal(s.sessionId);
+      return;
+    }
     setSelection(archived ? { kind: "archives" } : { kind: "project", key: s.projectKey });
     setSearchOpen(false);
     setActiveTerminal(null);
@@ -472,7 +479,7 @@ export default function App() {
 
       <div className="main-column">
       <TerminalTabBar terminals={tabs} active={activeTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
-      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} onStarted={terminalStarted} />
+      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} onStarted={terminalStarted} focus={searchFocus} />
       {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
           config={config}

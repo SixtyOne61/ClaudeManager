@@ -5,6 +5,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
+import type { ConversationEntry, DiffLine } from "./conversation";
 
 const now = Date.now();
 const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3600_000).toISOString();
@@ -151,12 +152,92 @@ function fakeFirstMessage(id: string, cwd: string, text: string, worktree?: stri
   setTimeout(() => emit("sessions-changed", null), 300);
 }
 
+// ---- Faux fichiers de conversation (interface de conversation, ticket 05) ---------------
+// Une conversation existante a une transcription de démonstration (messages, commande,
+// lecture, modification avec différence) ; chaque message envoyé y ajoute une réponse
+// fictive, écrite en plusieurs fois comme le ferait Claude Code. La « position » renvoyée
+// est simplement le nombre de lignes déjà lues.
+
+const transcripts = new Map<string, ConversationEntry[]>();
+
+/** Transcription de démonstration. Lignes 3 et 8 : messages trouvés par la fausse recherche. */
+function demoTranscript(): ConversationEntry[] {
+  const diff: DiffLine[] = [
+    { op: " ", text: "function toggleMenu() {" },
+    { op: "-", text: "  menu.classList.add('open');" },
+    { op: "+", text: "  menu.classList.toggle('open');" },
+    { op: "+", text: "  button.setAttribute('aria-expanded', menu.classList.contains('open'));" },
+    { op: " ", text: "}" },
+  ];
+  const longOutput = Array.from({ length: 40 }, (_, i) => `${i + 1}\tligne ${i + 1} du fichier menu.js`).join("\n");
+  return [
+    { kind: "notice", line: 1, uuid: "d1", text: "Interrompu par l'utilisateur" },
+    { kind: "user", line: 3, uuid: "d3", text: "Peux-tu regarder le menu principal ?\nIl ne se ferme pas sur mobile.", command: false },
+    { kind: "assistant", line: 4, uuid: "d4", text: "Je regarde **le menu** et le script associé." },
+    { kind: "tool", line: 5, uuid: "d5", id: "t1", name: "Bash", title: "git status --short", detail: "État du dépôt", path: null, diff: null, diffTruncated: false },
+    { kind: "toolResult", line: 6, toolUseId: "t1", text: " M src/menu.js\n?? notes.txt", isError: false, truncated: false },
+    { kind: "tool", line: 7, uuid: "d7", id: "t2", name: "Read", title: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", detail: null, path: null, diff: null, diffTruncated: false },
+    { kind: "toolResult", line: 7, toolUseId: "t2", text: longOutput, isError: false, truncated: false },
+    {
+      kind: "assistant",
+      line: 8,
+      uuid: "d8",
+      text: "J'ai trouvé le problème :\n\n1. le menu est **ouvert** mais jamais refermé ;\n2. `aria-expanded` n'est pas mis à jour.\n\n```js\nmenu.classList.toggle('open');\n```\n\n| Fichier | Changement |\n| --- | --- |\n| menu.js | bascule |\n\nVoir [la doc](https://example.com) (lien non suivi).",
+    },
+    { kind: "tool", line: 9, uuid: "d9", id: "t3", name: "Edit", title: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", detail: null, path: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", diff, diffTruncated: false },
+    { kind: "toolResult", line: 10, toolUseId: "t3", text: "The file has been updated.", isError: false, truncated: false },
+    { kind: "tool", line: 11, uuid: "d11", id: "t4", name: "Bash", title: "npm test", detail: "Lance les tests", path: null, diff: null, diffTruncated: false },
+    { kind: "toolResult", line: 12, toolUseId: "t4", text: "Exit code 1\n1 test échoué : menu.test.js", isError: true, truncated: false },
+    { kind: "user", line: 13, uuid: "d13", text: "/model opus", command: true },
+    { kind: "notice", line: 14, uuid: "d14", text: "Modèle : opus" },
+  ];
+}
+
+function fakeTranscript(id: string): ConversationEntry[] | null {
+  let t = transcripts.get(id);
+  if (!t && scan.projects.some((p) => p.sessions.some((s) => s.id === id))) transcripts.set(id, (t = demoTranscript()));
+  return t ?? null;
+}
+
+const changed = (id: string) => setTimeout(() => emit("conversation-changed", id), 0);
+
+/** Message envoyé : ajouté au fichier, puis une réponse fictive arrive en plusieurs fois. */
+function fakeReply(id: string, text: string) {
+  const t = fakeTranscript(id) ?? (transcripts.set(id, []), transcripts.get(id)!);
+  const next = () => (t.length ? t[t.length - 1].line + 1 : 0);
+  t.push(text.startsWith("/") ? { kind: "user", line: next(), uuid: `m${next()}`, text, command: true } : { kind: "user", line: next(), uuid: `m${next()}`, text, command: false });
+  changed(id);
+  if (text.startsWith("/")) return;
+  const steps: (() => void)[] = [
+    () => t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: `Je m'occupe de « ${text.split("\n")[0]} ».` }),
+    () => t.push({ kind: "tool", line: next(), uuid: `m${next()}`, id: `x${next()}`, name: "Bash", title: "ls src", detail: null, path: null, diff: null, diffTruncated: false }),
+    () => {
+      const tool = [...t].reverse().find((e) => e.kind === "tool")!;
+      t.push({ kind: "toolResult", line: next(), toolUseId: (tool as { id: string }).id, text: "menu.js\nstyles.css", isError: false, truncated: false });
+    },
+    () => t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: "C'est fait. *Réponse fictive* du faux backend." }),
+  ];
+  steps.forEach((s, i) =>
+    setTimeout(() => {
+      s();
+      changed(id);
+    }, 400 * (i + 1)),
+  );
+}
+
+function fakeConversationRead(a: Record<string, unknown>) {
+  const t = fakeTranscript(String(a.sessionId));
+  if (!t) return { exists: false, reset: false, headSkipped: false, entries: [], offset: 0, line: 0 };
+  const from = Number(a.offset ?? 0);
+  return { exists: true, reset: false, headSkipped: false, entries: t.slice(from), offset: t.length, line: t.length };
+}
+
 // ---- Faux états des conversations (hooks) ---------------------------------------------
 // Une conversation reprise attend un message ; un message la passe « en cours », puis
 // elle attend une réponse (une permission si le message contient « permission »).
 // Deux conversations tournent dès le départ et changent d'état toutes les 3 s.
 
-type FakeActivity = { state: "running" | "waiting"; kind: string; detail?: string };
+type FakeActivity = { state: "running" | "waiting"; kind: string; detail?: string; event?: string };
 const activities = new Map<string, FakeActivity & { sessionId: string; event: string; at: number }>();
 const activityTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -214,15 +295,30 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
       if (!fakePtys.has(key)) {
         fakePtys.set(key, { cwd, line: "", worktree: wt });
         ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude ${args}\r\n  dans ${cwd}\r\n\r\n> `);
-        setActivity(key, { state: "waiting", kind: "start" });
+        // Lancement (« Launch »), puis le hook SessionStart : tout de suite pour une reprise,
+        // après une fausse question de confiance (2,5 s) pour une nouvelle conversation.
+        setActivity(key, { state: "waiting", kind: "start", event: "Launch" });
+        if (!exists) ptyOut(key, "Faire confiance à ce dossier ? (fictif)\r\n> ");
+        setTimeout(() => fakePtys.has(key) && setActivity(key, { state: "waiting", kind: "start", event: "SessionStart" }), exists ? 300 : 2500);
       }
       return { key, cwd, running: true };
     }
     case "pty_write": {
       const t = fakePtys.get(key);
       if (!t) throw "Ce terminal n'est pas ouvert.";
-      for (const ch of String(a.data)) {
-        if (ch === "\r") {
+      const data = String(a.data);
+      if (data === "\x1b") {
+        // Échap (« Arrêter ») : interrompt la réponse en cours.
+        ptyOut(key, "\r\n\x1b[2m(interrompu)\x1b[0m\r\n> ");
+        setActivity(key, { state: "waiting", kind: "turn" });
+        return null;
+      }
+      // Collage encadré (ESC[200~ … ESC[201~) : les retours à la ligne font partie du message.
+      for (const ch of data.replace(/\x1b\[20[01]~/g, "")) {
+        if (ch === "\n") {
+          t.line += "\n";
+          ptyOut(key, "\r\n  ");
+        } else if (ch === "\r") {
           const line = t.line.trim();
           t.line = "";
           if (line === "/exit") {
@@ -232,9 +328,11 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
             setActivity(key, null);
             return null;
           }
-          if (line) fakeFirstMessage(key, t.cwd, line, t.worktree);
+          if (line) fakeReply(key, line);
+          if (line) fakeFirstMessage(key, t.cwd, line.split("\n")[0], t.worktree);
           ptyOut(key, `\r\n\x1b[2m(réponse fictive à « ${line} »)\x1b[0m\r\n> `);
-          fakeTurn(key, line);
+          // Une commande `/…` locale (menu) ne déclenche aucun hook.
+          if (!line.startsWith("/")) fakeTurn(key, line);
         } else if (ch === "\x7f") {
           if (t.line) {
             t.line = t.line.slice(0, -1);
@@ -264,6 +362,7 @@ export function installDevMock() {
     const a = (args ?? {}) as Record<string, unknown>;
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
     if (cmd === "activity_list") return [...activities.values()];
+    if (cmd === "conversation_read") return fakeConversationRead(a);
     console.info("[mock]", cmd, a);
     switch (cmd) {
       case "scan":
