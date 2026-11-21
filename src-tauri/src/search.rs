@@ -388,7 +388,9 @@ pub fn targets(root: &Path, projects: &[ProjectInfo], archives: &[ArchiveEntry])
                 title: s.title.clone(),
                 updated_at: s.updated_at.clone(),
                 archived: false,
-                file: root.join(&p.key).join(format!("{}.jsonl", s.id)),
+                // Le fichier est rangé sous la clé de stockage de la conversation, qui diffère
+                // de celle du projet pour une conversation de worktree.
+                file: root.join(&s.project_key).join(format!("{}.jsonl", s.id)),
             });
         }
     }
@@ -613,6 +615,7 @@ mod tests {
             file_size: 0,
             modified_ms: 0,
             skipped_lines: 0,
+            worktree: None,
         };
         let projects = vec![crate::scanner::Scanner::make_project(
             "P1".into(),
