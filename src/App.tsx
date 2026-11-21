@@ -26,6 +26,10 @@ import { newId, projectName } from "./util";
 import { openInDesktop } from "./desktop";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
 import { isTerminalRunning, killTerminal, ptyApi } from "./pty";
+import { putConversationInSection } from "./sections";
+
+/** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
+const NEW_CONVERSATION_TITLE = "Nouvelle conversation";
 
 /** Boîte de dialogue ouverte (une seule à la fois). */
 type DialogState =
@@ -64,6 +68,15 @@ export default function App() {
   // Terminal intégré : conversations ouvertes (onglets) et onglet affiché (null = vue projet).
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTerminal, setActiveTerminal] = useState<string | null>(null);
+  // Nouvelles conversations lancées dans le terminal intégré dont le fichier n'existe pas
+  // encore : affichées tout de suite dans leur projet, avec un titre provisoire.
+  const [pending, setPending] = useState<SessionInfo[]>([]);
+  /** Section où ranger une nouvelle conversation, une fois `claude` démarré. */
+  const placeIn = useRef(new Map<string, { projectKey: string; sectionId: string | null }>());
+  /** Moment où l'app a fermé son propre terminal pour une conversation (voir ticket 09). */
+  const releasedAt = useRef(new Map<string, number>());
+  /** Conversations en cours d'ouverture (vérification « ouverte ailleurs » en attente). */
+  const opening = useRef(new Set<string>());
 
   const toast = useCallback((text: string, error = false) => {
     const id = ++toastId.current;
@@ -111,6 +124,9 @@ export default function App() {
     },
     [config, showError],
   );
+  // Pour les rappels asynchrones (terminal démarré, fermé) : toujours la configuration à jour.
+  const updateConfigRef = useRef(updateConfig);
+  updateConfigRef.current = updateConfig;
 
   // Fermeture de l'app alors qu'un terminal tourne : le backend suspend la fermeture
   // et demande confirmation ici.
@@ -129,7 +145,23 @@ export default function App() {
     };
   }, []);
 
-  const projects = useMemo(() => new Map((scan?.projects ?? []).map((p) => [p.key, p])), [scan]);
+  /** Identifiants des conversations qui ont un fichier. */
+  const knownIds = useMemo(() => new Set((scan?.projects ?? []).flatMap((p) => p.sessions.map((s) => s.id))), [scan]);
+
+  // Projets, avec en tête les nouvelles conversations qui n'ont pas encore de fichier.
+  const projects = useMemo(() => {
+    const map = new Map((scan?.projects ?? []).map((p) => [p.key, p]));
+    for (const s of pending) {
+      const p = map.get(s.projectKey);
+      if (p && !knownIds.has(s.id)) map.set(p.key, { ...p, sessions: [s, ...p.sessions] });
+    }
+    return map;
+  }, [scan, pending, knownIds]);
+
+  // Le fichier d'une nouvelle conversation est apparu : son vrai titre prend le relais.
+  useEffect(() => {
+    setPending((ps) => (ps.some((s) => knownIds.has(s.id)) ? ps.filter((s) => !knownIds.has(s.id)) : ps));
+  }, [knownIds]);
 
   // Sélectionne par défaut le projet le plus récemment actif.
   useEffect(() => {
@@ -195,12 +227,92 @@ export default function App() {
 
   // ---- Terminal intégré ----------------------------------------------------------------
 
-  /** Ouvre (ou affiche) la conversation dans un onglet du terminal intégré. */
-  const openInTerminal = (s: SessionInfo, projectPath: string | null) => {
+  /**
+   * Ouvre (ou affiche) la conversation dans un onglet du terminal intégré. Déjà ouverte
+   * dans l'app : on bascule sur son onglet. Sinon, si son fichier vient d'être modifié par
+   * un autre programme, on prévient qu'elle est peut-être ouverte ailleurs.
+   */
+  const openInTerminal = async (s: SessionInfo, projectPath: string | null) => {
     const cwd = s.cwd ?? projectPath;
     if (!cwd) return;
+    if (terminals.some((t) => t.sessionId === s.id)) {
+      setActiveTerminal(s.id);
+      return;
+    }
+    if (opening.current.has(s.id)) return; // double clic : une seule vérification
+    opening.current.add(s.id);
+    try {
+      await api.checkOpenElsewhere(s.projectKey, s.id, releasedAt.current.get(s.id) ?? null);
+    } catch (e) {
+      const msg = errorMessage(e);
+      // Autre erreur (fichier introuvable…) : le terminal l'affichera au lancement.
+      if (msg.startsWith(ERR_ACTIVE)) {
+        const ok = await ask(
+          msg.replace(`${ERR_ACTIVE}: `, "") +
+            "\nDeux programmes qui écrivent en même temps dans la même conversation peuvent l'abîmer.\n\nContinuer quand même ?",
+          { title: "Conversation peut-être en cours", kind: "warning", okLabel: "Continuer", cancelLabel: "Annuler" },
+        );
+        if (!ok) {
+          opening.current.delete(s.id);
+          return;
+        }
+      }
+    }
+    opening.current.delete(s.id);
     setTerminals((ts) => (ts.some((t) => t.sessionId === s.id) ? ts : [...ts, { sessionId: s.id, cwd, title: s.title }]));
     setActiveTerminal(s.id);
+  };
+
+  /**
+   * Nouvelle conversation dans le terminal intégré : `claude --session-id <id>` dans le
+   * dossier du projet, avec un identifiant choisi ici. Elle apparaît tout de suite dans la
+   * liste (titre provisoire) et sera rangée dans `sectionId` (null = « Sans section »).
+   */
+  const startNewConversation = (projectKey: string, path: string | null, sectionId: string | null) => {
+    if (!path) return;
+    const id = newId();
+    const now = new Date();
+    const session: SessionInfo = {
+      id,
+      projectKey,
+      cwd: path,
+      title: NEW_CONVERSATION_TITLE,
+      titleSource: "none",
+      firstPrompt: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      messageCount: 0,
+      fileSize: 0,
+      modifiedMs: now.getTime(),
+      skippedLines: 0,
+      provisional: true,
+    };
+    placeIn.current.set(id, { projectKey, sectionId });
+    setPending((ps) => [...ps, session]);
+    setTerminals((ts) => [...ts, { sessionId: id, cwd: path, title: NEW_CONVERSATION_TITLE, isNew: true }]);
+    setActiveTerminal(id);
+  };
+
+  /**
+   * `claude` a démarré : une nouvelle conversation est rangée dans sa section. Fait après le
+   * lancement, pour que le backend garde sa place (terminal ouvert) même sans fichier.
+   */
+  const terminalStarted = (t: OpenTerminal) => {
+    const place = placeIn.current.get(t.sessionId);
+    if (!place) return;
+    placeIn.current.delete(t.sessionId);
+    if (place.sectionId) updateConfigRef.current((c) => putConversationInSection(c, place.projectKey, place.sectionId, t.sessionId));
+  };
+
+  /** Nouvelle conversation fermée sans message (aucun fichier) : elle disparaît, de sa section aussi. */
+  const dropIfEmpty = async (id: string) => {
+    const fresh = await api.scan().catch(() => null);
+    if (!fresh) return;
+    setScan(fresh);
+    if (fresh.projects.some((p) => p.sessions.some((s) => s.id === id))) return;
+    placeIn.current.delete(id);
+    setPending((ps) => ps.filter((s) => s.id !== id));
+    updateConfigRef.current((c) => putConversationInSection(c, "", null, id));
   };
 
   const closeTerminal = async (t: OpenTerminal) => {
@@ -214,9 +326,17 @@ export default function App() {
       if (!ok) return;
     }
     await killTerminal(t.sessionId).catch(() => {});
+    releasedAt.current.set(t.sessionId, Date.now());
     setTerminals((ts) => ts.filter((x) => x.sessionId !== t.sessionId));
     setActiveTerminal((a) => (a === t.sessionId ? null : a));
+    if (t.isNew) await dropIfEmpty(t.sessionId);
   };
+
+  /** Onglets avec le titre à jour (le vrai titre remplace « Nouvelle conversation »). */
+  const tabs = terminals.map((t) => {
+    const title = [...projects.values()].flatMap((p) => p.sessions).find((s) => s.id === t.sessionId)?.title;
+    return title && title !== t.title ? { ...t, title } : t;
+  });
 
   // ---- Archives / Corbeille -------------------------------------------------------------
 
@@ -339,8 +459,8 @@ export default function App() {
       />
 
       <div className="main-column">
-      <TerminalTabBar terminals={terminals} active={activeTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
-      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} />
+      <TerminalTabBar terminals={tabs} active={activeTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
+      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} onStarted={terminalStarted} />
       {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
           config={config}
@@ -364,6 +484,7 @@ export default function App() {
           config={config}
           terminal={scan.terminal}
           onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
+          onNew={(sectionId) => startNewConversation(selectedProject.key, selectedProject.path, sectionId)}
           onOpenInDesktop={(s) =>
             openInDesktop(s, { projectPath: selectedProject.path, toast, openInExternalTerminal: () => launch(selectedProject.path, s.id),
               closeEmbeddedTerminal: async () => {
@@ -448,7 +569,7 @@ export default function App() {
               setConfig(await api.saveConfig(next));
               await refresh();
               setSelection({ kind: "project", key });
-              if (r.startConversation) launch(r.path);
+              if (r.startConversation) startNewConversation(key, r.path, null);
             } catch (e) {
               showError(e);
             }

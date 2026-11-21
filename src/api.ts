@@ -29,6 +29,11 @@ export interface SessionInfo {
   skippedLines: number;
   /** Conversation d'un worktree, rangée sous son projet parent. */
   worktree?: WorktreeInfo | null;
+  /**
+   * Interface uniquement : nouvelle conversation lancée dans le terminal intégré dont le
+   * fichier n'existe pas encore (titre provisoire « Nouvelle conversation »).
+   */
+  provisional?: boolean;
 }
 
 export interface ProjectInfo {
@@ -165,6 +170,12 @@ export const api = {
   trashSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<void>("trash_session", { projectKey, sessionId, force }),
   trashArchive: (sessionId: string) => invoke<Config>("trash_archive", { sessionId }),
+  /**
+   * Erreur `SESSION_ACTIVE` si la conversation a été modifiée il y a moins de 2 minutes par
+   * un autre programme. `releasedAt` : fermeture (ms) du terminal intégré de l'app pour elle.
+   */
+  checkOpenElsewhere: (projectKey: string, sessionId: string, releasedAt: number | null) =>
+    invoke<void>("check_open_elsewhere", { projectKey, sessionId, releasedAt }),
 };
 
 /** Convertit une erreur Tauri (chaîne) ou JS en message lisible. */

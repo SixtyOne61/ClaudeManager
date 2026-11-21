@@ -26,10 +26,13 @@ function session(key: string, n: number, title: string, hoursAgo: number, source
   };
 }
 
+let nextSessionNumber = 1;
+
 function project(name: string, sessions: [string, number][], opts: Partial<ProjectInfo> = {}): ProjectInfo {
   const path = `C:\\Users\\moi\\Projets\\${name}`;
   const key = path.replace(/[^A-Za-z0-9]/g, "-");
-  const list = sessions.map(([t, h], i) => session(key, i + name.length * 10, t, h, i === 2 ? "prompt" : "custom"));
+  // Numéro unique par conversation (les identifiants ne doivent pas se répéter d'un projet à l'autre).
+  const list = sessions.map(([t, h], i) => session(key, nextSessionNumber++, t, h, i === 2 ? "prompt" : "custom"));
   return { key, path, exists: true, isTemp: false, lastActivity: list[0]?.updatedAt ?? null, sessions: list, ...opts };
 }
 
@@ -39,7 +42,8 @@ let scan: ScanResult = {
   appDir: "C:\\Users\\moi\\AppData\\Roaming\\claude-manager",
   projects: [
     project("SiteVitrine", [["Refonte de la page d'accueil", 1], ["Formulaire de contact", 30], ["Peux-tu corriger le bug du menu mobile qui ne se ferme pas ?", 80]]),
-    project("JeuDeCartes", [["Moteur de règles", 5], ["Deck builder", 50]]),
+    // « Ouverte dans Desktop » : modifiée il y a 30 s (avertissement à la reprise).
+    project("JeuDeCartes", [["Ouverte dans Desktop", 30 / 3600], ["Moteur de règles", 5], ["Deck builder", 50]]),
     project("Scripts", [["Sauvegarde automatique", 200]]),
     project("AncienProjet", [["Migration", 900]], { exists: false }),
     project("Brouillon", [["Test", 3]], { isTemp: true, path: "C:\\Users\\moi\\AppData\\Local\\Temp\\Brouillon" }),
@@ -80,7 +84,7 @@ let config: Config = {
         { id: "sec-back", name: "Formulaires", color: null, conversationIds: ["id-disparu"], collapsed: false },
       ],
     },
-    [jeu.key]: { sections: [{ id: "sec-regles", name: "Règles", color: "#059669", conversationIds: [jeu.sessions[0].id], collapsed: true }] },
+    [jeu.key]: { sections: [{ id: "sec-regles", name: "Règles", color: "#059669", conversationIds: [jeu.sessions[1].id], collapsed: true }] },
   },
   conversations: { [site.sessions[1].id]: { color: "#dc2626" }, [site.sessions[2].id]: { color: "#fde68a" } },
   archives: [],
@@ -120,17 +124,34 @@ const archived = new Map<string, SessionInfo>();
 // ---- Faux terminal intégré : affiche une invite et renvoie ce qu'on tape. -------------
 // « /exit » termine le faux `claude`, pour tester l'état « terminé » et « Relancer ».
 
+// Nouvelle conversation (`--session-id`) : le premier message crée son « fichier » (elle
+// apparaît dans le scan avec ce message pour titre) ; « /exit » avant tout message la laisse sans fichier.
+
 const fakePtys = new Map<string, { cwd: string; line: string }>();
 const ptyOut = (key: string, data: string) => setTimeout(() => emit("pty-output", { key, data }), 0);
+
+/** Simule l'écriture du `.jsonl` d'une nouvelle conversation au premier message. */
+function fakeFirstMessage(id: string, cwd: string, text: string) {
+  if (scan.projects.some((p) => p.sessions.some((s) => s.id === id))) return;
+  const p = scan.projects.find((x) => x.path === cwd);
+  if (!p) return;
+  const s: SessionInfo = { ...session(p.key, 0, text, 0), id, title: text, titleSource: "prompt", firstPrompt: text, messageCount: 2 };
+  p.sessions = [s, ...p.sessions];
+  scan = { ...scan };
+  setTimeout(() => emit("sessions-changed", null), 300);
+}
 
 function fakePty(cmd: string, a: Record<string, unknown>): unknown {
   const key = String(a.key ?? a.sessionId ?? "");
   switch (cmd) {
-    case "pty_resume": {
+    case "pty_resume":
+    case "pty_new_session": {
       const cwd = String(a.cwd);
+      const exists = scan.projects.some((p) => p.sessions.some((s) => s.id === key));
+      const args = cmd === "pty_new_session" && !exists ? `--session-id ${key}` : `--resume ${key}`;
       if (!fakePtys.has(key)) {
         fakePtys.set(key, { cwd, line: "" });
-        ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude --resume ${key}\r\n  dans ${cwd}\r\n\r\n> `);
+        ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude ${args}\r\n  dans ${cwd}\r\n\r\n> `);
       }
       return { key, cwd, running: true };
     }
@@ -147,6 +168,7 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
             setTimeout(() => emit("pty-exit", { key, code: 0 }), 10);
             return null;
           }
+          if (line) fakeFirstMessage(key, t.cwd, line);
           ptyOut(key, `\r\n\x1b[2m(réponse fictive à « ${line} »)\x1b[0m\r\n> `);
         } else if (ch === "\x7f") {
           if (t.line) {
@@ -190,6 +212,14 @@ export function installDevMock() {
         throw "Error: Claude Desktop is not installed.";
       case "search_sessions":
         return [];
+      case "check_open_elsewhere": {
+        // Même règle que actions::may_be_open_elsewhere (2 minutes, sauf écriture de l'app).
+        const s = scan.projects.flatMap((p) => p.sessions).find((x) => x.id === a.sessionId && x.projectKey === a.projectKey);
+        const released = a.releasedAt as number | null;
+        if (s && Date.now() - s.modifiedMs < 120_000 && !(released && s.modifiedMs <= released + 5000))
+          throw "SESSION_ACTIVE: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal.";
+        return null;
+      }
       case "search_all":
         return mockSearchAll(String(a.query ?? ""));
       case "archive_session": {

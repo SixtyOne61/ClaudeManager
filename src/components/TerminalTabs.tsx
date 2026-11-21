@@ -10,6 +10,8 @@ export interface OpenTerminal {
   sessionId: string;
   cwd: string;
   title: string;
+  /** Nouvelle conversation créée par l'app : lancée avec `--session-id`. */
+  isNew?: boolean;
 }
 
 interface BarProps {
@@ -59,13 +61,23 @@ interface StackProps {
   terminals: OpenTerminal[];
   active: string | null;
   onClose: (t: OpenTerminal) => void;
+  /** `claude` a démarré dans le terminal de cette conversation. */
+  onStarted?: (t: OpenTerminal) => void;
 }
 
-export function TerminalStack({ terminals, active, onClose }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted }: StackProps) {
   return (
     <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
-        <TerminalView key={t.sessionId} sessionId={t.sessionId} cwd={t.cwd} active={active === t.sessionId} onClose={() => onClose(t)} />
+        <TerminalView
+          key={t.sessionId}
+          sessionId={t.sessionId}
+          cwd={t.cwd}
+          isNew={t.isNew}
+          active={active === t.sessionId}
+          onClose={() => onClose(t)}
+          onStarted={() => onStarted?.(t)}
+        />
       ))}
     </div>
   );

@@ -3,6 +3,7 @@
 //
 // Un terminal est repéré par une clé : l'identifiant de la conversation.
 // - ptyApi.resume(...)        lance `claude --resume <id>` (ou retrouve le terminal ouvert)
+// - ptyApi.newSession(...)    lance `claude --session-id <id>` (nouvelle conversation)
 // - ptyApi.write(key, texte)  envoie du texte au terminal (frappes, message à envoyer)
 // - isTerminalRunning(key)    vrai si `claude` tourne dans le terminal de la conversation
 // - subscribePty(key, ...)    reçoit la sortie et la fin de `claude` pour cette clé
@@ -19,6 +20,9 @@ export interface PtyInfo {
 export const ptyApi = {
   resume: (sessionId: string, cwd: string, cols: number, rows: number) =>
     invoke<PtyInfo>("pty_resume", { sessionId, cwd, cols, rows }),
+  /** `claude --session-id <id>` (ou `--resume` si le fichier existe déjà). */
+  newSession: (sessionId: string, cwd: string, cols: number, rows: number) =>
+    invoke<PtyInfo>("pty_new_session", { sessionId, cwd, cols, rows }),
   write: (key: string, data: string) => invoke<void>("pty_write", { key, data }),
   resize: (key: string, cols: number, rows: number) => invoke<void>("pty_resize", { key, cols, rows }),
   kill: (key: string) => invoke<void>("pty_kill", { key }),
@@ -62,6 +66,14 @@ export async function subscribePty(key: string, h: PtyHandlers): Promise<() => v
 export async function resumeInTerminal(sessionId: string, cwd: string, cols: number, rows: number): Promise<PtyInfo> {
   await ensureListening();
   const info = await ptyApi.resume(sessionId, cwd, cols, rows);
+  running.add(info.key);
+  return info;
+}
+
+/** Lance une nouvelle conversation dont l'app a choisi l'identifiant (ou la reprend si elle a déjà un fichier). */
+export async function newSessionInTerminal(sessionId: string, cwd: string, cols: number, rows: number): Promise<PtyInfo> {
+  await ensureListening();
+  const info = await ptyApi.newSession(sessionId, cwd, cols, rows);
   running.add(info.key);
   return info;
 }

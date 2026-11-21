@@ -57,9 +57,12 @@ struct ScanResult {
 /// Les projets connus de la configuration mais sans conversation (créés depuis l'appli,
 /// ou dont toutes les conversations sont archivées) sont ajoutés avec une liste vide.
 #[tauri::command(async)]
-fn scan(state: State<AppState>) -> ScanResult {
+fn scan(state: State<AppState>, ptys: State<pty::PtyManager>) -> ScanResult {
     let mut projects = state.scanner.scan();
-    prune_config(&state, &projects);
+    // Une nouvelle conversation lancée dans le terminal intégré n'a pas encore de fichier :
+    // sa place dans une section est gardée tant que son terminal est ouvert.
+    let open: Vec<String> = ptys.list().into_iter().map(|p| p.key).collect();
+    prune_config(&state, &projects, &open);
     let cfg = {
         let mut cfg = state.config.lock().unwrap();
         // Anciennes entrées qui rangeaient un worktree comme un projet : nettoyées en silence.
@@ -99,11 +102,13 @@ fn scan(state: State<AppState>) -> ScanResult {
 /// Retire des sections et des préférences par conversation les conversations qui
 /// n'existent plus (ni sur le disque, ni dans les archives). Sans effet si le dossier
 /// des projets de Claude est introuvable : un scan vide ne doit rien effacer.
-fn prune_config(state: &AppState, projects: &[ProjectInfo]) {
+/// `open` : conversations ouvertes dans le terminal intégré, conservées même sans fichier.
+fn prune_config(state: &AppState, projects: &[ProjectInfo], open: &[String]) {
     if !state.scanner.root().is_dir() {
         return;
     }
-    let existing: HashSet<String> = projects.iter().flat_map(|p| p.sessions.iter().map(|s| s.id.clone())).collect();
+    let mut existing: HashSet<String> = projects.iter().flat_map(|p| p.sessions.iter().map(|s| s.id.clone())).collect();
+    existing.extend(open.iter().cloned());
     let mut cfg = state.config.lock().unwrap();
     if config::prune_conversations(&mut cfg, &existing) {
         let _ = state.save_config(&cfg);
@@ -215,6 +220,16 @@ Claude Desktop affichera probablement « Failed to load session ».",
         ));
     }
     desktop::open_in_desktop(&target.dir, &session_id)
+}
+
+/// Avant d'ouvrir une conversation dans le terminal intégré : erreur préfixée
+/// `SESSION_ACTIVE` si son fichier a été modifié il y a moins de 2 minutes par un autre
+/// programme (Claude Desktop, un autre terminal). `released_at` : moment (ms) où l'app a
+/// fermé son propre terminal pour cette conversation, ses écritures ne comptent pas.
+#[tauri::command(async)]
+fn check_open_elsewhere(state: State<AppState>, project_key: String, session_id: String, released_at: Option<u64>) -> Result<(), String> {
+    let files = SessionFiles::locate(state.scanner.root(), &project_key, &session_id)?;
+    files.check_not_open_elsewhere(released_at)
 }
 
 #[tauri::command]
@@ -381,7 +396,9 @@ pub fn run() {
             restore_archive,
             trash_session,
             trash_archive,
+            check_open_elsewhere,
             pty::commands::pty_resume,
+            pty::commands::pty_new_session,
             pty::commands::pty_write,
             pty::commands::pty_resize,
             pty::commands::pty_kill,
