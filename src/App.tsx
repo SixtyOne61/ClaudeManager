@@ -27,6 +27,7 @@ import { openInDesktop } from "./desktop";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
 import { putConversationInSection } from "./sections";
+import { getActivities, getActivity, interruptionWarning } from "./activity";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
 const NEW_CONVERSATION_TITLE = "Nouvelle conversation";
@@ -132,7 +133,15 @@ export default function App() {
   // et demande confirmation ici.
   useEffect(() => {
     const unlisten = listen("pty-close-requested", async () => {
-      const ok = await ask("Une conversation tourne encore dans le terminal intégré.\nQuitter arrêtera Claude Code dans tous les onglets.", {
+      // Comme pour un onglet : on ne demande que si quitter interromprait un agent au travail
+      // ou une action en attente de permission.
+      const busy = [...getActivities().values()].filter((a) => interruptionWarning(a)).length;
+      if (busy === 0) {
+        ptyApi.quit();
+        return;
+      }
+      const what = busy > 1 ? `${busy} conversations ont un agent au travail ou une action en attente.` : "Une conversation a un agent au travail ou une action en attente.";
+      const ok = await ask(`${what}\nQuitter les interrompra (les conversations restent enregistrées).`, {
         title: "Quitter Claude Manager",
         kind: "warning",
         okLabel: "Quitter",
@@ -328,9 +337,13 @@ export default function App() {
   };
 
   const closeTerminal = async (t: OpenTerminal) => {
-    if (isTerminalRunning(t.sessionId)) {
-      const ok = await ask(`Arrêter Claude Code dans « ${t.title} » et fermer l'onglet ?`, {
-        title: "Fermer le terminal",
+    // On ne prévient que si fermer interromprait quelque chose : l'agent travaille, ou une
+    // action attend ta permission. Une conversation qui attend simplement ton message se ferme
+    // sans question : elle reste enregistrée et se reprend plus tard.
+    const warning = isTerminalRunning(t.sessionId) ? interruptionWarning(getActivity(t.sessionId)) : null;
+    if (warning) {
+      const ok = await ask(`${warning}\n\nFermer « ${t.title} » quand même ?`, {
+        title: "Fermer la conversation",
         kind: "warning",
         okLabel: "Fermer",
         cancelLabel: "Annuler",

@@ -93,6 +93,22 @@ export function subscribeActivity(sessionId: string, f: (a: Activity | null) => 
   };
 }
 
+/** États de toutes les conversations actives (hors React). */
+export function getActivities(): ReadonlyMap<string, Activity> {
+  ensureStarted();
+  return store;
+}
+
+/**
+ * Ce que fermer la conversation interromprait, ou null s'il n'y a rien à interrompre
+ * (l'agent a fini son tour et attend simplement un message).
+ */
+export function interruptionWarning(a: Activity | null | undefined): string | null {
+  if (a?.state === "running") return "L'agent est en train de travailler : fermer l'arrêtera en cours de route.";
+  if (isAwaitingPermission(a)) return "Une action attend ta permission : fermer l'annulera.";
+  return null;
+}
+
 export function activityStatus(a: Activity | null | undefined): ActivityState {
   return a?.state ?? "ended";
 }
