@@ -1,21 +1,14 @@
 // Interface de conversation dessinée par l'app par-dessus le terminal intégré (ticket 05) :
-// messages de l'utilisateur, réponses de l'agent (Markdown) et une carte par action de
-// l'agent (commande et sa sortie, fichier lu, fichier modifié avec la différence de code).
-// Les résultats d'outils trop longs sont repliés. La zone de saisie est `ConversationInput`.
+// messages de l'utilisateur (bulles à droite), réponses de Claude (texte Markdown à gauche,
+// sous une étiquette « Claude ») et ses actions, regroupées en lignes compactes
+// (`ConversationActions`). La zone de saisie est `ConversationInput`.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { Bot, ChevronDown, ChevronRight, FilePen, FilePlus, FileText, Globe, ListTodo, Search, SendHorizontal, Square, SquareTerminal, Wrench } from "lucide-react";
-import type { ConversationData, ConversationEntry, DiffLine } from "../conversation";
+import { SendHorizontal, Sparkle, Square } from "lucide-react";
+import { groupEntries, type ClaudeItem, type ConversationData, type ConversationEntry } from "../conversation";
 import { renderMarkdown } from "../markdown";
+import { ActionGroup } from "./ConversationActions";
 import type { SearchFocus } from "./GlobalSearch";
-
-type ToolEntry = Extract<ConversationEntry, { kind: "tool" }>;
-type ResultEntry = Extract<ConversationEntry, { kind: "toolResult" }>;
-
-/** Lignes affichées d'un résultat ou d'une différence replié. */
-const FOLD_LINES = 12;
-/** Au-delà de ces caractères, un résultat est aussi replié (lignes très longues). */
-const FOLD_CHARS = 1500;
 
 interface Props {
   data: ConversationData;
@@ -29,12 +22,8 @@ export function ConversationView({ data, focus, hidden }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
 
-  // Résultats rattachés à leur appel d'outil.
-  const results = useMemo(() => {
-    const m = new Map<string, ResultEntry>();
-    for (const e of data.entries) if (e.kind === "toolResult") m.set(e.toolUseId, e);
-    return m;
-  }, [data.entries]);
+  // Tours de Claude et groupes d'actions consécutives.
+  const blocks = useMemo(() => groupEntries(data.entries), [data.entries]);
 
   // Reste collé en bas quand de nouveaux éléments arrivent, si on y était déjà.
   useLayoutEffect(() => {
@@ -81,23 +70,18 @@ export function ConversationView({ data, focus, hidden }: Props) {
         {data.headSkipped && <div className="conv-notice">Début de la conversation non affiché (fichier volumineux) : il reste visible dans le terminal.</div>}
         {data.exists === false && <div className="conv-empty">Nouvelle conversation : écris ton premier message ci-dessous.</div>}
         {data.exists && data.entries.length === 0 && <div className="conv-empty">Aucun message pour l'instant.</div>}
-        {data.entries.map((e, i) => {
-          const key = `${e.line}:${i}`;
-          switch (e.kind) {
+        {blocks.map((b) => {
+          switch (b.kind) {
             case "user":
-              return <UserBubble key={key} entry={e} />;
-            case "assistant":
-              return <AssistantText key={key} line={e.line} uuid={e.uuid} text={e.text} />;
-            case "tool":
-              return <ToolCard key={key} entry={e} result={results.get(e.id)} />;
+              return <UserBubble key={b.key} entry={b.entry} />;
             case "notice":
               return (
-                <div key={key} className="conv-notice" data-line={e.line} data-uuid={e.uuid ?? undefined}>
-                  {e.text}
+                <div key={b.key} className="conv-notice" data-line={b.entry.line} data-uuid={b.entry.uuid ?? undefined}>
+                  {b.entry.text}
                 </div>
               );
-            default:
-              return null; // résultats : affichés dans la carte de leur appel
+            case "claude":
+              return <ClaudeTurn key={b.key} items={b.items} />;
           }
         })}
       </div>
@@ -118,116 +102,23 @@ const AssistantText = memo(function AssistantText({ line, uuid, text }: { line: 
   return <div className="conv-assistant markdown" data-line={line} data-uuid={uuid ?? undefined} dangerouslySetInnerHTML={{ __html: html }} />;
 });
 
-/** Libellé et icône d'une action, d'après le nom de l'outil. */
-function toolLabel(name: string) {
-  switch (name) {
-    case "Bash":
-    case "PowerShell":
-      return { label: "Commande", Icon: SquareTerminal };
-    case "Read":
-    case "NotebookRead":
-      return { label: "Lecture", Icon: FileText };
-    case "Edit":
-    case "MultiEdit":
-    case "NotebookEdit":
-      return { label: "Modification", Icon: FilePen };
-    case "Write":
-      return { label: "Écriture", Icon: FilePlus };
-    case "Grep":
-    case "Glob":
-      return { label: "Recherche", Icon: Search };
-    case "WebFetch":
-    case "WebSearch":
-      return { label: "Web", Icon: Globe };
-    case "Task":
-    case "Agent":
-      return { label: "Sous-agent", Icon: Bot };
-    case "TodoWrite":
-      return { label: "Tâches", Icon: ListTodo };
-    default:
-      return { label: name, Icon: Wrench };
-  }
-}
-
-const ToolCard = memo(function ToolCard({ entry, result }: { entry: ToolEntry; result: ResultEntry | undefined }) {
-  const { label, Icon } = toolLabel(entry.name);
-  // Lecture de fichier : contenu replié entièrement ; modification réussie : message de l'outil masqué.
-  const isRead = entry.name === "Read";
-  const hideResult = entry.diff != null && result != null && !result.isError;
+/** Tour de Claude : étiquette « Claude », puis ses textes et groupes d'actions. */
+function ClaudeTurn({ items }: { items: ClaudeItem[] }) {
   return (
-    <div className={"tool-card" + (result?.isError ? " error" : "")} data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
-      <div className="tool-head">
-        <Icon size={14} />
-        <span className="tool-label">{label}</span>
-        <span className="tool-title" title={entry.title}>
-          {entry.title}
+    <div className="conv-claude">
+      <div className="conv-claude-head">
+        <span className="conv-claude-avatar">
+          <Sparkle size={10} />
         </span>
-        {!result && <span className="tool-pending">…</span>}
+        Claude
       </div>
-      {entry.detail && <div className="tool-detail">{entry.detail}</div>}
-      {entry.diff && <DiffView lines={entry.diff} truncated={entry.diffTruncated} />}
-      {result && !hideResult && (
-        <FoldedText text={result.text} truncated={result.truncated} startFolded={isRead} error={result.isError} />
-      )}
-    </div>
-  );
-});
-
-function DiffView({ lines, truncated }: { lines: DiffLine[]; truncated: boolean }) {
-  const [open, setOpen] = useState(false);
-  const long = lines.length > FOLD_LINES * 2;
-  const shown = long && !open ? lines.slice(0, FOLD_LINES * 2) : lines;
-  return (
-    <div className="tool-output diff">
-      {shown.map((l, i) =>
-        l.op === "~" ? (
-          <div key={i} className="diff-sep" />
+      {items.map((it) =>
+        it.kind === "text" ? (
+          <AssistantText key={it.key} line={it.entry.line} uuid={it.entry.uuid} text={it.entry.text} />
         ) : (
-          <div key={i} className={"diff-line" + (l.op === "+" ? " add" : l.op === "-" ? " del" : "")}>
-            <span className="diff-op">{l.op}</span>
-            {l.text}
-          </div>
+          <ActionGroup key={it.key} actions={it.actions} />
         ),
       )}
-      {long && (
-        <button className="fold-btn" onClick={() => setOpen(!open)}>
-          {open ? "Replier" : `Afficher tout (${lines.length} lignes${truncated ? ", tronqué" : ""})`}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function FoldedText({ text, truncated, startFolded, error }: { text: string; truncated: boolean; startFolded: boolean; error: boolean }) {
-  const lines = useMemo(() => text.split("\n"), [text]);
-  const long = lines.length > FOLD_LINES || text.length > FOLD_CHARS;
-  const [open, setOpen] = useState(false);
-  if (!text.trim()) return null;
-  if (startFolded && !open) {
-    return (
-      <button className="fold-btn standalone" onClick={() => setOpen(true)}>
-        <ChevronRight size={13} /> Afficher le contenu ({lines.length} lignes)
-      </button>
-    );
-  }
-  const shown = long && !open ? lines.slice(0, FOLD_LINES).join("\n").slice(0, FOLD_CHARS) : text;
-  return (
-    <div className={"tool-output" + (error ? " error" : "")}>
-      <pre>{shown}</pre>
-      {(long || startFolded) && (
-        <button className="fold-btn" onClick={() => setOpen(!open)}>
-          {open ? (
-            <>
-              <ChevronDown size={13} /> Replier
-            </>
-          ) : (
-            <>
-              <ChevronRight size={13} /> Afficher tout ({lines.length} lignes)
-            </>
-          )}
-        </button>
-      )}
-      {open && truncated && <div className="tool-truncated">Résultat tronqué : la suite est visible dans le terminal.</div>}
     </div>
   );
 }

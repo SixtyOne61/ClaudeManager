@@ -188,6 +188,24 @@ function demoTranscript(): ConversationEntry[] {
     { kind: "toolResult", line: 10, toolUseId: "t3", text: "The file has been updated.", isError: false, truncated: false },
     { kind: "tool", line: 11, uuid: "d11", id: "t4", name: "Bash", title: "npm test", detail: "Lance les tests", path: null, diff: null, diffTruncated: false },
     { kind: "toolResult", line: 12, toolUseId: "t4", text: "Exit code 1\n1 test échoué : menu.test.js", isError: true, truncated: false },
+    { kind: "tool", line: 12, uuid: "d12a", id: "t5", name: "Grep", title: "toggleMenu", detail: "src", path: null, diff: null, diffTruncated: false },
+    { kind: "toolResult", line: 12, toolUseId: "t5", text: "src/menu.js:3\nsrc/menu.test.js:8", isError: false, truncated: false },
+    {
+      kind: "tool",
+      line: 12,
+      uuid: "d12b",
+      id: "t6",
+      name: "mcp__Claude_Browser__browser_batch",
+      title: '{"actions":[{"name":"navigate","input":{"url":"http://localhost:1420"}},{"name":"computer","input":{"action":"screenshot"}}]}',
+      detail: null,
+      path: null,
+      diff: null,
+      diffTruncated: false,
+    },
+    { kind: "toolResult", line: 12, toolUseId: "t6", text: "Capture d'écran prise.", isError: false, truncated: false },
+    { kind: "tool", line: 12, uuid: "d12c", id: "t7", name: "Read", title: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.test.js", detail: null, path: null, diff: null, diffTruncated: false },
+    { kind: "toolResult", line: 12, toolUseId: "t7", text: "1\timport { toggleMenu } from './menu.js';", isError: false, truncated: false },
+    { kind: "assistant", line: 12, uuid: "d12d", text: "Le test attendait l'ancien comportement : je le mets à jour." },
     { kind: "user", line: 13, uuid: "d13", text: "/model opus", command: true },
     { kind: "notice", line: 14, uuid: "d14", text: "Modèle : opus" },
   ];
@@ -214,6 +232,12 @@ function fakeReply(id: string, text: string) {
     () => {
       const tool = [...t].reverse().find((e) => e.kind === "tool")!;
       t.push({ kind: "toolResult", line: next(), toolUseId: (tool as { id: string }).id, text: "menu.js\nstyles.css", isError: false, truncated: false });
+    },
+    // Deuxième action du même groupe : la ligne repliée suit la dernière action en direct.
+    () => t.push({ kind: "tool", line: next(), uuid: `m${next()}`, id: `x${next()}`, name: "Read", title: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", detail: null, path: null, diff: null, diffTruncated: false }),
+    () => {
+      const tool = [...t].reverse().find((e) => e.kind === "tool")!;
+      t.push({ kind: "toolResult", line: next(), toolUseId: (tool as { id: string }).id, text: "1\tfunction toggleMenu() {}", isError: false, truncated: false });
     },
     () => t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: "C'est fait. *Réponse fictive* du faux backend." }),
   ];
