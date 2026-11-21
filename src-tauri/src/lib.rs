@@ -58,6 +58,7 @@ struct ScanResult {
 #[tauri::command(async)]
 fn scan(state: State<AppState>) -> ScanResult {
     let mut projects = state.scanner.scan();
+    prune_config(&state, &projects);
     let cfg = {
         let mut cfg = state.config.lock().unwrap();
         // Anciennes entrées qui rangeaient un worktree comme un projet : nettoyées en silence.
@@ -91,6 +92,20 @@ fn scan(state: State<AppState>) -> ScanResult {
         terminal: state.terminal.label(),
         claude_root: state.scanner.root().to_string_lossy().to_string(),
         app_dir: state.paths.app_dir.to_string_lossy().to_string(),
+    }
+}
+
+/// Retire des sections et des préférences par conversation les conversations qui
+/// n'existent plus (ni sur le disque, ni dans les archives). Sans effet si le dossier
+/// des projets de Claude est introuvable : un scan vide ne doit rien effacer.
+fn prune_config(state: &AppState, projects: &[ProjectInfo]) {
+    if !state.scanner.root().is_dir() {
+        return;
+    }
+    let existing: HashSet<String> = projects.iter().flat_map(|p| p.sessions.iter().map(|s| s.id.clone())).collect();
+    let mut cfg = state.config.lock().unwrap();
+    if config::prune_conversations(&mut cfg, &existing) {
+        let _ = state.save_config(&cfg);
     }
 }
 

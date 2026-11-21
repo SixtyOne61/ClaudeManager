@@ -318,6 +318,7 @@ export default function App() {
           onForget={() => forgetProject(selectedProject)}
           onError={showError}
           focus={searchFocus && !searchFocus.archived && searchFocus.projectKey === selectedProject.key ? searchFocus : null}
+          onConfigChange={updateConfig}
         />
       ) : (
         <main className="main empty-main">Sélectionnez un projet.</main>
