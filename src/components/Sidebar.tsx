@@ -35,7 +35,7 @@ import { colorStyle, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
 import { ActivityCounts } from "./Activity";
-import { countActivities, useActivities } from "../activity";
+import { countActivities, useActivities, type ActivityCount } from "../activity";
 
 /** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
 const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((s) => s.id));
@@ -83,7 +83,7 @@ export function Sidebar(props: Props) {
   const { config, projects } = props;
   const [dragId, setDragId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
-  // État des conversations : compteurs « en cours » et « attend ta réponse ».
+  // État des conversations : compteurs « en cours » et « action requise ».
   const activities = useActivities();
 
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
@@ -317,7 +317,7 @@ function CategoryBlock(props: {
   category: Category;
   count: number;
   /** Conversations en cours / en attente de réponse dans la catégorie. */
-  activity: { running: number; waiting: number };
+  activity: ActivityCount;
   collapsed: boolean;
   onToggle: () => void;
   onRename: () => void;
@@ -373,7 +373,7 @@ function ProjectRow(props: {
   color?: string | null;
   selected: boolean;
   /** Conversations en cours / en attente de réponse dans le projet. */
-  activity: { running: number; waiting: number };
+  activity: ActivityCount;
   onClick: () => void;
 }) {
   const { project: p } = props;

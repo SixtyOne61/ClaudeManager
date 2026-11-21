@@ -4,6 +4,8 @@
 
 import { FolderKanban, SquareTerminal, X } from "lucide-react";
 import { TerminalView } from "./TerminalView";
+import { ActivityDot } from "./Activity";
+import { useActivities } from "../activity";
 import type { SearchFocus } from "./GlobalSearch";
 
 /** Une conversation ouverte dans le terminal intégré. */
@@ -24,6 +26,8 @@ interface BarProps {
 }
 
 export function TerminalTabBar({ terminals, active, onSelect, onClose }: BarProps) {
+  // État de chaque conversation ouverte : pastille dans son onglet.
+  const activities = useActivities();
   if (terminals.length === 0) return null;
   return (
     <div className="terminal-tabs" role="tablist">
@@ -41,6 +45,7 @@ export function TerminalTabBar({ terminals, active, onSelect, onClose }: BarProp
           title={`${t.title}\n${t.cwd}`}
         >
           <SquareTerminal size={14} />
+          <ActivityDot activity={activities.get(t.sessionId)} compact />
           <span className="terminal-tab-title">{t.title}</span>
           <button
             className="icon-btn bare"

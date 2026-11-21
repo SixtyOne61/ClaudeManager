@@ -509,7 +509,7 @@ function SectionBlock(props: {
 function SessionRow(props: {
   session: SessionInfo;
   color: string | null;
-  /** État de la conversation (absent : terminée). */
+  /** État de la conversation (absent : fermée). */
   activity?: Activity;
   canLaunch: boolean;
   onLaunch: () => void;

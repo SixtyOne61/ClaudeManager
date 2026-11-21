@@ -1,5 +1,20 @@
-//! État des conversations (en cours, attend ta réponse, terminée), suivi par des hooks
-//! de Claude Code.
+//! État des conversations, suivi par des hooks de Claude Code.
+//!
+//! Le fichier d'état garde l'état brut ([`State`] + [`Kind`]) ; l'interface
+//! (`src/activity.ts`, `activityDisplay`) en tire les quatre états affichés :
+//!
+//! | Hook                                           | State / Kind          | Affiché         |
+//! |------------------------------------------------|-----------------------|-----------------|
+//! | `UserPromptSubmit`                             | running / prompt      | en cours        |
+//! | `PreToolUse`, `PostToolUse`                    | running / tool        | en cours        |
+//! | `PermissionRequest` (AskUserQuestion)          | waiting / question    | action requise  |
+//! | `PermissionRequest` (autre outil)              | waiting / permission  | action requise  |
+//! | `Notification` permission_prompt               | waiting / permission  | action requise  |
+//! | `Notification` elicitation_*, agent_needs_input| waiting / question    | action requise  |
+//! | `StopFailure`                                  | waiting / error       | action requise  |
+//! | `Stop`, `Notification` idle_prompt             | waiting / turn        | à toi           |
+//! | `SessionStart`, lancement par l'app            | waiting / start       | à toi           |
+//! | `SessionEnd`, terminal intégré arrêté          | ended / end, ou aucun | fermée          |
 //!
 //! # Fonctionnement
 //!
@@ -15,7 +30,7 @@
 //!   `%APPDATA%\claude-manager\state\<session_id>.json` ([`Activity`]), puis se termine
 //!   toujours avec succès.
 //! - L'app surveille ce dossier ([`start_watcher`]) et émet [`EVT_ACTIVITY`] vers
-//!   l'interface. Une conversation dont le terminal intégré ne tourne pas est *terminée*,
+//!   l'interface. Une conversation dont le terminal intégré ne tourne pas est *fermée*,
 //!   quoi que dise son fichier : l'évènement porte alors `activity: null`.
 //!
 //! Pas de réseau, pas de port local.
@@ -91,7 +106,7 @@ pub struct Activity {
     pub at: u64,
 }
 
-/// Évènement envoyé à l'interface. `activity: None` : conversation terminée.
+/// Évènement envoyé à l'interface. `activity: None` : conversation fermée.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityEvent {
@@ -245,7 +260,7 @@ pub fn settings_args() -> Vec<String> {
     }
 }
 
-/// Appelé juste après le lancement de `claude` : état initial « attend ta réponse »
+/// Appelé juste après le lancement de `claude` : état initial « à toi »
 /// (question de confiance du dossier, ou attente du premier message), qui remplace un
 /// éventuel état périmé d'un lancement précédent. Le hook `SessionStart` suivra.
 pub fn on_launched(session_id: &str) {
@@ -253,7 +268,7 @@ pub fn on_launched(session_id: &str) {
     let _ = write_activity(&state_dir(&AppPaths::detect().app_dir), &a);
 }
 
-/// État effectif : `None` (terminée) si le terminal intégré ne tourne pas ou si la
+/// État effectif : `None` (fermée) si le terminal intégré ne tourne pas ou si la
 /// session s'est terminée.
 fn effective(app: &AppHandle, dir: &Path, session_id: &str) -> Option<Activity> {
     if !app.state::<PtyManager>().is_running(session_id) {
@@ -350,6 +365,30 @@ mod tests {
         assert_eq!(activity_from_hook("pas du json", 1), None);
         assert_eq!(activity_from_hook(r#"{"hook_event_name":"Stop"}"#, 1), None);
         assert_eq!(activity_from_hook(r#"{"session_id":"..\\..\\x","hook_event_name":"Stop"}"#, 1), None);
+    }
+
+    /// Parcours réel d'un tour : la permission accordée repasse « en cours », la fin de tour
+    /// et la notification d'inactivité donnent « à toi » (waiting / turn), jamais une action requise.
+    #[test]
+    fn turn_sequence() {
+        use Kind::*;
+        use State::*;
+        let bash = r#","tool_name":"Bash","tool_input":{"command":"npm test"}"#;
+        let steps = [
+            hook("UserPromptSubmit", r#","prompt":"lance les tests""#),
+            hook("PreToolUse", bash),
+            hook("PermissionRequest", bash),
+            hook("Notification", r#","notification_type":"permission_prompt""#),
+            // Permission accordée : l'outil s'exécute puis PostToolUse.
+            hook("PostToolUse", bash),
+            hook("Stop", ""),
+            hook("Notification", r#","message":"Claude is waiting for your input","notification_type":"idle_prompt""#),
+        ];
+        let got: Vec<(State, Kind)> = steps.into_iter().map(|a| a.map(|a| (a.state, a.kind)).unwrap()).collect();
+        assert_eq!(got, vec![(Running, Prompt), (Running, Tool), (Waiting, Permission), (Waiting, Permission), (Running, Tool), (Waiting, Turn), (Waiting, Turn)]);
+        // idle_prompt n'est ni une permission ni une question.
+        let idle = hook("Notification", r#","notification_type":"idle_prompt""#).unwrap();
+        assert!(!matches!(idle.kind, Permission | Question | Error));
     }
 
     #[test]

@@ -259,8 +259,8 @@ function fakeConversationRead(a: Record<string, unknown>) {
 
 // ---- Faux états des conversations (hooks) ---------------------------------------------
 // Une conversation reprise attend un message ; un message la passe « en cours », puis
-// elle attend une réponse (une permission si le message contient « permission »).
-// Deux conversations tournent dès le départ et changent d'état toutes les 3 s.
+// elle est « à toi » (ou « action requise » si le message contient « permission »).
+// Deux conversations parcourent les quatre états (demoCycle) toutes les 3 s.
 
 type FakeActivity = { state: "running" | "waiting"; kind: string; detail?: string; event?: string };
 const activities = new Map<string, FakeActivity & { sessionId: string; event: string; at: number }>();
@@ -285,11 +285,16 @@ function fakeTurn(key: string, line: string) {
   );
 }
 
-const demoCycle: FakeActivity[] = [
+// Les quatre états : en cours, action requise (permission, question, erreur), à toi, fermée (null).
+const demoCycle: (FakeActivity | null)[] = [
   { state: "running", kind: "tool", detail: "Edit" },
   { state: "waiting", kind: "permission", detail: "Bash" },
   { state: "running", kind: "tool", detail: "Bash" },
   { state: "waiting", kind: "turn" },
+  { state: "waiting", kind: "question", detail: "AskUserQuestion" },
+  { state: "waiting", kind: "error", detail: "rate_limit" },
+  { state: "waiting", kind: "turn", event: "Notification", detail: "idle_prompt" },
+  null,
 ];
 
 function startDemoActivity() {
