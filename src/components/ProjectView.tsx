@@ -31,6 +31,7 @@ import {
   MessageSquarePlus,
   Pencil,
   Play,
+  Plus,
   Search,
   GitBranch,
   Trash2,
@@ -64,6 +65,11 @@ interface Props {
   terminal: string;
   /** `path` : dossier où relancer (worktree), sinon celui du projet. */
   onLaunch: (sessionId?: string, path?: string) => void;
+  /**
+   * Nouvelle conversation dans le terminal intégré, rangée dans `sectionId` : bouton « + »
+   * de l'en-tête d'une section, ou `null` (« Sans section ») pour le bouton principal.
+   */
+  onNew: (sectionId: string | null) => void;
   onOpenInDesktop: (s: SessionInfo) => void;
   /** Ouvre la conversation dans le terminal intégré. */
   onOpen: (s: SessionInfo) => void;
@@ -234,8 +240,16 @@ export function ProjectView(props: Props) {
           <FolderOpen size={13} /> {p.path ?? "Chemin inconnu"}
         </button>
         <div className="project-actions">
-          <button className="btn primary" disabled={!canLaunch} onClick={() => props.onLaunch()} title={`Ouvre ${props.terminal} et lance « claude »`}>
+          <button
+            className="btn primary"
+            disabled={!canLaunch}
+            onClick={() => props.onNew(null)}
+            title={"Lance « claude » dans le terminal intégré" + (hasSections ? " (rangée dans « Sans section »)" : "")}
+          >
             <MessageSquarePlus size={15} /> Nouvelle conversation
+          </button>
+          <button className="btn ghost" disabled={!canLaunch} onClick={() => props.onLaunch()} title={`Ouvre ${props.terminal} et lance « claude »`}>
+            <ExternalLink size={14} /> Nouveau dans un terminal externe
           </button>
           <ColorPicker value={color} onChange={props.onColor} title="Couleur" />
           <select className="select" value={categoryId} onChange={(e) => props.onMove(e.target.value || null)} title="Catégorie">
@@ -312,6 +326,15 @@ export function ProjectView(props: Props) {
                   onRename={() => setSectionDialog({ kind: "rename", section })}
                   onDelete={() => confirmDeleteSection(section)}
                   onColor={(color) => change((c) => setSectionColor(c, p.key, section.id, color))}
+                  onNew={
+                    canLaunch
+                      ? () => {
+                          // Section repliée : dépliée pour voir la nouvelle conversation.
+                          if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
+                          props.onNew(section.id);
+                        }
+                      : undefined
+                  }
                 >
                   {list.map(row)}
                 </SectionBlock>
@@ -378,6 +401,8 @@ function SectionBlock(props: {
   onRename: () => void;
   onDelete: () => void;
   onColor: (c: string | null) => void;
+  /** Nouvelle conversation dans cette section (absent si le projet ne peut pas lancer Claude). */
+  onNew?: () => void;
   children: React.ReactNode;
 }) {
   const { section } = props;
@@ -406,6 +431,11 @@ function SectionBlock(props: {
         </span>
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
+          {props.onNew && (
+            <button className="icon-btn" title="Nouvelle conversation dans cette section (terminal intégré)" onClick={props.onNew}>
+              <Plus size={13} />
+            </button>
+          )}
           <button className="icon-btn" title="Renommer" onClick={props.onRename}>
             <Pencil size={13} />
           </button>
@@ -458,6 +488,12 @@ function SessionRow(props: {
         <div className="session-title" title={s.firstPrompt ?? s.title}>
           {s.title}
         </div>
+        {s.provisional ? (
+          <div className="session-meta">
+            <span>Pas encore de message : envoyez-en un dans le terminal intégré</span>
+            <span className="session-id">{s.id.slice(0, 8)}</span>
+          </div>
+        ) : (
         <div className="session-meta">
           <span title={`Créée le ${formatDate(s.createdAt)}`}>{formatDate(s.updatedAt)}</span>
           <span className="dot">·</span>
@@ -481,11 +517,16 @@ function SessionRow(props: {
           )}
           <span className="session-id">{s.id.slice(0, 8)}</span>
         </div>
+        )}
       </div>
-      <div className="session-actions" onPointerDown={stop}>
+      {/* Les clics des boutons ne remontent pas à la ligne (sinon la conversation s'ouvrirait deux fois). */}
+      <div className="session-actions" onPointerDown={stop} onClick={(e) => e.stopPropagation()}>
         <button className="btn small primary" disabled={!canLaunch} onClick={props.onOpen} title="claude --resume, dans le terminal intégré">
           <Play size={13} /> Reprendre
         </button>
+        {/* Sans fichier, rien d'autre n'est possible : reprise externe, Desktop, archive, Corbeille. */}
+        {!s.provisional && (
+        <>
         <button className="icon-btn" disabled={!canLaunch} onClick={props.onLaunch} title={`Ouvrir dans un terminal externe (${props.terminal})`}>
           <ExternalLink size={15} />
         </button>
@@ -499,6 +540,8 @@ function SessionRow(props: {
         <button className="icon-btn danger" title="Mettre à la Corbeille" onClick={props.onTrash}>
           <Trash2 size={15} />
         </button>
+        </>
+        )}
       </div>
     </div>
   );

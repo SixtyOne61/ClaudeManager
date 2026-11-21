@@ -8,35 +8,42 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { RotateCcw, TriangleAlert, X } from "lucide-react";
 import { errorMessage } from "../api";
-import { ptyApi, resumeInTerminal, subscribePty } from "../pty";
+import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "../pty";
 
 interface Props {
   sessionId: string;
   cwd: string;
+  /** Nouvelle conversation : `claude --session-id` au lieu de `--resume`. */
+  isNew?: boolean;
   active: boolean;
   onClose: () => void;
+  /** Appelé après chaque lancement réussi de `claude`. */
+  onStarted?: () => void;
 }
 
 type RunState = { kind: "starting" } | { kind: "running" } | { kind: "exited"; code: number | null } | { kind: "error"; message: string };
 
-export function TerminalView({ sessionId, cwd, active, onClose }: Props) {
+export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [state, setState] = useState<RunState>({ kind: "starting" });
+  const onStartedRef = useRef(onStarted);
+  onStartedRef.current = onStarted;
 
-  /** Lance `claude --resume` (au montage, et via « Relancer »). */
+  /** Lance `claude --resume` ou `--session-id` (au montage, et via « Relancer »). */
   const start = useCallback(async () => {
     const term = termRef.current;
     if (!term) return;
     setState({ kind: "starting" });
     try {
-      await resumeInTerminal(sessionId, cwd, term.cols, term.rows);
+      await (isNew ? newSessionInTerminal : resumeInTerminal)(sessionId, cwd, term.cols, term.rows);
       setState({ kind: "running" });
+      onStartedRef.current?.();
     } catch (e) {
       setState({ kind: "error", message: errorMessage(e) });
     }
-  }, [sessionId, cwd]);
+  }, [sessionId, cwd, isNew]);
 
   // Création du terminal xterm, une seule fois par conversation ouverte.
   useEffect(() => {

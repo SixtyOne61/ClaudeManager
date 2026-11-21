@@ -72,10 +72,26 @@ pub fn resume_args(session_id: &str) -> Result<Vec<String>, String> {
 }
 
 /// Arguments pour démarrer une nouvelle conversation dont on choisit l'identifiant.
-#[allow(dead_code)] // Pour le ticket « Nouvelle conversation dans le terminal intégré ».
 pub fn new_session_args(session_id: &str) -> Result<Vec<String>, String> {
     crate::actions::validate_session_id(session_id)?;
     Ok(vec!["--session-id".into(), session_id.into()])
+}
+
+/// Arguments pour une conversation créée par l'app : `--session-id` tant que son fichier
+/// n'existe pas, `--resume` ensuite (« Relancer » après un premier message ; Claude Code
+/// refuse un `--session-id` déjà utilisé).
+pub fn new_or_resume_args(session_id: &str, file_exists: bool) -> Result<Vec<String>, String> {
+    if file_exists { resume_args(session_id) } else { new_session_args(session_id) }
+}
+
+/// Vrai si `<id>.jsonl` existe dans l'un des dossiers de projets de Claude Code.
+pub fn session_file_exists(projects_root: &Path, session_id: &str) -> bool {
+    let name = format!("{session_id}.jsonl");
+    std::fs::read_dir(projects_root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|d| d.path().join(&name).is_file())
 }
 
 /// Écrit un dossier sous une forme unique : barres obliques inverses, lettre de lecteur
@@ -376,6 +392,9 @@ mod tests {
         assert_eq!(resume_args(id).unwrap(), ["--resume", id]);
         assert_eq!(new_session_args(id).unwrap(), ["--session-id", id]);
         assert!(resume_args("x; calc").is_err());
+        assert_eq!(new_or_resume_args(id, false).unwrap(), ["--session-id", id]);
+        assert_eq!(new_or_resume_args(id, true).unwrap(), ["--resume", id]);
+        assert!(new_or_resume_args("x y", false).is_err());
 
         let mut args = resume_args(id).unwrap();
         args.extend(["--settings".to_string(), r"C:\t\s.json".to_string()]);
@@ -383,6 +402,18 @@ mod tests {
         assert_eq!(exe, [r"C:\bin\claude.exe", "--resume", id, "--settings", r"C:\t\s.json"]);
         let cmd = build_argv(Path::new(r"C:\npm\claude.CMD"), &resume_args(id).unwrap());
         assert_eq!(cmd, ["cmd.exe", "/d", "/c", r"C:\npm\claude.CMD", "--resume", id]);
+    }
+
+    #[test]
+    fn finds_session_file_in_any_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "28cde7fb-e61a-4bd9-a66f-10ba27d395a5";
+        std::fs::create_dir_all(tmp.path().join("C--a")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("C--b")).unwrap();
+        assert!(!session_file_exists(tmp.path(), id));
+        std::fs::write(tmp.path().join("C--b").join(format!("{id}.jsonl")), "{}\n").unwrap();
+        assert!(session_file_exists(tmp.path(), id));
+        assert!(!session_file_exists(&tmp.path().join("absent"), id));
     }
 
     #[test]
@@ -424,13 +455,31 @@ mod tests {
 
 /// Commandes Tauri du terminal intégré (voir `src/pty.ts` côté interface).
 pub mod commands {
-    use super::{resume_args, LaunchSpec, PtyInfo, PtyManager};
+    use super::{new_or_resume_args, resume_args, session_file_exists, LaunchSpec, PtyInfo, PtyManager};
     use tauri::{AppHandle, State};
 
     /// Ouvre (ou retrouve) le terminal d'une conversation et y lance `claude --resume <id>`.
     #[tauri::command]
     pub fn pty_resume(app: AppHandle, ptys: State<PtyManager>, session_id: String, cwd: String, cols: u16, rows: u16) -> Result<PtyInfo, String> {
         let args = resume_args(&session_id)?;
+        ptys.launch(&app, LaunchSpec { key: session_id, cwd, args, cols, rows })
+    }
+
+    /// Nouvelle conversation créée par l'app : lance `claude --session-id <id>` (identifiant
+    /// choisi par l'interface) dans le dossier du projet, ou `--resume` si son fichier existe
+    /// déjà (relance après un premier message).
+    #[tauri::command]
+    pub fn pty_new_session(
+        app: AppHandle,
+        state: State<crate::AppState>,
+        ptys: State<PtyManager>,
+        session_id: String,
+        cwd: String,
+        cols: u16,
+        rows: u16,
+    ) -> Result<PtyInfo, String> {
+        let exists = session_file_exists(state.scanner.root(), &session_id);
+        let args = new_or_resume_args(&session_id, exists)?;
         ptys.launch(&app, LaunchSpec { key: session_id, cwd, args, cols, rows })
     }
 

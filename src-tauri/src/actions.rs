@@ -198,6 +198,33 @@ impl SessionFiles {
             Ok(())
         }
     }
+
+    /// Avant d'ouvrir la conversation dans le terminal intégré : refuse (erreur préfixée
+    /// `SESSION_ACTIVE`, que l'interface propose de forcer) si le fichier vient d'être
+    /// modifié par un autre programme. `released_at` : moment où l'app a elle-même fermé
+    /// son terminal pour cette conversation, s'il y en a eu un.
+    pub fn check_not_open_elsewhere(&self, released_at: Option<u64>) -> Result<(), String> {
+        let open = crate::sessions::file_stamp(&self.file)
+            .is_some_and(|(mtime, _)| may_be_open_elsewhere(mtime, now_ms(), released_at));
+        if open {
+            Err(format!(
+                "{ERR_ACTIVE}: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal."
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Marge pour les dernières écritures de `claude` juste après la fermeture de son terminal.
+const RELEASE_MARGIN_MS: u64 = 5_000;
+
+/// Vrai si un fichier modifié à `mtime` est peut-être encore ouvert ailleurs : modifié il
+/// y a moins de 2 minutes, et pas par un terminal de l'app fermé depuis (`released_at`).
+pub fn may_be_open_elsewhere(mtime: u64, now: u64, released_at: Option<u64>) -> bool {
+    let recent = now.saturating_sub(mtime) < ACTIVE_WINDOW_MS;
+    let written_by_app = released_at.is_some_and(|r| mtime <= r.saturating_add(RELEASE_MARGIN_MS));
+    recent && !written_by_app
 }
 
 /// Archive une session : déplace le `.jsonl` (et son dossier) vers
@@ -320,6 +347,28 @@ mod tests {
         assert!(proj.join("s1").join("subagents").join("a.jsonl").exists());
         assert!(!archive_dir.join("C--p").join("s1.jsonl").exists());
         assert!(!archive_dir.join("C--p").join("s1.archive.json").exists());
+    }
+
+    #[test]
+    fn open_elsewhere_window() {
+        let now = 10_000_000;
+        // Modifiée il y a 30 s, par un autre programme.
+        assert!(may_be_open_elsewhere(now - 30_000, now, None));
+        // Modifiée il y a 3 min : plus d'avertissement.
+        assert!(!may_be_open_elsewhere(now - 180_000, now, None));
+        // Dernière écriture faite par le terminal de l'app, fermé il y a 20 s.
+        assert!(!may_be_open_elsewhere(now - 21_000, now, Some(now - 20_000)));
+        // Écriture juste après la fermeture (fin de `claude`) : toujours l'app.
+        assert!(!may_be_open_elsewhere(now - 18_000, now, Some(now - 20_000)));
+        // Modifiée bien après la fermeture du terminal de l'app : un autre programme.
+        assert!(may_be_open_elsewhere(now - 5_000, now, Some(now - 60_000)));
+
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("k")).unwrap();
+        fs::write(tmp.path().join("k").join("s.jsonl"), "{}\n").unwrap();
+        let files = SessionFiles::locate(tmp.path(), "k", "s").unwrap();
+        assert!(files.check_not_open_elsewhere(None).unwrap_err().starts_with(ERR_ACTIVE));
+        assert!(files.check_not_open_elsewhere(Some(now_ms())).is_ok());
     }
 
     #[test]
