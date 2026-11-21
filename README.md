@@ -4,7 +4,7 @@ Application de bureau Windows pour travailler avec **Claude Code** : on discute 
 
 - **Discuter dans l'app** : chaque conversation s'ouvre dans un onglet. L'app affiche les messages et les actions de l'agent ; le vrai Claude Code tourne dans un terminal intégré, qui apparaît quand il faut valider quelque chose (permission, question, confiance dans un dossier).
 - **Organiser** : catégories de projets, sections de conversations dans chaque projet, couleurs pour les catégories, projets, sections et conversations, glisser-déposer, archives et Corbeille.
-- **Suivre** : une pastille indique l'état de chaque conversation (*en cours*, *attend ta réponse*, *terminée*), avec des compteurs sur les projets et les catégories.
+- **Suivre** : une pastille indique l'état de chaque conversation (*en cours*, *action requise*, *à toi*), avec des compteurs sur les projets et les catégories.
 - **Retrouver** : recherche dans le contenu de toutes les conversations, archives comprises.
 
 Vocabulaire : [GLOSSARY.md](GLOSSARY.md). Choix d'architecture : [docs/adr](docs/adr).
@@ -17,7 +17,7 @@ Il ne modifie ni vos réglages de Claude Code (`settings.json`) ni `~/.claude.js
 
 Tout est local. La seule connexion réseau de l'app est la vérification des mises à jour, et elle n'a lieu que si vous cliquez sur **Vérifier les mises à jour** (voir plus bas). La fenêtre elle-même n'a aucun accès réseau (sa politique de sécurité l'interdit). Claude Code, lui, se connecte à Anthropic comme d'habitude.
 
-Prérequis : Claude Code installé (`claude` dans le `PATH`), en version 2.1.285 ou plus pour **Ouvrir dans Desktop**.
+Prérequis : Claude Code installé (`claude` dans le `PATH`).
 
 ## Fonctionnement
 
@@ -41,7 +41,6 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`), en version 2.1.285
 ### Actions
 
 - **Clic sur une conversation**, ou **Reprendre** : ouvre la conversation dans un onglet de l'app (`claude --resume <id>` dans le terminal intégré). Si elle a été modifiée il y a moins de 2 minutes, l'app prévient qu'elle est peut-être ouverte dans Desktop ou dans un autre terminal.
-- **Ouvrir dans Desktop** : rouvre la conversation dans Claude Desktop, avec tout son contexte (`claude --desktop --resume <id>`). Si elle est ouverte dans l'app, l'app propose d'arrêter son terminal d'abord.
 - **Ouvrir dans un terminal externe** : Windows Terminal (sinon PowerShell), comme avant.
 - **Nouvelle conversation** : démarre `claude --session-id <id>` dans l'app. Le bouton **+** d'une section crée la conversation dans cette section. L'option **Dans un nouveau worktree** (`claude -w`) est proposée pour un projet sous git.
 - **Sections** : créer, renommer, colorer, replier, réordonner ; glisser une conversation dans une section ou vers « Sans section ». Supprimer une section ne supprime pas ses conversations.
@@ -49,7 +48,7 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`), en version 2.1.285
 - **Archiver** : déplace le `.jsonl` et son dossier compagnon (`<id>\` : sous-agents, résultats d'outils) vers le dossier d'archive. Un manifeste `<id>.archive.json` est écrit à côté, et la vue **Archives** permet de restaurer. La conversation garde sa section et sa couleur.
 - **Supprimer** : envoie le fichier et son dossier dans la **Corbeille Windows**, après confirmation. Ils restent récupérables.
 - Ces deux actions demandent une confirmation supplémentaire si la conversation a été modifiée il y a moins de 2 minutes (elle est peut-être encore ouverte).
-- **Fermer l'app** alors qu'un agent travaille encore demande confirmation, puis arrête les terminaux. Les conversations restent enregistrées.
+- **Fermer un onglet ou l'app** ne demande confirmation que si un agent travaille ou qu'une action attend ta permission. Les conversations restent enregistrées.
 - **Nouveau projet** : choisissez un dossier ; la fenêtre de sélection Windows permet aussi d'en créer un. Choisissez ensuite une catégorie.
 - Les projets situés dans `AppData\Local\Temp` sont masqués par défaut (case à cocher en bas de la barre latérale).
 
@@ -143,7 +142,6 @@ src/                      Interface React + TypeScript
   pty.ts                  Terminal intégré : appels au backend et évènements
   activity.ts             État des conversations (pastilles, compteurs)
   sections.ts             Sections et couleurs des conversations
-  desktop.ts              Ouvrir dans Desktop
   util.ts                 Couleurs (contraste automatique), dates, noms
   devMock.ts              Faux backend pour `npm run dev` dans un navigateur (faux terminal compris)
   components/
@@ -164,7 +162,6 @@ src-tauri/src/            Backend Rust
   search.rs               Recherche dans le contenu
   pty.rs                  Terminal intégré (ConPTY) et arguments de `claude`
   activity.rs             Hooks de suivi d'état, sous-commande `claude-manager.exe hook`
-  desktop.rs              Ouvrir dans Desktop
   config.rs               config.json (écriture atomique, migrations)
   actions.rs              Terminal externe, archivage, restauration, Corbeille
   lib.rs                  Commandes Tauri et surveillance des dossiers

@@ -9,7 +9,6 @@ mod activity;
 mod actions;
 mod config;
 mod conversation;
-mod desktop;
 mod pty;
 mod scanner;
 mod search;
@@ -216,24 +215,6 @@ fn add_project(state: State<AppState>, path: String) -> Result<String, String> {
 #[tauri::command]
 fn launch_claude(state: State<AppState>, path: String, session_id: Option<String>) -> Result<(), String> {
     actions::launch_claude(state.terminal, &path, session_id.as_deref())
-}
-
-/// Rouvre une conversation dans Claude Desktop (`claude --desktop --resume <id>`),
-/// depuis son dossier s'il existe encore, sinon depuis celui du projet. Sans `force`,
-/// refuse si le worktree de la conversation n'existe plus (erreur préfixée
-/// `WORKTREE_MISSING`, que l'interface propose de forcer).
-#[tauri::command(async)]
-fn open_in_desktop(session_cwd: Option<String>, project_path: Option<String>, session_id: String, force: bool) -> Result<(), String> {
-    let target = desktop::choose_dir(session_cwd.as_deref(), project_path.as_deref(), |p| Path::new(p).is_dir())?;
-    if target.worktree_missing && !force {
-        return Err(format!(
-            "{}: le dossier de cette conversation n'existe plus (worktree supprimé ?) : {}
-Claude Desktop affichera probablement « Failed to load session ».",
-            desktop::ERR_WORKTREE_MISSING,
-            session_cwd.unwrap_or_default()
-        ));
-    }
-    desktop::open_in_desktop(&target.dir, &session_id)
 }
 
 /// Avant d'ouvrir une conversation dans le terminal intégré : erreur préfixée
@@ -448,7 +429,6 @@ pub fn run() {
             save_config,
             add_project,
             launch_claude,
-            open_in_desktop,
             open_folder,
             archive_session,
             restore_archive,

@@ -163,9 +163,6 @@ export const api = {
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
   /** Le dossier est-il la racine d'un dépôt git (option « Dans un nouveau worktree ») ? */
   isGitRepo: (path: string) => invoke<boolean>("is_git_repo", { path }),
-  /** `claude --desktop --resume <id>` sans fenêtre ; erreur `WORKTREE_MISSING` si le worktree a disparu (sans `force`). */
-  openInDesktop: (sessionCwd: string | null, projectPath: string | null, sessionId: string, force: boolean) =>
-    invoke<void>("open_in_desktop", { sessionCwd, projectPath, sessionId, force }),
   archiveSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<Config>("archive_session", { projectKey, sessionId, force }),
   restoreArchive: (sessionId: string) => invoke<Config>("restore_archive", { sessionId }),

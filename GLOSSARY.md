@@ -26,8 +26,8 @@ Un échange avec l'agent dans un projet, repéré par son identifiant, et repris
 _Éviter_ : session, chat, discussion
 
 **État** :
-Où en est une conversation : *en cours* (l'agent travaille), *attend ta réponse* (l'agent a besoin de l'utilisateur), ou *terminée* (l'agent a fini son tour). Affiché par une pastille d'activité colorée.
-_Éviter_ : statut, status
+Où en est une conversation : *en cours* (l'agent travaille), *action requise* (une permission ou une question attend l'utilisateur), *à toi* (l'agent a fini son tour et attend le prochain message), ou *fermée* (aucun terminal intégré ouvert). Affiché par une pastille d'activité colorée.
+_Éviter_ : statut, status, terminée, attend ta réponse
 
 **Terminal intégré** :
 Le terminal affiché dans Claude Manager où tourne la conversation, avec Claude Code tel qu'Anthropic le fournit.

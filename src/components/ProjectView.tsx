@@ -19,7 +19,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
-  AppWindow,
   Archive,
   ChevronDown,
   ChevronRight,
@@ -75,7 +74,6 @@ interface Props {
    * `worktree` : dans un nouveau worktree, avec ce nom (vide = nom choisi par Claude Code).
    */
   onNew: (sectionId: string | null, worktree?: string) => void;
-  onOpenInDesktop: (s: SessionInfo) => void;
   /** Ouvre la conversation dans le terminal intégré. */
   onOpen: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
@@ -234,7 +232,6 @@ export function ProjectView(props: Props) {
       activity={activities.get(s.id)}
       canLaunch={canResume(s)}
       onLaunch={() => props.onLaunch(s.id, resumePath(s))}
-      onOpenInDesktop={() => props.onOpenInDesktop(s)}
       onOpen={() => props.onOpen(s)}
       terminal={props.terminal}
       onArchive={() => props.onArchive(s)}
@@ -516,7 +513,6 @@ function SessionRow(props: {
   activity?: Activity;
   canLaunch: boolean;
   onLaunch: () => void;
-  onOpenInDesktop: () => void;
   /** Ouvre la conversation dans le terminal intégré. */
   onOpen: () => void;
   /** Nom du terminal externe, pour l'info-bulle. */
@@ -587,14 +583,11 @@ function SessionRow(props: {
         <button className="btn small primary" disabled={!canLaunch} onClick={props.onOpen} title="claude --resume, dans le terminal intégré">
           <Play size={13} /> Reprendre
         </button>
-        {/* Sans fichier, rien d'autre n'est possible : reprise externe, Desktop, archive, Corbeille. */}
+        {/* Sans fichier, rien d'autre n'est possible : reprise externe, archive, Corbeille. */}
         {!s.provisional && (
         <>
         <button className="icon-btn" disabled={!canLaunch} onClick={props.onLaunch} title={`Ouvrir dans un terminal externe (${props.terminal})`}>
           <ExternalLink size={15} />
-        </button>
-        <button className="icon-btn" onClick={props.onOpenInDesktop} title="Ouvrir dans Desktop (claude --desktop --resume)">
-          <AppWindow size={15} />
         </button>
         <ColorPicker compact value={props.color} onChange={props.onColor} title="Couleur de la conversation" />
         <button className="icon-btn" title="Archiver" onClick={props.onArchive}>

@@ -1,12 +1,12 @@
 # Les conversations tournent dans un terminal intégré qui lance le vrai `claude`, pas via l'Agent SDK
 
-Claude Manager remplace Claude Desktop, et l'app est diffusée à d'autres personnes. Les règles d'Anthropic interdisent à une app tierce de se connecter avec un abonnement Claude.ai ou de faire passer ses requêtes par ce compte, ce qui exclut l'Agent SDK et `claude -p` sans clé d'API. Une clé d'API payée à l'usage n'est pas envisageable. Chaque conversation s'ouvre donc dans un terminal intégré à l'app, qui lance le binaire `claude` officiel tel quel (`claude --resume <id>`). L'utilisateur s'y connecte avec son propre abonnement, et l'app ne lit ni ne transmet jamais ses identifiants. Un bouton ouvre aussi la conversation dans Claude Desktop (`claude --desktop --resume <id>`).
+Claude Manager remplace Claude Desktop, et l'app est diffusée à d'autres personnes. Les règles d'Anthropic interdisent à une app tierce de se connecter avec un abonnement Claude.ai ou de faire passer ses requêtes par ce compte, ce qui exclut l'Agent SDK et `claude -p` sans clé d'API. Une clé d'API payée à l'usage n'est pas envisageable. Chaque conversation s'ouvre donc dans un terminal intégré à l'app, qui lance le binaire `claude` officiel tel quel (`claude --resume <id>`). L'utilisateur s'y connecte avec son propre abonnement, et l'app ne lit ni ne transmet jamais ses identifiants.
 
 ## Options écartées
 
 - **Agent SDK ou `claude -p` avec l'abonnement** : aurait permis une interface graphique façon Desktop, mais interdit pour une app diffusée.
 - **Agent SDK avec une clé d'API** : conforme, mais coût à l'usage refusé.
-- **Organiseur seul, discussion dans Desktop** : conforme, mais l'app ne remplace plus Desktop. Reste disponible en complément.
+- **Organiseur seul, discussion dans Desktop** : conforme, mais l'app ne remplace plus Desktop. Un bouton « Ouvrir dans Desktop » a été essayé puis retiré : une fois la conversation affichée dans l'app, il ne servait plus. Les conversations restent compatibles : Desktop peut les reprendre de lui-même.
 
 ## Conséquences
 

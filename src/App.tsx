@@ -23,7 +23,6 @@ import { ArchivesView } from "./components/ArchivesView";
 import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
 import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
 import { newId, projectName } from "./util";
-import { openInDesktop } from "./desktop";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
 import { putConversationInSection } from "./sections";
@@ -517,15 +516,6 @@ export default function App() {
           terminal={scan.terminal}
           onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
           onNew={(sectionId, worktree) => startNewConversation(selectedProject.key, selectedProject.path, sectionId, worktree)}
-          onOpenInDesktop={(s) =>
-            openInDesktop(s, { projectPath: selectedProject.path, toast, openInExternalTerminal: () => launch(selectedProject.path, s.id),
-              closeEmbeddedTerminal: async () => {
-                await killTerminal(s.id).catch(() => {});
-                setTerminals((ts) => ts.filter((x) => x.sessionId !== s.id));
-                setActiveTerminal((a) => (a === s.id ? null : a));
-              },
-            })
-          }
           onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
