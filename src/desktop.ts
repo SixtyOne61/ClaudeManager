@@ -3,6 +3,7 @@
 
 import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage, type SessionInfo } from "./api";
+import { isTerminalRunning } from "./pty";
 
 /** Erreur renvoyée quand le worktree de la conversation n'existe plus. */
 export const ERR_WORKTREE_MISSING = "WORKTREE_MISSING";
@@ -10,13 +11,9 @@ export const ERR_WORKTREE_MISSING = "WORKTREE_MISSING";
 /**
  * La conversation est-elle ouverte dans un terminal intégré de l'app ?
  * Claude Code refuse de transférer vers Desktop une conversation ouverte ailleurs.
- *
- * TODO(ticket 01, terminal intégré) : brancher ici la liste des terminaux intégrés
- * ouverts, et ajouter la fermeture du terminal dans `openInDesktop` ci-dessous
- * (voir le TODO). Tant que le terminal intégré n'existe pas, toujours faux.
  */
-export function isOpenInEmbeddedTerminal(_sessionId: string): boolean {
-  return false;
+export function isOpenInEmbeddedTerminal(sessionId: string): boolean {
+  return isTerminalRunning(sessionId);
 }
 
 interface Deps {
@@ -25,17 +22,19 @@ interface Deps {
   toast: (text: string) => void;
   /** Ouvre la conversation dans un terminal externe (`claude --resume`). */
   openInExternalTerminal: () => void;
+  /** Arrête Claude Code dans le terminal intégré de cette conversation et ferme l'onglet. */
+  closeEmbeddedTerminal: () => Promise<void>;
 }
 
 /** Enchaîne les avertissements puis lance l'ouverture dans Desktop. */
 export async function openInDesktop(s: SessionInfo, deps: Deps): Promise<void> {
   if (isOpenInEmbeddedTerminal(s.id)) {
-    // TODO(ticket 01) : proposer « Fermer le terminal intégré » puis continuer.
     const ok = await ask(
-      "Cette conversation est ouverte dans un terminal intégré. Claude Code refuse de transférer une conversation ouverte ailleurs : fermez d'abord le terminal intégré.\n\nEssayer quand même ?",
-      { title: "Conversation ouverte dans l'app", kind: "warning", okLabel: "Essayer quand même", cancelLabel: "Annuler" },
+      "Cette conversation est ouverte dans un terminal intégré. Claude Code refuse de transférer une conversation ouverte ailleurs.\n\nArrêter Claude Code dans le terminal intégré, puis ouvrir la conversation dans Desktop ?",
+      { title: "Conversation ouverte dans l'app", kind: "warning", okLabel: "Fermer et ouvrir dans Desktop", cancelLabel: "Annuler" },
     );
     if (!ok) return;
+    await deps.closeEmbeddedTerminal();
   }
 
   const run = (force: boolean) => api.openInDesktop(s.cwd, deps.projectPath, s.id, force);

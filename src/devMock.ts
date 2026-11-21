@@ -3,6 +3,7 @@
 // Les données sont fictives : aucune lecture de ~/.claude.
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 
 const now = Date.now();
@@ -115,10 +116,65 @@ function mockSearchAll(query: string): SearchResult {
 /** Conversations archivées, pour pouvoir les restaurer. */
 const archived = new Map<string, SessionInfo>();
 
+
+// ---- Faux terminal intégré : affiche une invite et renvoie ce qu'on tape. -------------
+// « /exit » termine le faux `claude`, pour tester l'état « terminé » et « Relancer ».
+
+const fakePtys = new Map<string, { cwd: string; line: string }>();
+const ptyOut = (key: string, data: string) => setTimeout(() => emit("pty-output", { key, data }), 0);
+
+function fakePty(cmd: string, a: Record<string, unknown>): unknown {
+  const key = String(a.key ?? a.sessionId ?? "");
+  switch (cmd) {
+    case "pty_resume": {
+      const cwd = String(a.cwd);
+      if (!fakePtys.has(key)) {
+        fakePtys.set(key, { cwd, line: "" });
+        ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude --resume ${key}\r\n  dans ${cwd}\r\n\r\n> `);
+      }
+      return { key, cwd, running: true };
+    }
+    case "pty_write": {
+      const t = fakePtys.get(key);
+      if (!t) throw "Ce terminal n'est pas ouvert.";
+      for (const ch of String(a.data)) {
+        if (ch === "\r") {
+          const line = t.line.trim();
+          t.line = "";
+          if (line === "/exit") {
+            fakePtys.delete(key);
+            ptyOut(key, "\r\nAu revoir.\r\n");
+            setTimeout(() => emit("pty-exit", { key, code: 0 }), 10);
+            return null;
+          }
+          ptyOut(key, `\r\n\x1b[2m(réponse fictive à « ${line} »)\x1b[0m\r\n> `);
+        } else if (ch === "\x7f") {
+          if (t.line) {
+            t.line = t.line.slice(0, -1);
+            ptyOut(key, "\b \b");
+          }
+        } else if (ch >= " ") {
+          t.line += ch;
+          ptyOut(key, ch);
+        }
+      }
+      return null;
+    }
+    case "pty_kill":
+      fakePtys.delete(key);
+      return null;
+    case "pty_list":
+      return [...fakePtys].map(([k, t]) => ({ key: k, cwd: t.cwd, running: true }));
+    default: // pty_resize, pty_quit
+      return null;
+  }
+}
+
 export function installDevMock() {
   mockWindows("main");
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
+    if (cmd.startsWith("pty_")) return fakePty(cmd, a);
     console.info("[mock]", cmd, a);
     switch (cmd) {
       case "scan":
@@ -173,8 +229,6 @@ export function installDevMock() {
         window.alert(String(a.message));
         return null;
       }
-      case "plugin:event|listen":
-        return 1;
       case "plugin:app|version":
         return "0.1.0";
       case "plugin:updater|check":
@@ -182,5 +236,5 @@ export function installDevMock() {
       default:
         return null;
     }
-  });
+  }, { shouldMockEvents: true }); // `listen`/`emit` simulés : le faux terminal émet ses évènements.
 }

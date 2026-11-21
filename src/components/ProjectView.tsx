@@ -23,6 +23,7 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   FileSearch,
   FolderOpen,
   GripVertical,
@@ -64,6 +65,8 @@ interface Props {
   /** `path` : dossier où relancer (worktree), sinon celui du projet. */
   onLaunch: (sessionId?: string, path?: string) => void;
   onOpenInDesktop: (s: SessionInfo) => void;
+  /** Ouvre la conversation dans le terminal intégré. */
+  onOpen: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
   onRename: () => void;
@@ -205,6 +208,8 @@ export function ProjectView(props: Props) {
       canLaunch={canResume(s)}
       onLaunch={() => props.onLaunch(s.id, resumePath(s))}
       onOpenInDesktop={() => props.onOpenInDesktop(s)}
+      onOpen={() => props.onOpen(s)}
+      terminal={props.terminal}
       onArchive={() => props.onArchive(s)}
       onTrash={() => props.onTrash(s)}
       onColor={(c) => change((cfg) => setConversationColor(cfg, s.id, c))}
@@ -424,6 +429,10 @@ function SessionRow(props: {
   canLaunch: boolean;
   onLaunch: () => void;
   onOpenInDesktop: () => void;
+  /** Ouvre la conversation dans le terminal intégré. */
+  onOpen: () => void;
+  /** Nom du terminal externe, pour l'info-bulle. */
+  terminal: string;
   onArchive: () => void;
   onTrash: () => void;
   onColor: (c: string | null) => void;
@@ -438,7 +447,7 @@ function SessionRow(props: {
       data-session-id={s.id}
       className={"session-row" + (props.color ? " colored" : "")}
       style={{ ...colorStyle(props.color), opacity: drag.isDragging ? 0.35 : 1 }}
-      onDoubleClick={() => canLaunch && props.onLaunch()}
+      onClick={() => canLaunch && props.onOpen()}
       {...drag.attributes}
       {...drag.listeners}
     >
@@ -474,8 +483,11 @@ function SessionRow(props: {
         </div>
       </div>
       <div className="session-actions" onPointerDown={stop}>
-        <button className="btn small primary" disabled={!canLaunch} onClick={props.onLaunch} title="claude --resume">
+        <button className="btn small primary" disabled={!canLaunch} onClick={props.onOpen} title="claude --resume, dans le terminal intégré">
           <Play size={13} /> Reprendre
+        </button>
+        <button className="icon-btn" disabled={!canLaunch} onClick={props.onLaunch} title={`Ouvrir dans un terminal externe (${props.terminal})`}>
+          <ExternalLink size={15} />
         </button>
         <button className="icon-btn" onClick={props.onOpenInDesktop} title="Ouvrir dans Desktop (claude --desktop --resume)">
           <AppWindow size={15} />
