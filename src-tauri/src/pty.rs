@@ -6,8 +6,8 @@
 //! - [`PtyManager::launch`] démarre `claude <args…>` dans un dossier, sous une **clé**
 //!   (l'identifiant de la conversation). Les arguments sont libres :
 //!   [`resume_args`] (`--resume <id>`) pour reprendre, [`new_session_args`]
-//!   (`--session-id <uuid>`) pour une nouvelle conversation, et on peut y ajouter
-//!   par exemple `--settings <fichier>`.
+//!   (`--session-id <uuid>`) pour une nouvelle conversation. `launch` y ajoute toujours
+//!   `--settings <fichier>` : les hooks de suivi d'état (voir `activity.rs`).
 //! - [`PtyManager::write`] envoie du texte au terminal (frappes, ou texte d'une zone
 //!   de saisie) ; [`PtyManager::is_running`] dit si le terminal d'une conversation
 //!   est ouvert et que `claude` y tourne encore ; [`PtyManager::list`] les énumère.
@@ -255,7 +255,10 @@ impl PtyManager {
         let pair = native_pty_system()
             .openpty(PtySize { rows: spec.rows.max(2), cols: spec.cols.max(10), pixel_width: 0, pixel_height: 0 })
             .map_err(|e| format!("Ouverture du terminal impossible : {e}"))?;
-        let argv = build_argv(&claude, &spec.args);
+        // Suivi de l'état de la conversation (hooks), pour tout lancement : reprise ou nouvelle.
+        let mut args = spec.args.clone();
+        args.extend(crate::activity::settings_args());
+        let argv = build_argv(&claude, &args);
         let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
         cmd.cwd(&cwd);
         // Si l'app a elle-même été lancée depuis Claude Code (développement), ces variables
@@ -277,6 +280,7 @@ impl PtyManager {
             PtySession { generation, cwd: cwd.clone(), master: Some(pair.master), writer: Some(writer), killer: child.clone_killer() },
         );
         drop(sessions);
+        crate::activity::on_launched(&spec.key);
 
         // Lecture de la sortie → évènements. À la fin du flux (pseudo-terminal fermé),
         // annonce la fin de `claude`.
@@ -334,7 +338,6 @@ impl PtyManager {
     }
 
     /// Vrai si le terminal de cette conversation est ouvert et que `claude` y tourne.
-    #[allow(dead_code)] // Pour les tickets suivants (état des conversations).
     pub fn is_running(&self, key: &str) -> bool {
         self.sessions.lock().unwrap().get(key).is_some_and(|s| s.running())
     }
@@ -364,7 +367,14 @@ fn read_loop(app: AppHandle, key: String, mut reader: Box<dyn Read + Send>, exit
         }
     }
     let code = *exit_code.lock().unwrap();
-    let _ = app.emit(EVT_EXIT, PtyExit { key, code });
+    let _ = app.emit(EVT_EXIT, PtyExit { key: key.clone(), code });
+    // Conversation terminée (sauf si un nouveau terminal a déjà pris le relais).
+    {
+        use tauri::Manager;
+        if !app.state::<PtyManager>().is_running(&key) {
+            crate::activity::emit(&app, &key, None);
+        }
+    }
 }
 
 #[cfg(test)]

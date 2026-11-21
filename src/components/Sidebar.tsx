@@ -34,6 +34,11 @@ import type { Category, Config, ProjectInfo } from "../api";
 import { colorStyle, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
+import { ActivityCounts } from "./Activity";
+import { countActivities, useActivities } from "../activity";
+
+/** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
+const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((s) => s.id));
 
 /** Conteneur « Non classés » (pas une vraie catégorie). */
 const NONE = "none";
@@ -78,6 +83,8 @@ export function Sidebar(props: Props) {
   const { config, projects } = props;
   const [dragId, setDragId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
+  // État des conversations : compteurs « en cours » et « attend ta réponse ».
+  const activities = useActivities();
 
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -192,6 +199,7 @@ export function Sidebar(props: Props) {
       name={projectName(p, config)}
       color={config.projects[p.key]?.color}
       selected={selectedKey === p.key}
+      activity={countActivities(activities, sessionIds([p]))}
       onClick={() => props.onSelect({ kind: "project", key: p.key })}
     />
   );
@@ -223,6 +231,7 @@ export function Sidebar(props: Props) {
                   key={cat.id}
                   category={cat}
                   count={list.length}
+                  activity={countActivities(activities, sessionIds(list))}
                   collapsed={collapsed.has(cat.id)}
                   onToggle={() => toggleCollapsed(cat.id)}
                   onRename={() => props.onRenameCategory(cat)}
@@ -242,6 +251,7 @@ export function Sidebar(props: Props) {
           <Zone id={NONE} className="category uncategorized">
             <div className="category-header static">
               <span className="category-name">Non classés</span>
+              <ActivityCounts {...countActivities(activities, sessionIds(uncategorized))} />
               <span className="count">{uncategorized.length}</span>
             </div>
             <SortableContext items={uncategorized.map((p) => "p:" + p.key)} strategy={verticalListSortingStrategy}>
@@ -306,6 +316,8 @@ function Zone({ id, className, children }: { id: string; className: string; chil
 function CategoryBlock(props: {
   category: Category;
   count: number;
+  /** Conversations en cours / en attente de réponse dans la catégorie. */
+  activity: { running: number; waiting: number };
   collapsed: boolean;
   onToggle: () => void;
   onRename: () => void;
@@ -334,6 +346,7 @@ function CategoryBlock(props: {
         <span className="category-name" onDoubleClick={props.onRename}>
           {cat.name}
         </span>
+        <ActivityCounts {...props.activity} />
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
           <button className="icon-btn" title="Renommer" onClick={props.onRename}>
@@ -359,6 +372,8 @@ function ProjectRow(props: {
   name: string;
   color?: string | null;
   selected: boolean;
+  /** Conversations en cours / en attente de réponse dans le projet. */
+  activity: { running: number; waiting: number };
   onClick: () => void;
 }) {
   const { project: p } = props;
@@ -381,6 +396,7 @@ function ProjectRow(props: {
     >
       <span className="project-name">{props.name}</span>
       {!p.exists && <TriangleAlert size={13} className="warn" aria-label="Dossier introuvable" />}
+      <ActivityCounts {...props.activity} />
       <span className="project-meta">
         {p.sessions.length > 0 ? `${p.sessions.length} · ${relativeDate(p.lastActivity)}` : "vide"}
       </span>

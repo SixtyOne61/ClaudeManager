@@ -12,6 +12,9 @@
   --accent-hover: #e58a6b;
   --danger: #ef4444;
   --warn: #f59e0b;
+  /* Pastilles d'activité : en cours (vert), attend ta réponse (orange). */
+  --activity-running: #22c55e;
+  --activity-waiting: #f97316;
   --radius: 8px;
   --fg-muted: var(--text-muted);
   color-scheme: dark;
@@ -162,8 +165,19 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .session-row.colored:hover { filter: brightness(1.08); border-color: transparent; }
 .session-row.colored .btn:not(.primary) { background: rgba(0,0,0,.18); border-color: rgba(0,0,0,.2); }
 .session-row.overlay { background: var(--bg-hover); box-shadow: 0 8px 24px rgba(0,0,0,.5); cursor: grabbing; }
-/* Place réservée à la pastille d'activité (ticket 04), à gauche du titre. */
+/* Pastille d'activité, à gauche du titre (vide quand la conversation est terminée). */
 .session-activity { flex: none; width: 10px; height: 10px; }
+/* Couleurs propres, avec un liseré sombre pour rester lisibles sur une conversation colorée. */
+.activity-dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+.activity-running { background: var(--activity-running); animation: activity-pulse 1.4s ease-in-out infinite; }
+.activity-waiting { background: var(--activity-waiting); }
+@keyframes activity-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .activity-running { animation: none; } }
+/* Compteurs (projet, catégorie) : en cours / attend ta réponse. */
+.activity-counts { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.activity-count { display: inline-flex; align-items: center; gap: 3px; }
+.activity-count .activity-dot { width: 7px; height: 7px; box-shadow: none; }
+.category-header:hover .activity-counts { display: none; }
 .session-actions .popover { left: auto; right: 0; }
 
 /* ---------- Sections d'un projet ---------- */

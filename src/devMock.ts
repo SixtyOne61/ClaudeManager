@@ -141,6 +141,54 @@ function fakeFirstMessage(id: string, cwd: string, text: string) {
   setTimeout(() => emit("sessions-changed", null), 300);
 }
 
+// ---- Faux états des conversations (hooks) ---------------------------------------------
+// Une conversation reprise attend un message ; un message la passe « en cours », puis
+// elle attend une réponse (une permission si le message contient « permission »).
+// Deux conversations tournent dès le départ et changent d'état toutes les 3 s.
+
+type FakeActivity = { state: "running" | "waiting"; kind: string; detail?: string };
+const activities = new Map<string, FakeActivity & { sessionId: string; event: string; at: number }>();
+const activityTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function setActivity(key: string, a: FakeActivity | null) {
+  const full = a && { sessionId: key, event: "Mock", at: Date.now(), ...a };
+  if (full) activities.set(key, full);
+  else activities.delete(key);
+  setTimeout(() => emit("conversation-activity", { sessionId: key, activity: full }), 0);
+}
+
+function fakeTurn(key: string, line: string) {
+  clearTimeout(activityTimers.get(key));
+  setActivity(key, { state: "running", kind: "prompt" });
+  activityTimers.set(
+    key,
+    setTimeout(() => {
+      if (!fakePtys.has(key)) return;
+      setActivity(key, line.includes("permission") ? { state: "waiting", kind: "permission", detail: "Bash" } : { state: "waiting", kind: "turn" });
+    }, 2500),
+  );
+}
+
+const demoCycle: FakeActivity[] = [
+  { state: "running", kind: "tool", detail: "Edit" },
+  { state: "waiting", kind: "permission", detail: "Bash" },
+  { state: "running", kind: "tool", detail: "Bash" },
+  { state: "waiting", kind: "turn" },
+];
+
+function startDemoActivity() {
+  // Identifiants uniques (ceux de SiteVitrine et JeuDeCartes se recoupent dans ce faux jeu de données).
+  const ids = [site.sessions.find((s) => s.worktree?.exists)!.id, scan.projects[2].sessions[0].id];
+  ids.forEach((id) => fakePtys.set(id, { cwd: "C:\\Users\\moi\\Projets", line: "" }));
+  let step = 0;
+  const tick = () => {
+    ids.forEach((id, i) => fakePtys.has(id) && setActivity(id, demoCycle[(step + i) % demoCycle.length]));
+    step++;
+  };
+  tick();
+  setInterval(tick, 3000);
+}
+
 function fakePty(cmd: string, a: Record<string, unknown>): unknown {
   const key = String(a.key ?? a.sessionId ?? "");
   switch (cmd) {
@@ -152,6 +200,7 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
       if (!fakePtys.has(key)) {
         fakePtys.set(key, { cwd, line: "" });
         ptyOut(key, `\x1b[38;5;173m✻ Faux Claude Code\x1b[0m (npm run dev)\r\n  claude ${args}\r\n  dans ${cwd}\r\n\r\n> `);
+        setActivity(key, { state: "waiting", kind: "start" });
       }
       return { key, cwd, running: true };
     }
@@ -166,10 +215,12 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
             fakePtys.delete(key);
             ptyOut(key, "\r\nAu revoir.\r\n");
             setTimeout(() => emit("pty-exit", { key, code: 0 }), 10);
+            setActivity(key, null);
             return null;
           }
           if (line) fakeFirstMessage(key, t.cwd, line);
           ptyOut(key, `\r\n\x1b[2m(réponse fictive à « ${line} »)\x1b[0m\r\n> `);
+          fakeTurn(key, line);
         } else if (ch === "\x7f") {
           if (t.line) {
             t.line = t.line.slice(0, -1);
@@ -184,6 +235,7 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
     }
     case "pty_kill":
       fakePtys.delete(key);
+      setActivity(key, null);
       return null;
     case "pty_list":
       return [...fakePtys].map(([k, t]) => ({ key: k, cwd: t.cwd, running: true }));
@@ -197,6 +249,7 @@ export function installDevMock() {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
+    if (cmd === "activity_list") return [...activities.values()];
     console.info("[mock]", cmd, a);
     switch (cmd) {
       case "scan":
@@ -267,4 +320,5 @@ export function installDevMock() {
         return null;
     }
   }, { shouldMockEvents: true }); // `listen`/`emit` simulés : le faux terminal émet ses évènements.
+  startDemoActivity();
 }

@@ -5,6 +5,7 @@
 //! Un observateur de fichiers émet l'évènement `sessions-changed` quand une conversation
 //! apparaît, change ou disparaît.
 
+mod activity;
 mod actions;
 mod config;
 mod desktop;
@@ -358,6 +359,17 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
     });
 }
 
+/// Sous-commande `hook` (appelée par les hooks de Claude Code, voir activity.rs) :
+/// écrit l'état de la conversation puis rend la main. À appeler avant tout démarrage
+/// de Tauri ; renvoie vrai si la ligne de commande était bien cette sous-commande.
+pub fn run_subcommand() -> bool {
+    if std::env::args().nth(1).as_deref() != Some(activity::HOOK_SUBCOMMAND) {
+        return false;
+    }
+    activity::run_hook();
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let paths = AppPaths::detect();
@@ -380,6 +392,9 @@ pub fn run() {
         .setup(|app| {
             let root = app.state::<AppState>().paths.claude_projects.clone();
             start_watcher(app.handle().clone(), root);
+            // États des conversations écrits par les hooks (voir activity.rs).
+            let app_dir = app.state::<AppState>().paths.app_dir.clone();
+            activity::start_watcher(app.handle().clone(), &app_dir);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -404,6 +419,7 @@ pub fn run() {
             pty::commands::pty_kill,
             pty::commands::pty_list,
             pty::commands::pty_quit,
+            activity::activity_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
