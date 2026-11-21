@@ -7,6 +7,7 @@
 
 mod activity;
 mod actions;
+mod commands_list;
 mod config;
 mod conversation;
 mod pty;
@@ -160,6 +161,28 @@ fn conversation_read(state: State<AppState>, session_id: String, cwd: Option<Str
         Some(path) => conversation::read_chunk(&path, offset, line),
         None => conversation::Chunk::default(),
     })
+}
+
+/// Commandes `/…` proposées dans la zone de saisie pour une conversation : intégrées,
+/// skills et commandes personnels, du projet (`cwd` et ses parents) et des plugins activés,
+/// complétés par les skills que Claude Code a annoncés dans le `.jsonl` de la conversation.
+#[tauri::command(async)]
+fn list_slash_commands(
+    state: State<AppState>,
+    listings: State<commands_list::ListingCache>,
+    cwd: Option<String>,
+    session_id: Option<String>,
+) -> Vec<commands_list::SlashEntry> {
+    let root = state.scanner.root();
+    let claude_dir = root.parent().unwrap_or(root);
+    let cwd_path = cwd.as_deref().filter(|c| !c.is_empty()).map(Path::new).filter(|p| p.is_dir());
+    let disk = commands_list::discover(claude_dir, cwd_path);
+    let listing = session_id
+        .filter(|id| actions::validate_session_id(id).is_ok())
+        .and_then(|id| conversation::locate(root, &id, cwd.as_deref()))
+        .map(|path| listings.read(&path))
+        .filter(|l| l.found);
+    commands_list::merge(disk, listing.as_ref())
 }
 
 /// Recherche dans le contenu de toutes les conversations, archives comprises.
@@ -411,6 +434,7 @@ pub fn run() {
         .manage(state)
         // Terminaux intégrés (voir pty.rs).
         .manage(pty::PtyManager::default())
+        .manage(commands_list::ListingCache::default())
         .on_window_event(pty::on_window_event)
         .setup(|app| {
             let root = app.state::<AppState>().paths.claude_projects.clone();
@@ -425,6 +449,7 @@ pub fn run() {
             search_sessions,
             search_all,
             conversation_read,
+            list_slash_commands,
             get_config,
             save_config,
             add_project,

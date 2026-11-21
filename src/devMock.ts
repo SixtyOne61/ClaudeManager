@@ -6,6 +6,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 import type { ConversationEntry, DiffLine } from "./conversation";
+import type { SlashEntry } from "./slashCommands";
 
 const now = Date.now();
 const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3600_000).toISOString();
@@ -304,6 +305,36 @@ function startDemoActivity() {
   setInterval(tick, 3000);
 }
 
+/** Commandes `/…` fictives (menu de la zone de saisie), une de chaque provenance au moins. */
+function fakeSlashCommands(): SlashEntry[] {
+  const e = (name: string, description: string, source: SlashEntry["source"], argumentHint: string | null = null): SlashEntry => ({
+    name,
+    description,
+    source,
+    argumentHint,
+  });
+  return [
+    e("add-dir", "Ajouter un dossier de travail à la session", "builtin", "<chemin>"),
+    e("clear", "Nouvelle conversation, contexte vidé", "builtin", "[nom]"),
+    e("code-review", "Relire les changements en cours ou une PR", "builtin", "[niveau] [pr|branche|chemin]"),
+    e("compact", "Résumer la conversation pour libérer du contexte", "builtin", "[instructions]"),
+    e("config", "Ouvrir les réglages", "builtin", "[clé=valeur]"),
+    e("context", "Visualiser l'occupation du contexte", "builtin"),
+    e("help", "Afficher l'aide et les commandes disponibles", "builtin"),
+    e("init", "Créer un guide CLAUDE.md pour le projet", "builtin"),
+    e("mcp", "Gérer les serveurs MCP", "builtin"),
+    e("model", "Changer de modèle", "builtin", "[modèle]"),
+    e("permissions", "Gérer les règles de permission des outils", "builtin"),
+    e("resume", "Reprendre une conversation", "builtin", "[session]"),
+    e("usage", "Coût de la session et limites d'utilisation", "builtin"),
+    e("deployer", "Déployer le site sur l'hébergement de test", "project", "[environnement]"),
+    e("revue-css", "Vérifier les styles avant une mise en ligne", "user"),
+    e("outils:format", "Formater un fichier selon les règles de l'équipe", "user", "[fichier]"),
+    e("mon-plugin:tdd", "Développement piloté par les tests : rouge, vert, refactorisation", "plugin"),
+    e("mon-plugin:diagnostic", "Boucle de diagnostic pour les bugs difficiles et les régressions de performance, avec une description assez longue pour être coupée", "plugin"),
+  ];
+}
+
 function fakePty(cmd: string, a: Record<string, unknown>): unknown {
   const key = String(a.key ?? a.sessionId ?? "");
   switch (cmd) {
@@ -387,6 +418,7 @@ export function installDevMock() {
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
     if (cmd === "activity_list") return [...activities.values()];
     if (cmd === "conversation_read") return fakeConversationRead(a);
+    if (cmd === "list_slash_commands") return fakeSlashCommands();
     console.info("[mock]", cmd, a);
     switch (cmd) {
       case "scan":
