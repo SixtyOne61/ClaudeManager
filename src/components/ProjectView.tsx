@@ -18,6 +18,7 @@ import {
 import { api, errorMessage, type Config, type ProjectInfo, type SessionInfo } from "../api";
 import { colorStyle, formatDate, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
+import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
 
 interface Props {
   project: ProjectInfo;
@@ -33,6 +34,8 @@ interface Props {
   onMove: (categoryId: string | null) => void;
   onForget: () => void;
   onError: (msg: string) => void;
+  /** Conversation ouverte depuis la recherche globale : affichée et mise en évidence. */
+  focus?: SearchFocus | null;
 }
 
 export function ProjectView(props: Props) {
@@ -47,6 +50,12 @@ export function ProjectView(props: Props) {
     setQuery("");
     setDeepHits(null);
   }, [p.key]);
+
+  // Conversation ouverte depuis la recherche globale : vide le filtre pour qu'elle soit visible.
+  useEffect(() => {
+    if (props.focus) setQuery("");
+  }, [props.focus]);
+  useScrollToFocus(props.focus);
 
   // Recherche dans le contenu des conversations (côté Rust), avec un petit délai de frappe.
   useEffect(() => {
@@ -154,7 +163,7 @@ export function ProjectView(props: Props) {
           <div className="empty">{p.sessions.length === 0 ? "Aucune conversation dans ce projet." : "Aucune conversation ne correspond à la recherche."}</div>
         )}
         {sessions.map((s) => (
-          <div key={s.id} className="session-row" onDoubleClick={() => canResume(s) && props.onLaunch(s.id, resumePath(s))}>
+          <div key={s.id} data-session-id={s.id} className="session-row" onDoubleClick={() => canResume(s) && props.onLaunch(s.id, resumePath(s))}>
             <div className="session-main">
               <div className="session-title" title={s.firstPrompt ?? s.title}>
                 {s.title}

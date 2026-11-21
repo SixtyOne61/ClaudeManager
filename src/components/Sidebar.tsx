@@ -26,6 +26,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -52,6 +53,9 @@ interface Props {
   onDeleteCategory: (cat: Category) => void;
   onAddProject: () => void;
   onToggleTemp: (show: boolean) => void;
+  /** Recherche globale (dans le contenu de toutes les conversations). */
+  onSearch?: () => void;
+  searchActive?: boolean;
 }
 
 // Mémorise les catégories repliées (confort local, sans importance si perdu).
@@ -178,7 +182,7 @@ export function Sidebar(props: Props) {
 
   const draggedProject = dragId?.startsWith("p:") ? projects.get(dragId.slice(2)) : undefined;
   const draggedCategory = dragId?.startsWith("c:") ? config.categories.find((c) => "c:" + c.id === dragId) : undefined;
-  const selectedKey = props.selection?.kind === "project" ? props.selection.key : null;
+  const selectedKey = props.selection?.kind === "project" && !props.searchActive ? props.selection.key : null;
 
   const row = (p: ProjectInfo, container: string) => (
     <ProjectRow
@@ -262,8 +266,17 @@ export function Sidebar(props: Props) {
       </div>
 
       <div className="sidebar-footer">
+        {props.onSearch && (
+          <button
+            className={"nav-item" + (props.searchActive ? " selected" : "")}
+            onClick={props.onSearch}
+            title="Chercher dans le contenu de toutes les conversations (Ctrl+Maj+F)"
+          >
+            <Search size={15} /> Rechercher partout
+          </button>
+        )}
         <button
-          className={"nav-item" + (props.selection?.kind === "archives" ? " selected" : "")}
+          className={"nav-item" + (props.selection?.kind === "archives" && !props.searchActive ? " selected" : "")}
           onClick={() => props.onSelect({ kind: "archives" })}
         >
           <Archive size={15} /> Archives <span className="count">{config.archives.length}</span>

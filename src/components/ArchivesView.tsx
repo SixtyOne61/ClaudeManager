@@ -3,14 +3,18 @@
 import { ArchiveRestore, Trash2 } from "lucide-react";
 import type { ArchiveEntry, Config } from "../api";
 import { formatDate } from "../util";
+import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
 
 interface Props {
   config: Config;
   onRestore: (a: ArchiveEntry) => void;
   onTrash: (a: ArchiveEntry) => void;
+  /** Archive ouverte depuis la recherche globale : mise en évidence. */
+  focus?: SearchFocus | null;
 }
 
-export function ArchivesView({ config, onRestore, onTrash }: Props) {
+export function ArchivesView({ config, onRestore, onTrash, focus }: Props) {
+  useScrollToFocus(focus);
   const archives = [...config.archives].sort((a, b) => b.archivedAt - a.archivedAt);
   const projectLabel = (a: ArchiveEntry) =>
     config.projects[a.projectKey]?.displayName || a.projectPath?.split(/[\\/]/).filter(Boolean).pop() || a.projectKey;
@@ -28,7 +32,7 @@ export function ArchivesView({ config, onRestore, onTrash }: Props) {
       <div className="session-list">
         {archives.length === 0 && <div className="empty">Aucune conversation archivée.</div>}
         {archives.map((a) => (
-          <div key={a.sessionId} className="session-row">
+          <div key={a.sessionId} data-session-id={a.sessionId} className="session-row">
             <div className="session-main">
               <div className="session-title">{a.title}</div>
               <div className="session-meta">

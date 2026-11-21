@@ -14,10 +14,13 @@ import {
   type ProjectInfo,
   type ScanResult,
   type SessionInfo,
+  type SearchHit,
+  type SessionHits,
 } from "./api";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { ProjectView } from "./components/ProjectView";
 import { ArchivesView } from "./components/ArchivesView";
+import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
 import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
 import { newId, projectName } from "./util";
 import { openInDesktop } from "./desktop";
@@ -38,6 +41,22 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; error?: boolean }[]>([]);
   const toastId = useRef(0);
+  // Recherche globale : vue ouverte, texte cherché (gardé au retour) et dernier résultat ouvert.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
+
+  // Ctrl+Maj+F ouvre la recherche globale.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const toast = useCallback((text: string, error = false) => {
     const id = ++toastId.current;
@@ -228,6 +247,16 @@ export default function App() {
     }
   };
 
+  // ---- Recherche globale ------------------------------------------------------------------
+
+  /** Ouvre une conversation trouvée : son projet (ou les archives) avec la conversation repérée. */
+  const openSearchResult = (s: SessionHits, hit: SearchHit | undefined) => {
+    const archived = s.archived || !projects.has(s.projectKey);
+    setSearchFocus({ projectKey: s.projectKey, sessionId: s.sessionId, archived, line: hit?.line ?? null, uuid: hit?.uuid ?? null });
+    setSelection(archived ? { kind: "archives" } : { kind: "project", key: s.projectKey });
+    setSearchOpen(false);
+  };
+
   // ---- Rendu ----------------------------------------------------------------------------
 
   const defaultCategory = selectedProject ? config.categories.find((c) => c.projectKeys.includes(selectedProject.key))?.id ?? null : null;
@@ -239,7 +268,13 @@ export default function App() {
         projects={projects}
         selection={selection}
         loading={loading}
-        onSelect={setSelection}
+        onSelect={(s) => {
+          setSearchOpen(false);
+          setSearchFocus(null);
+          setSelection(s);
+        }}
+        searchActive={searchOpen}
+        onSearch={() => setSearchOpen(true)}
         onRefresh={refresh}
         onCategoriesChange={(categories) => updateConfig((c) => ({ ...c, categories }))}
         onAddCategory={() => setDialog({ kind: "newCategory" })}
@@ -249,8 +284,23 @@ export default function App() {
         onToggleTemp={(show) => updateConfig((c) => ({ ...c, showTempProjects: show }))}
       />
 
-      {selection?.kind === "archives" ? (
-        <ArchivesView config={config} onRestore={restoreArchive} onTrash={trashArchive} />
+      {searchOpen ? (
+        <GlobalSearch
+          config={config}
+          projects={projects}
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onOpen={openSearchResult}
+          onClose={() => setSearchOpen(false)}
+          onError={showError}
+        />
+      ) : selection?.kind === "archives" ? (
+        <ArchivesView
+          config={config}
+          onRestore={restoreArchive}
+          onTrash={trashArchive}
+          focus={searchFocus?.archived ? searchFocus : null}
+        />
       ) : selectedProject ? (
         <ProjectView
           project={selectedProject}
@@ -267,6 +317,7 @@ export default function App() {
           onMove={(cat) => moveProject(selectedProject.key, cat)}
           onForget={() => forgetProject(selectedProject)}
           onError={showError}
+          focus={searchFocus && !searchFocus.archived && searchFocus.projectKey === selectedProject.key ? searchFocus : null}
         />
       ) : (
         <main className="main empty-main">Sélectionnez un projet.</main>

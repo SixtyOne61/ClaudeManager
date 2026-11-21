@@ -3,7 +3,7 @@
 // Les données sont fictives : aucune lecture de ~/.claude.
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import type { Config, ProjectInfo, ScanResult, SessionInfo } from "./api";
+import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 
 const now = Date.now();
 const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3600_000).toISOString();
@@ -71,6 +71,32 @@ let config: Config = {
   showTempProjects: false,
 };
 
+/** Recherche globale fictive : chaque conversation « contient » la requête dans un message. */
+function mockSearchAll(query: string): SearchResult {
+  const q = query.trim();
+  if (q.length < 2) return { sessions: [], truncated: false, cancelled: false, elapsedMs: 0 };
+  const sessions: SessionHits[] = scan.projects
+    .flatMap((p) => p.sessions.map((s) => ({ p, s })))
+    .filter((_, i) => i % 2 === 0)
+    .map(({ p, s }, i) => ({
+      projectKey: p.key,
+      projectPath: p.path,
+      sessionId: s.id,
+      title: s.title,
+      updatedAt: s.updatedAt,
+      archived: false,
+      matchCount: 1 + (i % 5),
+      hits: [
+        { role: "user", line: 3, uuid: null, excerpt: { before: "Peux-tu regarder ", matched: q, after: " dans le menu principal ?" } },
+        { role: "assistant", line: 8, uuid: null, excerpt: { before: "…j'ai modifié ", matched: q, after: " et ajouté un test." } },
+      ].slice(0, 1 + (i % 2)) as SessionHits["hits"],
+    }));
+  for (const a of config.archives) {
+    sessions.push({ projectKey: a.projectKey, projectPath: a.projectPath, sessionId: a.sessionId, title: a.title, updatedAt: a.updatedAt, archived: true, matchCount: 1, hits: [{ role: "user", line: 1, uuid: null, excerpt: { before: "", matched: q, after: " (archive)" } }] });
+  }
+  return { sessions, truncated: false, cancelled: false, elapsedMs: 12 };
+}
+
 export function installDevMock() {
   mockWindows("main");
   mockIPC((cmd, args) => {
@@ -90,6 +116,8 @@ export function installDevMock() {
         throw "Error: Claude Desktop is not installed.";
       case "search_sessions":
         return [];
+      case "search_all":
+        return mockSearchAll(String(a.query ?? ""));
       case "archive_session": {
         // Une conversation de worktree a une clé de stockage différente de son projet : recherche par id.
         const p = scan.projects.find((x) => x.sessions.some((s) => s.id === a.sessionId))!;

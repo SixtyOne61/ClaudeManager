@@ -447,35 +447,6 @@ pub fn read_session(path: &Path, project_key: &str) -> Option<SessionInfo> {
     })
 }
 
-/// Recherche plein texte (insensible à la casse) dans les messages d'une session.
-/// Ne lit que les lignes qui contiennent déjà la requête, puis vérifie dans le texte décodé.
-pub fn session_contains(path: &Path, query_lower: &str) -> bool {
-    let Ok(file) = File::open(path) else { return false };
-    let mut reader = BufReader::with_capacity(256 * 1024, file);
-    let mut buf = Vec::new();
-    loop {
-        buf.clear();
-        match reader.read_until(b'\n', &mut buf) {
-            Ok(0) | Err(_) => return false,
-            Ok(_) => {}
-        }
-        let Ok(line) = std::str::from_utf8(&buf) else { continue };
-        if !line.to_lowercase().contains(query_lower) {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        let kind = v.get("type").and_then(Value::as_str);
-        if !matches!(kind, Some("user") | Some("assistant")) {
-            continue;
-        }
-        if let Some(content) = v.pointer("/message/content") {
-            if content_text(content).to_lowercase().contains(query_lower) {
-                return true;
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -589,20 +560,5 @@ mod tests {
             Some("Je veux une appli")
         );
         assert_eq!(clean_prompt("a < b et c > d").as_deref(), Some("a < b et c > d"));
-    }
-
-    #[test]
-    fn full_text_search() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = write_jsonl(
-            dir.path(),
-            "s.jsonl",
-            &[
-                r#"{"type":"user","message":{"content":"Parle-moi du Générateur"}}"#,
-                r#"{"type":"api-request","params":"secret générateur"}"#,
-            ],
-        );
-        assert!(session_contains(&p, "générateur"));
-        assert!(!session_contains(&p, "secret"));
     }
 }

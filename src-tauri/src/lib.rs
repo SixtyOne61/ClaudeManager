@@ -9,6 +9,7 @@ mod actions;
 mod config;
 mod desktop;
 mod scanner;
+mod search;
 mod sessions;
 mod worktrees;
 
@@ -94,13 +95,13 @@ fn scan(state: State<AppState>) -> ScanResult {
 }
 
 /// Recherche plein texte dans les conversations d'un projet. Renvoie les ids trouvés.
+/// Mêmes règles que la recherche globale (voir `search.rs`).
 #[tauri::command(async)]
 fn search_sessions(state: State<AppState>, project_key: String, query: String) -> Result<Vec<String>, String> {
     actions::validate_project_key(&project_key)?;
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
+    let Some(q) = search::Query::new(&query) else {
         return Ok(Vec::new());
-    }
+    };
     // Le projet et ses worktrees (dont les conversations sont rangées dans d'autres dossiers).
     let files: Vec<PathBuf> = worktrees::storage_keys(state.scanner.root(), &project_key)
         .iter()
@@ -115,7 +116,7 @@ fn search_sessions(state: State<AppState>, project_key: String, query: String) -
             let (hits, q) = (&hits, &q);
             s.spawn(move || {
                 for f in chunk {
-                    if sessions::session_contains(f, q) {
+                    if search::file_matches(f, q) {
                         if let Some(stem) = f.file_stem() {
                             hits.lock().unwrap().push(stem.to_string_lossy().to_string());
                         }
@@ -125,6 +126,16 @@ fn search_sessions(state: State<AppState>, project_key: String, query: String) -
         }
     });
     Ok(hits.into_inner().unwrap())
+}
+
+/// Recherche dans le contenu de toutes les conversations, archives comprises.
+/// Une nouvelle recherche interrompt la précédente.
+#[tauri::command(async)]
+fn search_all(state: State<AppState>, query: String) -> search::SearchResult {
+    let projects = state.scanner.scan();
+    let archives = state.config.lock().unwrap().archives.clone();
+    let targets = search::targets(state.scanner.root(), &projects, &archives);
+    search::search(&targets, &query)
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +351,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan,
             search_sessions,
+            search_all,
             get_config,
             save_config,
             add_project,

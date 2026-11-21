@@ -84,6 +84,45 @@ export interface Config {
   showTempProjects: boolean;
 }
 
+/** Extrait d'un message découpé autour du mot trouvé. */
+export interface SearchExcerpt {
+  before: string;
+  matched: string;
+  after: string;
+}
+
+/** Un message qui contient la recherche. */
+export interface SearchHit {
+  role: "user" | "assistant";
+  /** Numéro de la ligne dans le .jsonl (à partir de 0). */
+  line: number;
+  /** Identifiant de la ligne (plus stable que son numéro). */
+  uuid: string | null;
+  excerpt: SearchExcerpt;
+}
+
+/** Une conversation qui contient la recherche. */
+export interface SessionHits {
+  projectKey: string;
+  projectPath: string | null;
+  sessionId: string;
+  title: string;
+  updatedAt: string | null;
+  archived: boolean;
+  /** Nombre de messages trouvés (seuls les premiers ont un extrait). */
+  matchCount: number;
+  hits: SearchHit[];
+}
+
+export interface SearchResult {
+  /** De la plus récente à la plus ancienne. */
+  sessions: SessionHits[];
+  truncated: boolean;
+  /** Interrompue par une recherche plus récente : à ignorer. */
+  cancelled: boolean;
+  elapsedMs: number;
+}
+
 /** Erreur renvoyée quand une session a été modifiée il y a peu (peut-être ouverte). */
 export const ERR_ACTIVE = "SESSION_ACTIVE";
 
@@ -91,6 +130,7 @@ export const api = {
   scan: () => invoke<ScanResult>("scan"),
   searchSessions: (projectKey: string, query: string) =>
     invoke<string[]>("search_sessions", { projectKey, query }),
+  searchAll: (query: string) => invoke<SearchResult>("search_all", { query }),
   getConfig: () => invoke<Config>("get_config"),
   saveConfig: (cfg: Config) => invoke<Config>("save_config", { cfg }),
   addProject: (path: string) => invoke<string>("add_project", { path }),
