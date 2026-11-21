@@ -5,7 +5,7 @@
 // Par-dessus le terminal, l'interface de conversation (ticket 05) affiche le `.jsonl` et
 // envoie les messages tapés dans sa zone de saisie. Le terminal reste vivant dessous
 // (seulement caché) et remonte tout seul quand Claude Code attend une interaction :
-// - permission ou question (état « attend ta réponse », ticket 04) ;
+// - permission ou question (état « action requise », ticket 04) ;
 // - commande `/…` envoyée depuis la zone de saisie (elle peut ouvrir un menu) ;
 // - question de confiance d'un dossier : `claude` lancé mais aucun hook `SessionStart`
 //   reçu après un court délai et, pour une nouvelle conversation, tant que son fichier n'a

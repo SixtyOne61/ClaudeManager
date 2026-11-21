@@ -1,10 +1,16 @@
-// État des conversations (voir src-tauri/src/activity.rs) : en cours, attend ta réponse,
-// terminée. Les hooks de Claude Code écrivent l'état, le backend l'émet ici.
+// État des conversations (voir src-tauri/src/activity.rs et GLOSSARY.md, « État »).
+// Les hooks de Claude Code écrivent l'état brut (running / waiting + kind), le backend
+// l'émet ici ; l'interface l'affiche selon quatre états :
+// - en cours        l'agent travaille (vert qui pulse) ;
+// - action requise  une permission ou une question attend (orange), ou une erreur d'API a
+//                   interrompu le tour (rouge, comptée avec les actions requises) ;
+// - à toi           l'agent a fini son tour et attend le prochain message (bleu discret) ;
+// - fermée          aucun terminal intégré ne tourne (pas de pastille).
 //
 // - useActivities()               états de toutes les conversations (composants React)
-// - getActivity(id)               état actuel d'une conversation (null = terminée)
+// - getActivity(id)               état actuel d'une conversation (null = fermée)
 // - subscribeActivity(id, f)      appelé à chaque changement d'état de cette conversation
-// - activityStatus(a)             "running" | "waiting" | "ended", pour l'affichage
+// - activityDisplay(a)            "running" | "action" | "yours" | "closed", pour l'affichage
 // - isAwaitingPermission(a)       l'agent attend une permission ou la réponse à une question
 //                                 (pour faire remonter le terminal, ticket 05)
 
@@ -37,7 +43,7 @@ export interface Activity {
   at: number;
 }
 
-/** Conversations dont le terminal intégré tourne (les autres sont terminées). */
+/** Conversations dont le terminal intégré tourne (les autres sont fermées). */
 let store: ReadonlyMap<string, Activity> = new Map();
 const listeners = new Set<() => void>();
 const perSession = new Map<string, Set<(a: Activity | null) => void>>();
@@ -75,7 +81,7 @@ export function useActivities(): ReadonlyMap<string, Activity> {
   return useSyncExternalStore(subscribeAll, () => store);
 }
 
-/** État actuel d'une conversation ; null : terminée (pas de terminal intégré qui tourne). */
+/** État actuel d'une conversation ; null : fermée (pas de terminal intégré qui tourne). */
 export function getActivity(sessionId: string): Activity | null {
   ensureStarted();
   return store.get(sessionId) ?? null;
@@ -109,8 +115,16 @@ export function interruptionWarning(a: Activity | null | undefined): string | nu
   return null;
 }
 
-export function activityStatus(a: Activity | null | undefined): ActivityState {
-  return a?.state ?? "ended";
+/** État affiché : en cours, action requise, à toi, fermée. */
+export type ActivityDisplay = "running" | "action" | "yours" | "closed";
+
+export function activityDisplay(a: Activity | null | undefined): ActivityDisplay {
+  if (!a || a.state === "ended") return "closed";
+  if (a.state === "running") return "running";
+  // Permission, question ou erreur d'API : l'utilisateur doit intervenir.
+  if (a.kind === "permission" || a.kind === "question" || a.kind === "error") return "action";
+  // Fin de tour, lancement, notification d'inactivité : l'agent attend le prochain message.
+  return "yours";
 }
 
 /** L'agent attend une permission ou la réponse à une question (pas une simple fin de tour). */
@@ -120,28 +134,34 @@ export function isAwaitingPermission(a: Activity | null | undefined): boolean {
 
 /** Libellé de l'état, pour les info-bulles. */
 export function activityLabel(a: Activity | null | undefined): string {
-  if (!a || a.state === "ended") return "Terminée";
-  if (a.state === "running") return "En cours";
+  const d = activityDisplay(a);
+  if (!a || d === "closed") return "Fermée";
+  if (d === "running") return "En cours";
+  if (d === "yours") return "À toi : Claude attend ton prochain message";
   switch (a.kind) {
     case "permission":
-      return "Attend ta réponse : permission demandée";
+      return "Action requise : permission demandée";
     case "question":
-      return "Attend ta réponse : question posée";
-    case "error":
-      return "Attend ta réponse : erreur" + (a.detail ? ` (${a.detail})` : "");
+      return "Action requise : question posée";
     default:
-      return "Attend ta réponse";
+      return "Action requise : erreur" + (a.detail ? ` (${a.detail})` : "") + ", relance ton message";
   }
 }
 
-/** Nombre de conversations en cours et en attente de réponse parmi `ids`. */
-export function countActivities(activities: ReadonlyMap<string, Activity>, ids: Iterable<string>) {
+/** Compteurs d'un projet ou d'une catégorie (« à toi » n'est pas compté). */
+export interface ActivityCount {
+  running: number;
+  action: number;
+}
+
+/** Nombre de conversations en cours et avec une action requise parmi `ids`. */
+export function countActivities(activities: ReadonlyMap<string, Activity>, ids: Iterable<string>): ActivityCount {
   let running = 0;
-  let waiting = 0;
+  let action = 0;
   for (const id of ids) {
-    const s = activities.get(id)?.state;
-    if (s === "running") running++;
-    else if (s === "waiting") waiting++;
+    const d = activityDisplay(activities.get(id));
+    if (d === "running") running++;
+    else if (d === "action") action++;
   }
-  return { running, waiting };
+  return { running, action };
 }

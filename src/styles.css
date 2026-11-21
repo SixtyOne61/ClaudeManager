@@ -12,9 +12,13 @@
   --accent-hover: #e58a6b;
   --danger: #ef4444;
   --warn: #f59e0b;
-  /* Pastilles d'activité : en cours (vert), attend ta réponse (orange). */
+  /* Pastilles d'activité : en cours (vert), action requise (orange ; rouge pour une
+     erreur), à toi (bleu discret). */
   --activity-running: #22c55e;
-  --activity-waiting: #f97316;
+  --activity-action: #f97316;
+  --activity-error: #ef4444;
+  --activity-yours: #60a5fa;
+  --activity-waiting: var(--activity-action);
   --radius: 8px;
   --fg-muted: var(--text-muted);
   color-scheme: dark;
@@ -165,15 +169,21 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .session-row.colored:hover { filter: brightness(1.08); border-color: transparent; }
 .session-row.colored .btn:not(.primary) { background: rgba(0,0,0,.18); border-color: rgba(0,0,0,.2); }
 .session-row.overlay { background: var(--bg-hover); box-shadow: 0 8px 24px rgba(0,0,0,.5); cursor: grabbing; }
-/* Pastille d'activité, à gauche du titre (vide quand la conversation est terminée). */
+/* Pastille d'activité, à gauche du titre (vide quand la conversation est fermée). */
 .session-activity { flex: none; width: 10px; height: 10px; }
 /* Couleurs propres, avec un liseré sombre pour rester lisibles sur une conversation colorée. */
 .activity-dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
-.activity-running { background: var(--activity-running); animation: activity-pulse 1.4s ease-in-out infinite; }
-.activity-waiting { background: var(--activity-waiting); }
-@keyframes activity-pulse { 50% { opacity: .45; } }
+/* En cours : pulsation légère. */
+.activity-running { background: var(--activity-running); animation: activity-pulse 1.8s ease-in-out infinite; }
+.activity-action { background: var(--activity-action); }
+.activity-action.activity-error { background: var(--activity-error); }
+/* À toi : bleu discret, plus petit, sans liseré marqué. */
+.activity-dot.activity-yours { background: var(--activity-yours); opacity: .75; transform: scale(.8); }
+@keyframes activity-pulse { 50% { opacity: .6; } }
 @media (prefers-reduced-motion: reduce) { .activity-running { animation: none; } }
-/* Compteurs (projet, catégorie) : en cours / attend ta réponse. */
+/* Pastille dans un onglet de conversation ouverte. */
+.terminal-tab .activity-dot { width: 8px; height: 8px; box-shadow: none; }
+/* Compteurs (projet, catégorie) : en cours / action requise (« à toi » n'est pas compté). */
 .activity-counts { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .activity-count { display: inline-flex; align-items: center; gap: 3px; }
 .activity-count .activity-dot { width: 7px; height: 7px; box-shadow: none; }
