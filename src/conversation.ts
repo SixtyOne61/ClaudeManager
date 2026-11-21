@@ -120,6 +120,63 @@ export function useConversation(sessionId: string, cwd: string | null): Conversa
   return data;
 }
 
+// ---- Regroupement pour l'affichage -----------------------------------------------------
+
+export type ToolEntry = Extract<ConversationEntry, { kind: "tool" }>;
+export type ToolResultEntry = Extract<ConversationEntry, { kind: "toolResult" }>;
+
+/** Une action de l'agent avec son résultat (absent tant que l'outil tourne). */
+export interface Action {
+  tool: ToolEntry;
+  result: ToolResultEntry | undefined;
+}
+
+/** Élément d'un tour de Claude : un texte, ou les actions consécutives entre deux textes. */
+export type ClaudeItem =
+  | { kind: "text"; key: string; entry: Extract<ConversationEntry, { kind: "assistant" }> }
+  | { kind: "actions"; key: string; actions: Action[] };
+
+/** Bloc affiché : message de l'utilisateur, notice, ou tour de Claude (textes et actions). */
+export type ConversationBlock =
+  | { kind: "user"; key: string; entry: Extract<ConversationEntry, { kind: "user" }> }
+  | { kind: "notice"; key: string; entry: Extract<ConversationEntry, { kind: "notice" }> }
+  | { kind: "claude"; key: string; items: ClaudeItem[] };
+
+/**
+ * Regroupe les éléments lus : les réponses et actions de Claude qui se suivent forment un
+ * tour, et les actions consécutives (entre deux textes) un seul groupe. Les clés ne dépendent
+ * que du premier élément de chaque bloc : elles restent stables quand la suite arrive.
+ */
+export function groupEntries(entries: ConversationEntry[]): ConversationBlock[] {
+  const results = new Map<string, ToolResultEntry>();
+  for (const e of entries) if (e.kind === "toolResult") results.set(e.toolUseId, e);
+
+  const blocks: ConversationBlock[] = [];
+  let turn: Extract<ConversationBlock, { kind: "claude" }> | null = null;
+  entries.forEach((e, i) => {
+    const key = `${e.line}:${i}`;
+    switch (e.kind) {
+      case "user":
+      case "notice":
+        turn = null;
+        blocks.push(e.kind === "user" ? { kind: "user", key, entry: e } : { kind: "notice", key, entry: e });
+        break;
+      case "assistant":
+      case "tool": {
+        if (!turn) blocks.push((turn = { kind: "claude", key, items: [] }));
+        const last = turn.items[turn.items.length - 1];
+        if (e.kind === "assistant") turn.items.push({ kind: "text", key, entry: e });
+        else if (last?.kind === "actions") last.actions.push({ tool: e, result: results.get(e.id) });
+        else turn.items.push({ kind: "actions", key, actions: [{ tool: e, result: results.get(e.id) }] });
+        break;
+      }
+      default:
+        break; // résultats : rattachés à leur appel
+    }
+  });
+  return blocks;
+}
+
 /** Délai entre le collage et l'Entrée, pour que Claude Code ait fini de traiter le collage. */
 const ENTER_DELAY_MS = 60;
 

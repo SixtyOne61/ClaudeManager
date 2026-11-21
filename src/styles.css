@@ -307,16 +307,51 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .conv-stage { flex: 1; min-height: 0; position: relative; }
 .conv-stage > .terminal-host { position: absolute; inset: 0; }
 .conversation { position: absolute; inset: 0; overflow-y: auto; background: var(--bg); user-select: text; }
-.conversation-inner { max-width: 900px; margin: 0 auto; padding: 18px 24px 28px; display: flex; flex-direction: column; gap: 10px; }
+.conversation-inner { max-width: 900px; margin: 0 auto; padding: 18px 24px 28px; display: flex; flex-direction: column; gap: 16px; }
 .conv-empty { color: var(--text-muted); text-align: center; padding: 40px 0; }
 .conv-notice { align-self: center; color: var(--text-muted); font-size: 12px; white-space: pre-wrap; text-align: center; max-width: 100%; }
+/* Message de l'utilisateur : bulle à droite, fond teinté de la couleur d'accent. */
 .conv-user { display: flex; justify-content: flex-end; }
 .conv-bubble {
   max-width: 80%; padding: 8px 12px; border-radius: 12px 12px 4px 12px;
-  background: var(--bg-elev-2); border: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere;
+  background: rgba(217,119,87,.16); border: 1px solid rgba(217,119,87,.32); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .conv-bubble.command { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; color: var(--accent); }
+/* Tour de Claude : étiquette, puis textes (sans cadre) et lignes d'actions. */
+.conv-claude { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.conv-claude-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.conv-claude-avatar {
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--accent); color: #fff;
+}
 .conv-assistant { line-height: 1.55; overflow-wrap: anywhere; }
+
+/* Actions de l'agent : lignes compactes et discrètes, dépliables. */
+.action-group { font-size: 12.5px; color: var(--text-muted); min-width: 0; }
+.action-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 3px 6px; margin-left: -6px;
+  border: none; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.action-row:hover { background: var(--bg-hover); color: var(--text); }
+.action-chevron { flex: none; opacity: .7; }
+.action-icon { flex: none; }
+.action-icon.error, .action-errors { color: var(--danger); }
+.action-count { flex: none; }
+.action-label { flex: none; font-weight: 600; }
+.action-summary { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.action-errors { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-size: 11.5px; }
+.action-list { margin: 2px 0 2px 6px; padding-left: 10px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px; }
+.action-details {
+  margin: 2px 0 6px 18px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); overflow: hidden; color: var(--text);
+}
+.action-item.error .action-details { border-color: rgba(239,68,68,.45); }
+.action-detail { padding: 6px 10px; color: var(--text-muted); }
+.action-input {
+  margin: 0; padding: 6px 10px; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto;
+}
+.action-detail + .action-input { padding-top: 0; }
 .conversation .search-focused { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 
 .markdown > :first-child { margin-top: 0; }
@@ -335,14 +370,9 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .markdown hr { border: none; border-top: 1px solid var(--border); }
 
-.tool-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); overflow: hidden; font-size: 12.5px; }
-.tool-card.error { border-color: rgba(239,68,68,.45); }
-.tool-head { display: flex; align-items: center; gap: 7px; padding: 6px 10px; color: var(--text-muted); min-width: 0; }
-.tool-label { font-weight: 600; color: var(--text); flex: none; }
-.tool-title { font-family: "Cascadia Code", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.tool-pending { margin-left: auto; color: var(--activity-running); }
-.tool-detail { padding: 0 10px 6px; color: var(--text-muted); }
-.tool-output { border-top: 1px solid var(--border); background: var(--bg); }
+.tool-output { background: var(--bg); }
+.action-details > * + .tool-output { border-top: 1px solid var(--border); }
+.action-icon.spin { color: var(--activity-running); }
 .tool-output pre {
   margin: 0; padding: 8px 10px; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px;
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 520px; overflow-y: auto;
