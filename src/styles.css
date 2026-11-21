@@ -200,3 +200,26 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c3240; border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* ---------- Terminal intégré ---------- */
+.main-column { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main-column > .main { min-height: 0; }
+.session-row { cursor: pointer; }
+.terminal-tabs {
+  display: flex; gap: 2px; padding: 6px 8px 0; overflow-x: auto; flex: none;
+  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+}
+.terminal-tab {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 6px 8px 6px 10px;
+  border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0;
+  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12.5px; white-space: nowrap;
+}
+.terminal-tab:hover { background: var(--bg-hover); color: var(--text); }
+.terminal-tab.active { background: var(--bg); border-color: var(--border); color: var(--text); }
+.terminal-tab.home { padding-right: 10px; }
+.terminal-tab-title { overflow: hidden; text-overflow: ellipsis; }
+.terminal-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.terminal-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.terminal-host { flex: 1; min-height: 0; padding: 6px 0 0 8px; user-select: text; }
+.terminal-banner { background: var(--bg-elev-2); flex: none; }
+.terminal-error { white-space: pre-wrap; user-select: text; flex: 1; }

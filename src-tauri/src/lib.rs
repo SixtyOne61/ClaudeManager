@@ -7,6 +7,7 @@
 
 mod actions;
 mod config;
+mod pty;
 mod scanner;
 mod sessions;
 
@@ -297,6 +298,9 @@ pub fn run() {
         // Mises à jour : uniquement quand l'utilisateur clique sur « Vérifier les mises à jour ».
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
+        // Terminaux intégrés (voir pty.rs).
+        .manage(pty::PtyManager::default())
+        .on_window_event(pty::on_window_event)
         .setup(|app| {
             let root = app.state::<AppState>().paths.claude_projects.clone();
             start_watcher(app.handle().clone(), root);
@@ -314,6 +318,12 @@ pub fn run() {
             restore_archive,
             trash_session,
             trash_archive,
+            pty::commands::pty_resume,
+            pty::commands::pty_write,
+            pty::commands::pty_resize,
+            pty::commands::pty_kill,
+            pty::commands::pty_list,
+            pty::commands::pty_quit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

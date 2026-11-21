@@ -20,6 +20,8 @@ import { ProjectView } from "./components/ProjectView";
 import { ArchivesView } from "./components/ArchivesView";
 import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
 import { newId, projectName } from "./util";
+import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
+import { isTerminalRunning, killTerminal, ptyApi } from "./pty";
 
 /** Boîte de dialogue ouverte (une seule à la fois). */
 type DialogState =
@@ -37,6 +39,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; error?: boolean }[]>([]);
   const toastId = useRef(0);
+  // Terminal intégré : conversations ouvertes (onglets) et onglet affiché (null = vue projet).
+  const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
+  const [activeTerminal, setActiveTerminal] = useState<string | null>(null);
 
   const toast = useCallback((text: string, error = false) => {
     const id = ++toastId.current;
@@ -84,6 +89,23 @@ export default function App() {
     },
     [config, showError],
   );
+
+  // Fermeture de l'app alors qu'un terminal tourne : le backend suspend la fermeture
+  // et demande confirmation ici.
+  useEffect(() => {
+    const unlisten = listen("pty-close-requested", async () => {
+      const ok = await ask("Une conversation tourne encore dans le terminal intégré.\nQuitter arrêtera Claude Code dans tous les onglets.", {
+        title: "Quitter Claude Manager",
+        kind: "warning",
+        okLabel: "Quitter",
+        cancelLabel: "Annuler",
+      });
+      if (ok) ptyApi.quit();
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
 
   const projects = useMemo(() => new Map((scan?.projects ?? []).map((p) => [p.key, p])), [scan]);
 
@@ -147,6 +169,31 @@ export default function App() {
       .launchClaude(path, sessionId)
       .then(() => toast(sessionId ? "Reprise de la conversation dans un terminal…" : "Nouvelle conversation dans un terminal…"))
       .catch(showError);
+  };
+
+  // ---- Terminal intégré ----------------------------------------------------------------
+
+  /** Ouvre (ou affiche) la conversation dans un onglet du terminal intégré. */
+  const openInTerminal = (s: SessionInfo, projectPath: string | null) => {
+    const cwd = s.cwd ?? projectPath;
+    if (!cwd) return;
+    setTerminals((ts) => (ts.some((t) => t.sessionId === s.id) ? ts : [...ts, { sessionId: s.id, cwd, title: s.title }]));
+    setActiveTerminal(s.id);
+  };
+
+  const closeTerminal = async (t: OpenTerminal) => {
+    if (isTerminalRunning(t.sessionId)) {
+      const ok = await ask(`Arrêter Claude Code dans « ${t.title} » et fermer l'onglet ?`, {
+        title: "Fermer le terminal",
+        kind: "warning",
+        okLabel: "Fermer",
+        cancelLabel: "Annuler",
+      });
+      if (!ok) return;
+    }
+    await killTerminal(t.sessionId).catch(() => {});
+    setTerminals((ts) => ts.filter((x) => x.sessionId !== t.sessionId));
+    setActiveTerminal((a) => (a === t.sessionId ? null : a));
   };
 
   // ---- Archives / Corbeille -------------------------------------------------------------
@@ -238,7 +285,10 @@ export default function App() {
         projects={projects}
         selection={selection}
         loading={loading}
-        onSelect={setSelection}
+        onSelect={(s) => {
+          setSelection(s);
+          setActiveTerminal(null);
+        }}
         onRefresh={refresh}
         onCategoriesChange={(categories) => updateConfig((c) => ({ ...c, categories }))}
         onAddCategory={() => setDialog({ kind: "newCategory" })}
@@ -248,7 +298,10 @@ export default function App() {
         onToggleTemp={(show) => updateConfig((c) => ({ ...c, showTempProjects: show }))}
       />
 
-      {selection?.kind === "archives" ? (
+      <div className="main-column">
+      <TerminalTabBar terminals={terminals} active={activeTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
+      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} />
+      {activeTerminal !== null ? null : selection?.kind === "archives" ? (
         <ArchivesView config={config} onRestore={restoreArchive} onTrash={trashArchive} />
       ) : selectedProject ? (
         <ProjectView
@@ -256,6 +309,7 @@ export default function App() {
           config={config}
           terminal={scan.terminal}
           onLaunch={(id) => launch(selectedProject.path, id)}
+          onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
           onRename={() => setDialog({ kind: "renameProject", project: selectedProject })}
@@ -267,6 +321,7 @@ export default function App() {
       ) : (
         <main className="main empty-main">Sélectionnez un projet.</main>
       )}
+      </div>
 
       {dialog?.kind === "newCategory" && (
         <TextPrompt

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  ExternalLink,
   FileSearch,
   FolderOpen,
   MessageSquarePlus,
@@ -22,6 +23,8 @@ interface Props {
   config: Config;
   terminal: string;
   onLaunch: (sessionId?: string) => void;
+  /** Ouvre la conversation dans le terminal intégré. */
+  onOpen: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
   onRename: () => void;
@@ -146,7 +149,7 @@ export function ProjectView(props: Props) {
           <div className="empty">{p.sessions.length === 0 ? "Aucune conversation dans ce projet." : "Aucune conversation ne correspond à la recherche."}</div>
         )}
         {sessions.map((s) => (
-          <div key={s.id} className="session-row" onDoubleClick={() => canLaunch && props.onLaunch(s.id)}>
+          <div key={s.id} className="session-row" onClick={() => canLaunch && props.onOpen(s)}>
             <div className="session-main">
               <div className="session-title" title={s.firstPrompt ?? s.title}>
                 {s.title}
@@ -167,9 +170,12 @@ export function ProjectView(props: Props) {
                 <span className="session-id">{s.id.slice(0, 8)}</span>
               </div>
             </div>
-            <div className="session-actions">
-              <button className="btn small primary" disabled={!canLaunch} onClick={() => props.onLaunch(s.id)} title="claude --resume">
+            <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+              <button className="btn small primary" disabled={!canLaunch} onClick={() => props.onOpen(s)} title="claude --resume, dans le terminal intégré">
                 <Play size={13} /> Reprendre
+              </button>
+              <button className="icon-btn" disabled={!canLaunch} onClick={() => props.onLaunch(s.id)} title={`Ouvrir dans un terminal externe (${props.terminal})`}>
+                <ExternalLink size={15} />
               </button>
               <button className="icon-btn" title="Archiver" onClick={() => props.onArchive(s)}>
                 <Archive size={15} />
