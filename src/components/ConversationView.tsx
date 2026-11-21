@@ -8,6 +8,7 @@ import { Bot, ChevronDown, ChevronRight, FilePen, FilePlus, FileText, Globe, Lis
 import type { ConversationData, ConversationEntry, DiffLine } from "../conversation";
 import { renderMarkdown } from "../markdown";
 import type { SearchFocus } from "./GlobalSearch";
+import { useSlashMenu } from "./SlashMenu";
 
 type ToolEntry = Extract<ConversationEntry, { kind: "tool" }>;
 type ResultEntry = Extract<ConversationEntry, { kind: "toolResult" }>;
@@ -241,12 +242,16 @@ interface InputProps {
   onStop: () => void;
   /** Mise au point de la zone (conversation affichée). */
   autoFocus: boolean;
+  /** Dossier et identifiant de la conversation : commandes `/…` proposées (SlashMenu). */
+  cwd?: string | null;
+  sessionId?: string | null;
 }
 
-export function ConversationInput({ enabled, onSend, onStop, autoFocus }: InputProps) {
+export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null }: InputProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const slash = useSlashMenu({ text, setText, cwd, sessionId });
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -276,6 +281,8 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus }: InputP
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Menu des commandes `/…` ouvert : il prend ↑ ↓ Tab Entrée Échap.
+    if (slash.onKeyDown(e)) return;
     // Entrée envoie, Maj+Entrée va à la ligne.
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -285,6 +292,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus }: InputP
 
   return (
     <div className="conv-input">
+      {enabled && slash.menu}
       <textarea
         ref={ref}
         rows={1}

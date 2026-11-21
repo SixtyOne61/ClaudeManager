@@ -295,6 +295,8 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         onSend={send}
         onStop={() => sendInterrupt(sessionId).catch(() => {})}
         autoFocus={active && !terminalShown}
+        cwd={cwd}
+        sessionId={sessionId}
       />
     </div>
   );
