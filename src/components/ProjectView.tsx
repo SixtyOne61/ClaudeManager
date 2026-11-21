@@ -54,6 +54,8 @@ import {
 import { ColorPicker } from "./ColorPicker";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
 import { TextPrompt } from "./Dialogs";
+import { ActivityDot } from "./Activity";
+import { useActivities, type Activity } from "../activity";
 
 /** Zone « Sans section » (pas une vraie section). */
 const NONE = "none";
@@ -86,6 +88,8 @@ export function ProjectView(props: Props) {
   const [deep, setDeep] = useState(false);
   const [deepHits, setDeepHits] = useState<Set<string> | null>(null);
   const [searching, setSearching] = useState(false);
+  // État de chaque conversation (pastille d'activité).
+  const activities = useActivities();
 
   // Nouvelle recherche quand on change de projet.
   useEffect(() => {
@@ -205,6 +209,7 @@ export function ProjectView(props: Props) {
       key={s.id}
       session={s}
       color={conversationColor(config, s.id)}
+      activity={activities.get(s.id)}
       canLaunch={canResume(s)}
       onLaunch={() => props.onLaunch(s.id, resumePath(s))}
       onOpenInDesktop={() => props.onOpenInDesktop(s)}
@@ -426,6 +431,8 @@ function SectionBlock(props: {
 function SessionRow(props: {
   session: SessionInfo;
   color: string | null;
+  /** État de la conversation (absent : terminée). */
+  activity?: Activity;
   canLaunch: boolean;
   onLaunch: () => void;
   onOpenInDesktop: () => void;
@@ -451,9 +458,9 @@ function SessionRow(props: {
       {...drag.attributes}
       {...drag.listeners}
     >
-      {/* Emplacement réservé à la pastille d'activité (ticket 04) : elle garde ses propres
-          couleurs, séparée de la couleur de la conversation (le fond de la ligne). */}
-      <span className="session-activity" aria-hidden />
+      {/* Pastille d'activité : elle garde ses propres couleurs, séparée de la couleur de
+          la conversation (le fond de la ligne). */}
+      <ActivityDot activity={props.activity} />
       <div className="session-main">
         <div className="session-title" title={s.firstPrompt ?? s.title}>
           {s.title}
