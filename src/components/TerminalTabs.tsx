@@ -4,6 +4,7 @@
 
 import { FolderKanban, SquareTerminal, X } from "lucide-react";
 import { TerminalView } from "./TerminalView";
+import type { SearchFocus } from "./GlobalSearch";
 
 /** Une conversation ouverte dans le terminal intégré. */
 export interface OpenTerminal {
@@ -63,9 +64,11 @@ interface StackProps {
   onClose: (t: OpenTerminal) => void;
   /** `claude` a démarré dans le terminal de cette conversation. */
   onStarted?: (t: OpenTerminal) => void;
+  /** Résultat de la recherche globale à montrer dans la conversation ouverte concernée. */
+  focus?: SearchFocus | null;
 }
 
-export function TerminalStack({ terminals, active, onClose, onStarted }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted, focus }: StackProps) {
   return (
     <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
@@ -77,6 +80,7 @@ export function TerminalStack({ terminals, active, onClose, onStarted }: StackPr
           active={active === t.sessionId}
           onClose={() => onClose(t)}
           onStarted={() => onStarted?.(t)}
+          focus={focus?.sessionId === t.sessionId ? focus : null}
         />
       ))}
     </div>
