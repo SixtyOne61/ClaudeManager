@@ -9,6 +9,14 @@ Application de bureau Windows pour travailler avec **Claude Code** : on discute 
 
 Vocabulaire : [GLOSSARY.md](GLOSSARY.md). Choix d'architecture : [docs/adr](docs/adr).
 
+## Installation
+
+1. Installer **Claude Code** (la commande `claude` doit être dans le `PATH`) et disposer d'un abonnement Claude pour s'y connecter.
+2. Télécharger `Claude.Manager_<version>_x64-setup.exe` depuis la [dernière release](https://github.com/SixtyOne61/ClaudeManager/releases/latest), puis le lancer.
+3. Windows SmartScreen peut afficher « Windows a protégé votre ordinateur », car l'exécutable n'est pas signé avec un certificat de code. Cliquer sur **Informations complémentaires**, puis **Exécuter quand même**.
+
+Les mises à jour suivantes se font depuis l'app (**Vérifier les mises à jour**, voir plus bas).
+
 ## Connexion et confidentialité
 
 L'app lance le binaire `claude` officiel, tel qu'Anthropic le fournit, dans un terminal intégré : vous vous y connectez avec votre propre abonnement. Claude Manager ne lit, ne stocke ni ne transmet jamais vos identifiants, n'utilise ni l'Agent SDK ni de clé d'API, et ne répond jamais à une demande de permission à votre place (voir [ADR 0001](docs/adr/0001-terminal-integre-plutot-que-agent-sdk.md)).
