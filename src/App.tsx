@@ -192,6 +192,14 @@ export default function App() {
     if (first) setSelection({ kind: "project", key: first.key });
   }, [scan, config, selection]);
 
+  // Changer d'onglet de conversation : le projet sélectionné (surligné dans la barre latérale,
+  // affiché au retour sur « Projets ») devient celui de la conversation.
+  useEffect(() => {
+    if (activeTerminal === null) return;
+    const key = [...projects.values()].find((p) => p.sessions.some((s) => s.id === activeTerminal))?.key;
+    if (key) setSelection((sel) => (sel?.kind === "project" && sel.key === key ? sel : { kind: "project", key }));
+  }, [activeTerminal, projects]);
+
   if (!config || !scan) {
     return <div className="loading-screen">Lecture des conversations…</div>;
   }
