@@ -21,16 +21,23 @@ DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
 const cache = new Map<string, string>();
 const CACHE_MAX = 2000;
 
+const SANITIZE = {
+  FORBID_TAGS: ["img", "style", "form", "input", "button", "iframe", "object", "embed", "video", "audio", "svg", "math"],
+  FORBID_ATTR: ["style", "class", "id"],
+};
+
 /** HTML nettoyé d'un texte Markdown. */
 export function renderMarkdown(text: string): string {
   const hit = cache.get(text);
   if (hit !== undefined) return hit;
   const raw = marked.parse(text) as string;
-  const html = DOMPurify.sanitize(raw, {
-    FORBID_TAGS: ["img", "style", "form", "input", "button", "iframe", "object", "embed", "video", "audio", "svg", "math"],
-    FORBID_ATTR: ["style", "class", "id"],
-  });
+  const html = DOMPurify.sanitize(raw, SANITIZE);
   if (cache.size >= CACHE_MAX) cache.clear();
   cache.set(text, html);
   return html;
+}
+
+/** HTML nettoyé d'une ligne de Markdown (titre) : emphase et code, sans paragraphe. */
+export function renderMarkdownInline(text: string): string {
+  return DOMPurify.sanitize(marked.parseInline(text) as string, SANITIZE);
 }

@@ -13,7 +13,7 @@
 // Il redescend dès que l'agent reprend son travail. L'app ne répond jamais elle-même à une
 // demande de permission : c'est l'utilisateur qui valide dans le terminal.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -21,9 +21,11 @@ import { MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "luc
 import { errorMessage } from "../api";
 import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "../pty";
 import { getActivity, isAwaitingPermission, subscribeActivity, type Activity } from "../activity";
-import { sendInterrupt, sendMessage, useConversation } from "../conversation";
+import { editableMessage, messageKey, sendEditedMessage, sendInterrupt, sendMessage, useConversation, type EditableMessage } from "../conversation";
 import { ConversationInput, ConversationView } from "./ConversationView";
 import { ConversationFooter } from "./ConversationFooter";
+import { GrillBackBar, GrillForm, useGrillMode } from "./Grill";
+import { pendingRound } from "../grill";
 import type { SearchFocus } from "./GlobalSearch";
 
 interface Props {
@@ -73,6 +75,11 @@ function upReason(up: TerminalUp): string | null {
   }
 }
 
+/** L'agent travaille encore sur le dernier message : en cours, ou permission / question en attente. */
+function isBusy(a: Activity | null): boolean {
+  return a?.state === "running" || isAwaitingPermission(a);
+}
+
 export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted, focus }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -81,11 +88,23 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
 
   // ---- Interface de conversation et terminal qui remonte --------------------------------
   const conversation = useConversation(sessionId, cwd);
+  /** Série de questions de Claude encore sans réponse : formulaire à la place de la zone de saisie. */
+  const grill = useMemo(() => pendingRound(conversation.entries), [conversation.entries]);
+  const grillMode = useGrillMode(sessionId, grill);
   const [up, setUp] = useState<TerminalUp>(null);
   /** Moment où une commande `/…` a été envoyée depuis la zone de saisie. */
   const commandSentAt = useRef(0);
   /** La commande `/…` envoyée a lancé un tour de l'agent (ce n'était pas un menu). */
   const commandTurn = useRef(false);
+
+  // ---- Modification du dernier message (tant que Claude n'a pas commencé à répondre) ----
+  /** L'agent travaille sur le dernier message (ou attend une permission pendant ce tour). */
+  const [agentBusy, setAgentBusy] = useState(() => isBusy(getActivity(sessionId)));
+  /** Message en cours de modification : l'agent a été interrompu, la zone de saisie le contient. */
+  const [editing, setEditing] = useState<EditableMessage | null>(null);
+  /** Messages remplacés par leur version modifiée (pendant que l'app est ouverte). */
+  const [replaced, setReplaced] = useState<ReadonlySet<string>>(() => new Set());
+  const editable = useMemo(() => (agentBusy && !editing ? editableMessage(conversation.entries) : null), [agentBusy, editing, conversation.entries]);
 
   /** Fait redescendre le terminal s'il était remonté tout seul. */
   const lowerAuto = useCallback(() => {
@@ -107,6 +126,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     let trustWatch: ReturnType<typeof setInterval> | undefined;
     const onActivity = (a: Activity | null) => {
       clearInterval(trustWatch);
+      setAgentBusy(isBusy(a));
       if (a && isAwaitingPermission(a)) {
         const reason = a.kind === "question" ? "question" : "permission";
         setUp((u) => (u === "manual" ? u : reason));
@@ -142,7 +162,20 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     };
   }, [sessionId, lowerAuto, trustPromptShown]);
 
+  /** ✏️ sur le dernier message : interrompt l'agent et met le message dans la zone de saisie. */
+  const startEdit = (m: EditableMessage) => {
+    sendInterrupt(sessionId).catch(() => {});
+    lowerAuto(); // une permission en attente est annulée par l'interruption
+    setEditing(m);
+  };
+
   const send = async (text: string) => {
+    if (editing) {
+      await sendEditedMessage(sessionId, text, editing.text);
+      setReplaced((r) => new Set(r).add(messageKey(editing)));
+      setEditing(null);
+      return;
+    }
     const isCommand = text.startsWith("/");
     if (isCommand) {
       commandSentAt.current = Date.now();
@@ -298,16 +331,41 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
       </div>
       <div className="conv-stage">
         <div className="terminal-host" ref={hostRef} />
-        <ConversationView data={conversation} focus={focus} hidden={terminalShown} cwd={cwd} />
+        <ConversationView
+          data={conversation}
+          focus={focus}
+          hidden={terminalShown}
+          cwd={cwd}
+          editable={state.kind === "running" ? editable : null}
+          onEdit={startEdit}
+          replaced={replaced}
+        />
       </div>
+      {grill && grillMode.showForm && (
+        <GrillForm
+          sessionId={sessionId}
+          pending={grill}
+          enabled={state.kind === "running"}
+          onSend={send}
+          onStop={() => sendInterrupt(sessionId).catch(() => {})}
+          onFreeText={() => grillMode.setFreeText(true)}
+          autoFocus={active && !terminalShown}
+        />
+      )}
+      {grill && grillMode.freeTextOnRound && <GrillBackBar count={grill.round.questions.length} onBack={() => grillMode.setFreeText(false)} />}
+      {/* Gardée montée sous le formulaire : son brouillon reste. */}
+      <div className="conv-input-slot" hidden={grillMode.showForm}>
       <ConversationInput
         enabled={state.kind === "running"}
         onSend={send}
         onStop={() => sendInterrupt(sessionId).catch(() => {})}
-        autoFocus={active && !terminalShown}
+        autoFocus={active && !terminalShown && !grillMode.showForm}
         cwd={cwd}
         sessionId={sessionId}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
       />
+      </div>
       <ConversationFooter
         sessionId={sessionId}
         meta={conversation.meta}

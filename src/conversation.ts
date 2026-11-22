@@ -238,6 +238,53 @@ export function groupEntries(entries: ConversationEntry[]): ConversationBlock[] 
   return blocks;
 }
 
+// ---- Modification du dernier message ---------------------------------------------------
+
+/** Outils qui modifient des fichiers (leurs effets restent après une interruption). */
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+/** Message de l'utilisateur qu'on peut encore modifier, et ce que l'agent a déjà fait après. */
+export interface EditableMessage {
+  line: number;
+  uuid: string | null;
+  text: string;
+  /** Actions de l'agent depuis ce message (elles ne seront pas annulées). */
+  actions: number;
+  /** Parmi elles, celles qui ont modifié un fichier. */
+  fileChanges: number;
+}
+
+/** Repère d'un message (identifiant, ou ligne à défaut). */
+export function messageKey(e: { uuid: string | null; line: number }): string {
+  return e.uuid ?? `l${e.line}`;
+}
+
+/**
+ * Dernier message de l'utilisateur, s'il est encore modifiable : Claude n'a écrit aucun texte
+ * de réponse depuis (des actions sont admises), ce n'est pas une commande `/…`, et le tour n'a
+ * pas déjà été interrompu. À combiner avec l'état de la conversation (l'agent travaille).
+ */
+export function editableMessage(entries: ConversationEntry[]): EditableMessage | null {
+  let actions = 0;
+  let fileChanges = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    switch (e.kind) {
+      case "tool":
+        actions++;
+        if (FILE_TOOLS.has(e.name)) fileChanges++;
+        break;
+      case "toolResult":
+        break;
+      case "user":
+        return e.command ? null : { line: e.line, uuid: e.uuid, text: e.text, actions, fileChanges };
+      default:
+        return null; // texte de Claude ou notice (interruption, compaction…)
+    }
+  }
+  return null;
+}
+
 /** Délai entre le collage et l'Entrée, pour que Claude Code ait fini de traiter le collage. */
 const ENTER_DELAY_MS = 60;
 
@@ -251,6 +298,21 @@ export async function sendMessage(key: string, text: string): Promise<void> {
   await ptyApi.write(key, isCommand ? text : `\x1b[200~${text.replace(/\r\n?/g, "\n")}\x1b[201~`);
   await new Promise((r) => setTimeout(r, ENTER_DELAY_MS));
   await ptyApi.write(key, "\r");
+}
+
+/**
+ * Envoie la version modifiée d'un message, après l'interruption de l'agent (`sendInterrupt`).
+ * Interrompu avant toute réponse, Claude Code remet le message d'origine dans sa propre zone
+ * de saisie (v2.1.83) : elle est d'abord vidée, sinon le nouveau texte s'y ajouterait. Ctrl+U
+ * efface jusqu'au début de la ligne, répété il efface ligne après ligne ; sur une zone vide il
+ * ne fait rien (contrairement à Ctrl+C, qui quitterait Claude Code au second appui). Quelques
+ * appuis de plus que de lignes couvrent une zone déjà vide ou un message réécrit entre-temps.
+ */
+export async function sendEditedMessage(key: string, text: string, original: string): Promise<void> {
+  const lines = original.split(/\r\n?|\n/).length;
+  await ptyApi.write(key, "\x15".repeat(lines * 2 + 4));
+  await new Promise((r) => setTimeout(r, ENTER_DELAY_MS));
+  await sendMessage(key, text);
 }
 
 /** Échap : interrompt l'agent (comme la touche Échap dans Claude Code). */

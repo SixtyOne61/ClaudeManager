@@ -7,9 +7,10 @@
 
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { SendHorizontal, Sparkle, Square } from "lucide-react";
-import { groupEntries, type ClaudeItem, type ConversationData, type ConversationEntry } from "../conversation";
+import { Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
+import { groupEntries, messageKey, type ClaudeItem, type ConversationData, type ConversationEntry, type EditableMessage } from "../conversation";
 import { renderMarkdown } from "../markdown";
+import { GrillAnswers, grillHtml, isGrillAnswer } from "./Grill";
 import { ActionGroup } from "./ConversationActions";
 import type { SearchFocus } from "./GlobalSearch";
 import { useSlashMenu } from "./SlashMenu";
@@ -27,9 +28,14 @@ interface Props {
   hidden: boolean;
   /** Dossier de la conversation (commandes exécutées depuis les blocs de code). */
   cwd?: string | null;
+  /** Dernier message encore modifiable (Claude n'a pas commencé à répondre), ou null. */
+  editable?: EditableMessage | null;
+  onEdit?: (m: EditableMessage) => void;
+  /** Messages remplacés par une modification (repères `messageKey`). */
+  replaced?: ReadonlySet<string>;
 }
 
-export function ConversationView({ data, focus, hidden, cwd = null }: Props) {
+export function ConversationView({ data, focus, hidden, cwd = null, editable = null, onEdit, replaced }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
 
@@ -90,7 +96,14 @@ export function ConversationView({ data, focus, hidden, cwd = null }: Props) {
         {blocks.map((b) => {
           switch (b.kind) {
             case "user":
-              return <UserBubble key={b.key} entry={b.entry} />;
+              return (
+                <UserBubble
+                  key={b.key}
+                  entry={b.entry}
+                  replaced={replaced?.has(messageKey(b.entry)) ?? false}
+                  onEdit={editable && onEdit && editable.line === b.entry.line ? () => onEdit(editable) : undefined}
+                />
+              );
             case "notice":
               return (
                 <div key={b.key} className="conv-notice" data-line={b.entry.line} data-uuid={b.entry.uuid ?? undefined}>
@@ -107,16 +120,39 @@ export function ConversationView({ data, focus, hidden, cwd = null }: Props) {
   );
 }
 
-function UserBubble({ entry }: { entry: Extract<ConversationEntry, { kind: "user" }> }) {
+interface BubbleProps {
+  entry: Extract<ConversationEntry, { kind: "user" }>;
+  /** Remplacé par une version modifiée (affiché en retrait). */
+  replaced: boolean;
+  /** Présent tant que le message peut être modifié. */
+  onEdit?: () => void;
+}
+
+function UserBubble({ entry, replaced, onEdit }: BubbleProps) {
   return (
-    <div className="conv-user" data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
-      <div className={"conv-bubble" + (entry.command ? " command" : "")}>{entry.text}</div>
+    <div className={"conv-user" + (replaced ? " replaced" : "")} data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
+      {onEdit && (
+        <button className="conv-edit-btn" onClick={onEdit} title="Modifier ce message : l'agent est interrompu et repartira sur la nouvelle version">
+          <Pencil size={13} />
+        </button>
+      )}
+      <div className="conv-user-col">
+        {replaced && <span className="conv-replaced-label">Remplacé par la version modifiée</span>}
+        {!entry.command && isGrillAnswer(entry.text) ? (
+          <div className="conv-bubble grill-answers">
+            <GrillAnswers text={entry.text} />
+          </div>
+        ) : (
+          <div className={"conv-bubble" + (entry.command ? " command" : "")}>{entry.text}</div>
+        )}
+      </div>
     </div>
   );
 }
 
 const AssistantText = memo(function AssistantText({ line, uuid, text }: { line: number; uuid: string | null; text: string }) {
-  const html = useMemo(() => renderMarkdown(text), [text]);
+  // Série de questions (skill « grilling ») : une carte par question.
+  const html = useMemo(() => grillHtml(text) ?? renderMarkdown(text), [text]);
   const ref = useRef<HTMLDivElement>(null);
   const cwd = useContext(CwdContext);
   const [blocks, setBlocks] = useState<RunnableBlock[]>([]);
@@ -193,17 +229,43 @@ interface InputProps {
   /** Dossier et identifiant de la conversation : commandes `/…` proposées (SlashMenu). */
   cwd?: string | null;
   sessionId?: string | null;
+  /** Message en cours de modification : son texte est mis dans la zone, un bandeau l'indique. */
+  editing?: EditableMessage | null;
+  /** Abandon de la modification (Échap ou ✕) : le brouillon d'avant revient. */
+  onCancelEdit?: () => void;
 }
 
-export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null }: InputProps) {
+export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null, editing = null, onCancelEdit }: InputProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const slash = useSlashMenu({ text, setText, cwd, sessionId });
+  /** Brouillon en cours quand la modification a commencé. */
+  const draft = useRef<string | null>(null);
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
+
+  // Début de modification : le texte du message remplace le brouillon (gardé de côté), curseur
+  // à la fin. Fin sans envoi : le brouillon revient.
+  const editingKey = editing ? messageKey(editing) : null;
+  useEffect(() => {
+    if (!editing) {
+      if (draft.current !== null) setText(draft.current);
+      draft.current = null;
+      return;
+    }
+    if (draft.current === null) draft.current = text;
+    setText(editing.text);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingKey]);
 
   // Hauteur ajustée au texte (jusqu'à une limite, puis défilement).
   useLayoutEffect(() => {
@@ -219,6 +281,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
     setSending(true);
     try {
       await onSend(t);
+      draft.current = null;
       setText("");
     } catch {
       /* terminal fermé entre-temps : le texte reste dans la zone */
@@ -231,6 +294,11 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Menu des commandes `/…` ouvert : il prend ↑ ↓ Tab Entrée Échap.
     if (slash.onKeyDown(e)) return;
+    if (e.key === "Escape" && editing) {
+      e.preventDefault();
+      onCancelEdit?.();
+      return;
+    }
     // Entrée envoie, Maj+Entrée va à la ligne.
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -239,6 +307,23 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   };
 
   return (
+    <>
+    {editing && (
+      <div className="conv-edit-banner">
+        <Pencil size={13} />
+        <span className="conv-edit-title">Modification du message — l'agent a été interrompu, Entrée pour le relancer.</span>
+        {editing.actions > 0 && (
+          <span className="conv-edit-warn">
+            <TriangleAlert size={12} />
+            {editing.actions === 1 ? "1 action déjà faite ne sera pas annulée" : `${editing.actions} actions déjà faites ne seront pas annulées`}
+            {editing.fileChanges > 0 && ` (dont ${editing.fileChanges === 1 ? "1 modification de fichier" : `${editing.fileChanges} modifications de fichiers`})`}
+          </span>
+        )}
+        <button className="btn small ghost" onClick={onCancelEdit} title="Abandonner la modification (Échap)">
+          <X size={12} />
+        </button>
+      </div>
+    )}
     <div className="conv-input">
       {enabled && slash.menu}
       <textarea
@@ -254,8 +339,9 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         <Square size={12} /> Arrêter
       </button>
       <button className="btn small primary" onClick={send} disabled={!enabled || !text.trim() || sending} title="Envoyer (Entrée)">
-        <SendHorizontal size={13} /> Envoyer
+        <SendHorizontal size={13} /> {editing ? "Relancer" : "Envoyer"}
       </button>
     </div>
+    </>
   );
 }

@@ -220,6 +220,28 @@ function fakeTranscript(id: string): ConversationEntry[] | null {
 
 const changed = (id: string) => setTimeout(() => emit("conversation-changed", id), 0);
 
+const DEMO_GRILL = `Avant de toucher au menu, trois points à trancher.
+
+---
+
+❓ **Q1** - **Où ranger l'état du menu ?** : aujourd'hui il vit dans une classe CSS.
+- **(a)** Garder la classe \`open\`.
+- **(b)** Un attribut \`data-state\`.
+
+➡️ Je recommande (a) : c'est ce que les tests vérifient déjà.
+
+---
+
+❓ **Q2 - Fermer le menu au clic en dehors ?** Sur mobile, c'est le comportement attendu.
+
+➡️ Oui, avec un seul écouteur sur \`document\`.
+
+---
+
+❓ **Q3** - **Quel nom pour le fichier de tests ?**: aucune convention dans le projet.
+
+Réponds quand tu veux.`;
+
 /** Message envoyé : ajouté au fichier, puis une réponse fictive arrive en plusieurs fois. */
 function fakeReply(id: string, text: string) {
   const t = fakeTranscript(id) ?? (transcripts.set(id, []), transcripts.get(id)!);
@@ -229,6 +251,14 @@ function fakeReply(id: string, text: string) {
   t.push(text.startsWith("/") ? { kind: "user", line: next(), uuid: `m${next()}`, text, command: true } : { kind: "user", line: next(), uuid: `m${next()}`, text, command: false });
   changed(id);
   if (text.startsWith("/")) return;
+  // « grill » : une série de questions (formulaire de réponse, voir Grill.tsx).
+  if (/grill/i.test(text)) {
+    setTimeout(() => {
+      t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: DEMO_GRILL });
+      changed(id);
+    }, 400);
+    return;
+  }
   const steps: (() => void)[] = [
     () => {
       fakeTurns.set(id, (fakeTurns.get(id) ?? 0) + 1);
