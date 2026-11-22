@@ -67,6 +67,22 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 6px; }
 .sidebar-header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+.sidebar.reduced { width: 46px; min-width: 46px; }
+.sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
+.icon-btn.on { background: rgba(217,119,87,.2); opacity: 1; }
+.sidebar-header-actions { display: inline-flex; align-items: center; gap: 2px; }
+.sidebar-views { display: flex; gap: 4px; padding: 4px 10px 8px; }
+.sidebar-view {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px;
+  border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--text-muted); font-size: 12.5px;
+}
+.sidebar-view:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-view.active { background: var(--bg-elev-2); border-color: var(--border); color: var(--text); }
+.sidebar-project-title {
+  padding: 4px 14px 8px; font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-row { touch-action: auto; }
 .sidebar-toolbar { display: flex; gap: 6px; padding: 6px 14px 10px; }
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
 .sidebar-footer { border-top: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 6px; }

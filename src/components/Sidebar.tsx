@@ -22,7 +22,11 @@ import {
   ChevronDown,
   ChevronRight,
   FolderPlus,
+  FolderTree,
   GripVertical,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -30,12 +34,12 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import type { Category, Config, ProjectInfo } from "../api";
+import type { Category, Config, ProjectInfo, SessionInfo } from "../api";
 import { colorStyle, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
 import { UsageLimits } from "./UsageLimits";
-import { ActivityCounts } from "./Activity";
+import { ActivityCounts, ActivityDot } from "./Activity";
 import { countActivities, useActivities, type ActivityCount } from "../activity";
 
 /** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
@@ -62,6 +66,32 @@ interface Props {
   /** Recherche globale (dans le contenu de toutes les conversations). */
   onSearch?: () => void;
   searchActive?: boolean;
+  /** Projet de la conversation affichée (ou, à défaut, du projet sélectionné). */
+  currentProject?: ProjectInfo;
+  /** Conversation dont l'onglet est affiché. */
+  activeSessionId?: string | null;
+  /** Ouvre une conversation dans le terminal intégré. */
+  onOpenConversation: (s: SessionInfo, project: ProjectInfo) => void;
+}
+
+/** Vue de la barre latérale : liste des projets, ou conversations du projet courant. */
+type SidebarView = "projects" | "conversations";
+
+// Vue et réduction mémorisées (confort local, sans importance si perdues).
+function loadPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return (allowed as readonly string[]).includes(v ?? "") ? (v as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function savePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* stockage indisponible : on ignore */
+  }
 }
 
 // Mémorise les catégories repliées (confort local, sans importance si perdu).
@@ -84,6 +114,16 @@ export function Sidebar(props: Props) {
   const { config, projects } = props;
   const [dragId, setDragId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const [view, setViewState] = useState<SidebarView>(() => loadPref("sidebarView", ["projects", "conversations"], "projects"));
+  const [reduced, setReducedState] = useState(() => loadPref("sidebarReduced", ["0", "1"], "0") === "1");
+  const setView = (v: SidebarView) => {
+    setViewState(v);
+    savePref("sidebarView", v);
+  };
+  const setReduced = (r: boolean) => {
+    setReducedState(r);
+    savePref("sidebarReduced", r ? "1" : "0");
+  };
   // État des conversations : compteurs « en cours » et « action requise ».
   const activities = useActivities();
 
@@ -209,13 +249,75 @@ export function Sidebar(props: Props) {
   );
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <h1>Claude Manager</h1>
-        <button className="icon-btn" title="Rafraîchir" onClick={props.onRefresh} disabled={props.loading}>
-          <RefreshCw size={16} className={props.loading ? "spin" : ""} />
-        </button>
-      </div>
+    <aside className={"sidebar" + (reduced ? " reduced" : "")}>
+      {reduced ? (
+        <div className="sidebar-rail">
+          <button className="icon-btn" title="Agrandir la barre latérale" onClick={() => setReduced(false)}>
+            <PanelLeftOpen size={17} />
+          </button>
+          <button
+            className={"icon-btn" + (view === "projects" ? " on" : "")}
+            title="Projets"
+            onClick={() => {
+              setView("projects");
+              setReduced(false);
+            }}
+          >
+            <FolderTree size={17} />
+          </button>
+          <button
+            className={"icon-btn" + (view === "conversations" ? " on" : "")}
+            title="Conversations du projet courant"
+            onClick={() => {
+              setView("conversations");
+              setReduced(false);
+            }}
+          >
+            <MessagesSquare size={17} />
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="sidebar-header">
+            <h1>Claude Manager</h1>
+            <span className="sidebar-header-actions">
+              {view === "projects" && (
+                <button className="icon-btn" title="Rafraîchir" onClick={props.onRefresh} disabled={props.loading}>
+                  <RefreshCw size={16} className={props.loading ? "spin" : ""} />
+                </button>
+              )}
+              <button className="icon-btn" title="Réduire la barre latérale" onClick={() => setReduced(true)}>
+                <PanelLeftClose size={16} />
+              </button>
+            </span>
+          </div>
+          <div className="sidebar-views" role="tablist">
+            <button role="tab" aria-selected={view === "projects"} className={"sidebar-view" + (view === "projects" ? " active" : "")} onClick={() => setView("projects")}>
+              <FolderTree size={14} /> Projets
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === "conversations"}
+              className={"sidebar-view" + (view === "conversations" ? " active" : "")}
+              onClick={() => setView("conversations")}
+              title="Conversations du projet courant"
+            >
+              <MessagesSquare size={14} /> Conversations
+            </button>
+          </div>
+        </>
+      )}
+      {!reduced && view === "conversations" && (
+        <ConversationsPanel
+          config={config}
+          project={props.currentProject}
+          activeSessionId={props.activeSessionId ?? null}
+          activities={activities}
+          onOpen={props.onOpenConversation}
+        />
+      )}
+      {!reduced && view === "projects" && (
+        <>
       <div className="sidebar-toolbar">
         <button className="btn small" onClick={props.onAddCategory}>
           <Plus size={14} /> Catégorie
@@ -279,6 +381,10 @@ export function Sidebar(props: Props) {
         </DndContext>
       </div>
 
+        </>
+      )}
+
+      {!reduced && (
       <div className="sidebar-footer">
         {props.onSearch && (
           <button
@@ -304,7 +410,47 @@ export function Sidebar(props: Props) {
         <UsageLimits />
         <UpdateButton />
       </div>
+      )}
     </aside>
+  );
+}
+
+/** Conversations du projet courant, de la plus récente à la plus ancienne. */
+function ConversationsPanel(props: {
+  config: Config;
+  project?: ProjectInfo;
+  activeSessionId: string | null;
+  activities: ReadonlyMap<string, import("../activity").Activity>;
+  onOpen: (s: SessionInfo, project: ProjectInfo) => void;
+}) {
+  const { project, config } = props;
+  if (!project) return <div className="sidebar-scroll"><div className="empty-zone">Aucun projet courant</div></div>;
+  const list = [...project.sessions].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  return (
+    <>
+      <div className="sidebar-project-title" title={project.path ?? project.key}>
+        {projectName(project, config)} <span className="count">{list.length}</span>
+      </div>
+      <div className="sidebar-scroll">
+        {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
+        {list.map((s) => {
+          const color = config.conversations[s.id]?.color;
+          return (
+            <div
+              key={s.id}
+              className={"project-row conv-row" + (props.activeSessionId === s.id ? " selected" : "") + (color ? " colored" : "")}
+              style={colorStyle(color)}
+              title={s.firstPrompt ?? s.title}
+              onClick={() => props.onOpen(s, project)}
+            >
+              <ActivityDot activity={props.activities.get(s.id)} />
+              <span className="project-name">{s.title}</span>
+              <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

@@ -618,6 +618,11 @@ export default function App() {
 
   // ---- Rendu ----------------------------------------------------------------------------
 
+  // Projet courant de la barre latérale : celui de la conversation affichée, sinon le projet sélectionné.
+  const activeProject =
+    activeTerminal !== null ? [...projects.values()].find((p) => p.sessions.some((s) => s.id === activeTerminal)) : undefined;
+  const currentProject = activeProject ?? selectedProject;
+
   const defaultCategory = selectedProject ? config.categories.find((c) => c.projectKeys.includes(selectedProject.key))?.id ?? null : null;
 
   return (
@@ -634,6 +639,9 @@ export default function App() {
           setActiveTerminal(null);
         }}
         searchActive={searchOpen}
+        currentProject={currentProject}
+        activeSessionId={activeTerminal}
+        onOpenConversation={(s, p) => openInTerminal(s, p.path)}
         onSearch={() => {
           setActiveTerminal(null);
           setSearchOpen(true);
