@@ -171,11 +171,23 @@ export default function App() {
     setPending((ps) => (ps.some((s) => knownIds.has(s.id)) ? ps.filter((s) => !knownIds.has(s.id)) : ps));
   }, [knownIds]);
 
+  // Un projet archivé où une nouvelle conversation est apparue (Claude Desktop, terminal
+  // externe) revient dans la barre latérale ; ses conversations archivées y restent.
+  useEffect(() => {
+    if (!scan || !config) return;
+    const awake = scan.projects.filter((p) => config.projects[p.key]?.archived && p.sessions.length > 0).map((p) => p.key);
+    if (awake.length === 0) return;
+    updateConfig((c) => ({
+      ...c,
+      projects: Object.fromEntries(Object.entries(c.projects).map(([k, v]) => [k, awake.includes(k) ? { ...v, archived: null } : v])),
+    }));
+  }, [scan, config, updateConfig]);
+
   // Sélectionne par défaut le projet le plus récemment actif.
   useEffect(() => {
     if (selection || !scan || !config) return;
     const first = [...scan.projects]
-      .filter((p) => !p.isTemp)
+      .filter((p) => !p.isTemp && !config.projects[p.key]?.archived)
       .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""))[0];
     if (first) setSelection({ kind: "project", key: first.key });
   }, [scan, config, selection]);
@@ -418,16 +430,24 @@ export default function App() {
    * Archive ou met à la Corbeille plusieurs conversations (sélection multiple d'un projet) :
    * une seule confirmation, un seul avertissement pour celles modifiées il y a moins de
    * 2 minutes (toutes continuées ou toutes ignorées), un seul message pour les échecs et
-   * un seul rafraîchissement à la fin. Renvoie `false` si l'utilisateur a annulé.
+   * un seul rafraîchissement à la fin. `confirmed` : la confirmation a déjà été demandée
+   * (archivage d'un projet). Renvoie `null` si l'utilisateur a annulé, sinon les
+   * conversations traitées et le nombre de celles qui ne l'ont pas été (ignorées ou en échec).
    */
-  const bulkSessionAction = async (list: SessionInfo[], kind: "archive" | "trash") => {
-    if (list.length === 0) return false;
+  const bulkSessionAction = async (
+    list: SessionInfo[],
+    kind: "archive" | "trash",
+    confirmed = false,
+  ): Promise<{ done: SessionInfo[]; remaining: number } | null> => {
+    if (list.length === 0) return null;
     const trash = kind === "trash";
     const count = (n: number) => `${n} conversation${n > 1 ? "s" : ""}`;
     const titles = (l: SessionInfo[]) =>
       l.slice(0, 8).map((s) => `• ${s.title}`).join("\n") + (l.length > 8 ? `\n… et ${l.length - 8} autre(s)` : "");
     const plural = list.length > 1;
-    const ok = await ask(
+    const ok =
+      confirmed ||
+      (await ask(
       trash
         ? `Mettre ${count(list.length)} à la Corbeille ?\n${plural ? "Elles pourront être récupérées" : "Elle pourra être récupérée"} depuis la Corbeille Windows.\n\n${titles(list)}`
         : `Archiver ${count(list.length)} ?\n${plural ? "Elles pourront être restaurées" : "Elle pourra être restaurée"} depuis les Archives.\n\n${titles(list)}`,
@@ -437,20 +457,20 @@ export default function App() {
         okLabel: trash ? "Mettre à la Corbeille" : "Archiver",
         cancelLabel: "Annuler",
       },
-    );
-    if (!ok) return false;
+    ));
+    if (!ok) return null;
 
     const run = async (s: SessionInfo, force: boolean) => {
       if (trash) await api.trashSession(s.projectKey, s.id, force);
       else setConfig(await api.archiveSession(s.projectKey, s.id, force));
     };
-    let done = 0;
+    const doneList: SessionInfo[] = [];
     const active: SessionInfo[] = [];
     const failed: string[] = [];
     const attempt = async (s: SessionInfo, force: boolean) => {
       try {
         await run(s, force);
-        done++;
+        doneList.push(s);
       } catch (e) {
         const msg = errorMessage(e);
         if (!force && msg.startsWith(ERR_ACTIVE)) active.push(s);
@@ -475,6 +495,7 @@ export default function App() {
       else skipped = active.length;
     }
 
+    const done = doneList.length;
     if (done > 0) {
       const what = trash ? (done > 1 ? "envoyées à la Corbeille" : "envoyée à la Corbeille") : done > 1 ? "archivées" : "archivée";
       toast(`${count(done)} ${what}` + (skipped ? ` (${skipped} ignorée${skipped > 1 ? "s" : ""})` : ""));
@@ -485,7 +506,70 @@ export default function App() {
       toast(`Échec pour ${count(failed.length)} :\n` + failed.slice(0, 5).join("\n") + (failed.length > 5 ? `\n… et ${failed.length - 5} autre(s)` : ""), true);
     }
     await refresh();
-    return true;
+    return { done: doneList, remaining: skipped + failed.length };
+  };
+
+  /**
+   * Archive un projet : toutes ses conversations (worktrees compris) partent dans les
+   * archives, puis le projet est masqué de la barre latérale. Il garde sa catégorie, sa
+   * couleur et ses sections. S'il reste une conversation (ignorée ou en échec), le projet
+   * n'est pas archivé.
+   */
+  const archiveProject = async (p: ProjectInfo) => {
+    const name = projectName(p, config);
+    if (terminals.some((t) => p.sessions.some((s) => s.id === t.sessionId))) {
+      toast(`Fermez d'abord les onglets ouverts du projet « ${name} ».`, true);
+      return;
+    }
+    const sessions = p.sessions.filter((s) => !s.provisional);
+    const n = sessions.length;
+    const ok = await ask(
+      `Archiver le projet « ${name} » ?\n\n` +
+        (n > 0 ? `Ses ${n} conversation${n > 1 ? "s seront archivées" : " sera archivée"} avec lui. ` : "") +
+        "Le projet disparaît de la barre latérale et se restaure depuis les Archives, avec sa catégorie, sa couleur et ses sections.\nLe dossier du projet n'est pas touché.",
+      { title: "Archiver le projet", kind: "warning", okLabel: "Archiver le projet", cancelLabel: "Annuler" },
+    );
+    if (!ok) return;
+    let ids: string[] = [];
+    if (n > 0) {
+      const r = await bulkSessionAction(sessions, "archive", true);
+      if (!r) return;
+      if (r.remaining > 0) {
+        toast(
+          `Le projet « ${name} » n'a pas été archivé : ${r.remaining} conversation${r.remaining > 1 ? "s sont restées" : " est restée"} en place. ` +
+            "Celles déjà archivées se restaurent depuis les Archives.",
+          true,
+        );
+        return;
+      }
+      ids = r.done.map((s) => s.id);
+    }
+    try {
+      setConfig(await api.markProjectArchived(p.key, ids));
+      toast(`Projet « ${name} » archivé`);
+      setSelection((sel) => (sel?.kind === "project" && sel.key === p.key ? null : sel));
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  const restoreProject = async (key: string, name: string) => {
+    try {
+      const r = await api.restoreProject(key);
+      setConfig(r.config);
+      toast(`Projet « ${name} » restauré` + (r.restored ? ` (${r.restored} conversation${r.restored > 1 ? "s" : ""})` : ""));
+      if (r.errors.length > 0) {
+        toast(
+          `${r.errors.length} conversation${r.errors.length > 1 ? "s sont restées" : " est restée"} dans les archives :\n` +
+            r.errors.slice(0, 5).join("\n") +
+            (r.errors.length > 5 ? `\n… et ${r.errors.length - 5} autre(s)` : ""),
+          true,
+        );
+      }
+    } catch (e) {
+      showError(e);
+    }
+    await refresh();
   };
 
   const restoreArchive = async (a: ArchiveEntry) => {
@@ -581,6 +665,7 @@ export default function App() {
           config={config}
           onRestore={restoreArchive}
           onTrash={trashArchive}
+          onRestoreProject={restoreProject}
           focus={searchFocus?.archived ? searchFocus : null}
         />
       ) : selectedProject ? (
@@ -593,8 +678,9 @@ export default function App() {
           onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
-          onArchiveMany={(list) => bulkSessionAction(list, "archive")}
-          onTrashMany={(list) => bulkSessionAction(list, "trash")}
+          onArchiveMany={(list) => bulkSessionAction(list, "archive").then((r) => r !== null)}
+          onTrashMany={(list) => bulkSessionAction(list, "trash").then((r) => r !== null)}
+          onArchiveProject={() => archiveProject(selectedProject)}
           onRename={() => setDialog({ kind: "renameProject", project: selectedProject })}
           onColor={(color) => setProjectPref(selectedProject.key, { color })}
           onMove={(cat) => moveProject(selectedProject.key, cat)}

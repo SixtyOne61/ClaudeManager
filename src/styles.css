@@ -242,6 +242,9 @@ span.session-check { visibility: hidden !important; }
 
 .tag { background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
 .empty { color: var(--text-muted); padding: 30px 0; text-align: center; }
+.archives-heading { margin: 14px 0 6px; font-size: 12.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); }
+.archives-heading:first-child { margin-top: 4px; }
+.archives-project-icon { vertical-align: -2px; margin-right: 2px; }
 
 /* ---------- Sélecteur de couleur ---------- */
 .color-picker { position: relative; display: inline-flex; }

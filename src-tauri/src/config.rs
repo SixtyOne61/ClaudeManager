@@ -41,6 +41,18 @@ pub struct ProjectPrefs {
     /// Sections du projet, dans l'ordre d'affichage. Les conversations absentes de toutes
     /// les sections sont affichées sous « Sans section ».
     pub sections: Vec<Section>,
+    /// Projet archivé : masqué de la barre latérale, ses conversations sont dans les archives.
+    pub archived: Option<ProjectArchive>,
+}
+
+/// Archivage d'un projet entier (propre à Claude Manager : le dossier n'est pas touché).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectArchive {
+    /// Date d'archivage (ms depuis l'époque Unix).
+    pub archived_at: u64,
+    /// Conversations archivées avec le projet, restaurées avec lui.
+    pub session_ids: Vec<String>,
 }
 
 /// Une section : regroupement de conversations à l'intérieur d'un projet (pas d'imbrication).
@@ -193,6 +205,28 @@ pub fn prune_conversations(cfg: &mut Config, existing: &HashSet<String>) -> bool
     changed || cfg.conversations.len() != before
 }
 
+/// Clé du projet archivé auquel appartient une conversation archivée avec lui.
+pub fn archived_project_of(cfg: &Config, session_id: &str) -> Option<String> {
+    cfg.projects
+        .iter()
+        .find(|(_, p)| p.archived.as_ref().is_some_and(|a| a.session_ids.iter().any(|id| id == session_id)))
+        .map(|(k, _)| k.clone())
+}
+
+/// Une conversation archivée avec son projet n'est plus dans les archives (restaurée seule
+/// ou mise à la Corbeille) : elle est retirée de la liste du projet. Restaurée seule
+/// (`restored`), elle fait aussi revenir le projet. Renvoie `true` si quelque chose a changé.
+pub fn detach_from_archived_project(cfg: &mut Config, session_id: &str, restored: bool) -> bool {
+    let Some(key) = archived_project_of(cfg, session_id) else { return false };
+    let prefs = cfg.projects.get_mut(&key).expect("clé trouvée juste avant");
+    if restored {
+        prefs.archived = None;
+    } else if let Some(a) = prefs.archived.as_mut() {
+        a.session_ids.retain(|id| id != session_id);
+    }
+    true
+}
+
 pub fn save(path: &Path, cfg: &Config) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(cfg).map_err(std::io::Error::other)?;
     write_atomic(path, text.as_bytes())
@@ -320,5 +354,31 @@ mod tests {
 
         // Rien à retirer la deuxième fois.
         assert!(!prune_conversations(&mut cfg, &existing));
+    }
+
+    #[test]
+    fn project_archive_roundtrip_and_detach() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.json");
+        let mut cfg = Config::default();
+        cfg.projects.entry("C--p".into()).or_default().archived =
+            Some(ProjectArchive { archived_at: 7, session_ids: vec!["a".into(), "b".into()] });
+        save(&p, &cfg).unwrap();
+        let mut cfg = load(&p);
+        assert_eq!(cfg.projects["C--p"].archived.as_ref().unwrap().session_ids, vec!["a", "b"]);
+        assert_eq!(archived_project_of(&cfg, "b").as_deref(), Some("C--p"));
+        assert_eq!(archived_project_of(&cfg, "z"), None);
+
+        // Mise à la Corbeille : retirée de la liste, le projet reste archivé.
+        assert!(detach_from_archived_project(&mut cfg, "a", false));
+        assert_eq!(cfg.projects["C--p"].archived.as_ref().unwrap().session_ids, vec!["b"]);
+        // Restaurée seule : le projet revient.
+        assert!(detach_from_archived_project(&mut cfg, "b", true));
+        assert!(cfg.projects["C--p"].archived.is_none());
+        assert!(!detach_from_archived_project(&mut cfg, "b", true));
+
+        // Ancien fichier sans le champ : projet non archivé.
+        fs::write(&p, r#"{"projects":{"C--p":{"displayName":"X"}}}"#).unwrap();
+        assert!(load(&p).projects["C--p"].archived.is_none());
     }
 }

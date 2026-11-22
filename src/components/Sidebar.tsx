@@ -93,20 +93,23 @@ export function Sidebar(props: Props) {
   /** Catégorie contenant un projet (ou NONE). */
   const containerOf = (key: string) => config.categories.find((c) => c.projectKeys.includes(key))?.id ?? NONE;
 
-  /** Projets de chaque catégorie, dans l'ordre enregistré. */
+  /** Projet archivé : il n'apparaît plus que dans les Archives. */
+  const isArchived = (p: ProjectInfo) => !!config.projects[p.key]?.archived;
+
+  /** Projets de chaque catégorie, dans l'ordre enregistré (sans les projets archivés). */
   const categoryProjects = (cat: Category) =>
-    cat.projectKeys.map((k) => projects.get(k)).filter((p): p is ProjectInfo => !!p);
+    cat.projectKeys.map((k) => projects.get(k)).filter((p): p is ProjectInfo => !!p && !isArchived(p));
 
   /** Non classés : par activité la plus récente ; les projets temporaires sont masqués par défaut. */
   const uncategorized = useMemo(() => {
     const assigned = new Set(config.categories.flatMap((c) => c.projectKeys));
     return [...projects.values()]
-      .filter((p) => !assigned.has(p.key) && (config.showTempProjects || !p.isTemp))
+      .filter((p) => !assigned.has(p.key) && !isArchived(p) && (config.showTempProjects || !p.isTemp))
       .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
   }, [projects, config]);
   const hiddenTemp = useMemo(() => {
     const assigned = new Set(config.categories.flatMap((c) => c.projectKeys));
-    return [...projects.values()].filter((p) => p.isTemp && !assigned.has(p.key)).length;
+    return [...projects.values()].filter((p) => p.isTemp && !assigned.has(p.key) && !isArchived(p)).length;
   }, [projects, config]);
 
   /**

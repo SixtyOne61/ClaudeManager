@@ -24,7 +24,7 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`).
 | Quoi | Où |
 | --- | --- |
 | Projets et conversations (écrits par Claude Code) | `%USERPROFILE%\.claude\projects\<chemin-encodé>\<session-id>.jsonl` (ou `%CLAUDE_CONFIG_DIR%\projects`) |
-| Catégories, sections, couleurs, noms d'affichage, liste des archives | `%APPDATA%\claude-manager\config.json` |
+| Catégories, sections, couleurs, noms d'affichage, liste des archives, projets archivés | `%APPDATA%\claude-manager\config.json` |
 | Hooks de suivi d'état et ligne d'état, passés à Claude Code avec `--settings` | `%APPDATA%\claude-manager\hooks-settings.json` |
 | État de chaque conversation (écrit par les hooks) | `%APPDATA%\claude-manager\state\<session-id>.json` |
 | Limites d'utilisation du forfait (écrites par la ligne d'état) | `%APPDATA%\claude-manager\limits.json` |
@@ -48,6 +48,7 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`).
 - **Sections** : créer, renommer, colorer, replier, réordonner ; glisser une conversation dans une section ou vers « Sans section ». Supprimer une section ne supprime pas ses conversations.
 - **Rechercher partout** (Ctrl+Maj+F) : cherche dans vos messages et dans les réponses de l'agent, sans les résultats d'outils, sans tenir compte des majuscules ni des accents.
 - **Archiver** : déplace le `.jsonl` et son dossier compagnon (`<id>\` : sous-agents, résultats d'outils) vers le dossier d'archive. Un manifeste `<id>.archive.json` est écrit à côté, et la vue **Archives** permet de restaurer. La conversation garde sa section et sa couleur.
+- **Archiver le projet** (en-tête du projet) : archive toutes ses conversations, worktrees compris, puis masque le projet de la barre latérale. Il garde sa catégorie, sa couleur et ses sections, et son dossier n'est pas touché. Si une conversation ne peut pas être archivée (ignorée ou en erreur), le projet ne l'est pas. Les onglets ouverts du projet doivent d'abord être fermés. **Restaurer le projet**, dans la vue **Archives**, remet en place les conversations archivées avec lui. Restaurer seule l'une d'elles, ou démarrer une nouvelle conversation dans ce dossier depuis Claude Desktop ou un terminal, fait aussi revenir le projet.
 - **Supprimer** : envoie le fichier et son dossier dans la **Corbeille Windows**, après confirmation. Ils restent récupérables.
 - Ces deux actions demandent une confirmation supplémentaire si la conversation a été modifiée il y a moins de 2 minutes (elle est peut-être encore ouverte).
 - **Fermer un onglet ou l'app** ne demande confirmation que si un agent travaille ou qu'une action attend ta permission. Les conversations restent enregistrées.

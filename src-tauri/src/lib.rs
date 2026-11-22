@@ -310,8 +310,62 @@ fn restore_archive(state: State<AppState>, session_id: String) -> Result<Config,
         .ok_or("Archive introuvable dans la configuration.")?;
     actions::restore(&entry)?;
     cfg.archives.retain(|a| a.session_id != session_id);
+    // Conversation d'un projet archivé, restaurée seule : le projet revient avec elle.
+    config::detach_from_archived_project(&mut cfg, &session_id, true);
     state.save_config(&cfg)?;
     Ok(cfg.clone())
+}
+
+/// Marque un projet comme archivé, une fois ses conversations archivées par l'interface
+/// (une à une, avec la confirmation habituelle pour celles modifiées il y a peu).
+/// `session_ids` : les conversations archivées avec lui, restaurées avec lui.
+#[tauri::command]
+fn mark_project_archived(state: State<AppState>, project_key: String, session_ids: Vec<String>) -> Result<Config, String> {
+    actions::validate_project_key(&project_key)?;
+    let mut cfg = state.config.lock().unwrap();
+    cfg.projects.entry(project_key).or_default().archived =
+        Some(config::ProjectArchive { archived_at: actions::now_ms(), session_ids });
+    state.save_config(&cfg)?;
+    Ok(cfg.clone())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreProjectResult {
+    config: Config,
+    restored: u32,
+    /// Conversations restées dans les archives, avec la raison.
+    errors: Vec<String>,
+}
+
+/// Restaure un projet archivé : remet en place les conversations archivées avec lui et le
+/// fait revenir dans la barre latérale. Une conversation qui ne peut pas être restaurée
+/// reste dans les archives (signalée dans `errors`), le projet revient quand même.
+#[tauri::command(async)]
+fn restore_project(state: State<AppState>, project_key: String) -> Result<RestoreProjectResult, String> {
+    let mut cfg = state.config.lock().unwrap();
+    let ids = cfg
+        .projects
+        .get(&project_key)
+        .and_then(|p| p.archived.as_ref())
+        .map(|a| a.session_ids.clone())
+        .ok_or("Ce projet n'est pas archivé.")?;
+    let (mut restored, mut errors) = (0, Vec::new());
+    for id in ids {
+        let Some(entry) = cfg.archives.iter().find(|a| a.session_id == id).cloned() else { continue };
+        match actions::restore(&entry) {
+            Ok(()) => {
+                cfg.archives.retain(|a| a.session_id != id);
+                restored += 1;
+            }
+            Err(e) => errors.push(format!("« {} » : {e}", entry.title)),
+        }
+    }
+    if let Some(p) = cfg.projects.get_mut(&project_key) {
+        p.archived = None;
+    }
+    state.save_config(&cfg)?;
+    Ok(RestoreProjectResult { config: cfg.clone(), restored, errors })
 }
 
 /// Envoie une conversation (fichier + dossier compagnon) dans la Corbeille Windows.
@@ -336,6 +390,7 @@ fn trash_archive(state: State<AppState>, session_id: String) -> Result<Config, S
         actions::trash_archive(&entry)?;
     }
     cfg.archives.retain(|a| a.session_id != session_id);
+    config::detach_from_archived_project(&mut cfg, &session_id, false);
     state.save_config(&cfg)?;
     Ok(cfg.clone())
 }
@@ -464,6 +519,8 @@ pub fn run() {
             open_folder,
             archive_session,
             restore_archive,
+            mark_project_archived,
+            restore_project,
             trash_session,
             trash_archive,
             check_open_elsewhere,

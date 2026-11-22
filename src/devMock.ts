@@ -554,6 +554,34 @@ export function installDevMock() {
       case "trash_archive":
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
         return config;
+      case "mark_project_archived":
+        config = {
+          ...config,
+          projects: { ...config.projects, [String(a.projectKey)]: { ...config.projects[String(a.projectKey)], archived: { archivedAt: Date.now(), sessionIds: a.sessionIds as string[] } } },
+        };
+        return config;
+      case "restore_project": {
+        // Même règle que lib.rs : les conversations archivées avec le projet reviennent, puis le projet.
+        const key = String(a.projectKey);
+        const ids = config.projects[key]?.archived?.sessionIds ?? [];
+        let restored = 0;
+        for (const id of ids) {
+          const s = archived.get(id);
+          const p = s && scan.projects.find((x) => x.key === key);
+          if (s && p) {
+            p.sessions = [...p.sessions, s].sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? ""));
+            archived.delete(id);
+            restored++;
+          }
+        }
+        scan = { ...scan };
+        config = {
+          ...config,
+          archives: config.archives.filter((x) => !ids.includes(x.sessionId)),
+          projects: { ...config.projects, [key]: { ...config.projects[key], archived: null } },
+        };
+        return { config, restored, errors: [] };
+      }
       case "plugin:dialog|ask":
         return window.confirm(String(a.message));
       case "plugin:dialog|message": {

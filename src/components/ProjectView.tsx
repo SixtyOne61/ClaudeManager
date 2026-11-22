@@ -91,6 +91,8 @@ interface Props {
   onColor: (color: string | null) => void;
   onMove: (categoryId: string | null) => void;
   onForget: () => void;
+  /** Archive le projet et toutes ses conversations (il disparaît de la barre latérale). */
+  onArchiveProject: () => void;
   onError: (msg: string) => void;
   /** Conversation ouverte depuis la recherche globale : affichée et mise en évidence. */
   focus?: SearchFocus | null;
@@ -425,6 +427,13 @@ export function ProjectView(props: Props) {
               </option>
             ))}
           </select>
+          <button
+            className="btn ghost"
+            onClick={props.onArchiveProject}
+            title="Archive le projet et toutes ses conversations : il disparaît de la barre latérale et se restaure depuis les Archives (le dossier n'est pas touché)"
+          >
+            <Archive size={14} /> Archiver le projet
+          </button>
           {p.sessions.length === 0 && (
             <button className="btn ghost" onClick={props.onForget} title="Retire ce projet de la liste (le dossier n'est pas touché)">
               <X size={14} /> Retirer de la liste

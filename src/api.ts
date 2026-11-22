@@ -67,6 +67,23 @@ export interface ProjectPrefs {
   path?: string | null;
   /** Sections du projet, dans l'ordre d'affichage (absent dans un vieux fichier). */
   sections?: Section[];
+  /** Projet archivé : masqué de la barre latérale, ses conversations sont dans les archives. */
+  archived?: ProjectArchive | null;
+}
+
+/** Archivage d'un projet entier (le dossier n'est pas touché). */
+export interface ProjectArchive {
+  archivedAt: number;
+  /** Conversations archivées avec le projet, restaurées avec lui. */
+  sessionIds: string[];
+}
+
+/** Résultat de la restauration d'un projet archivé. */
+export interface RestoreProjectResult {
+  config: Config;
+  restored: number;
+  /** Conversations restées dans les archives, avec la raison. */
+  errors: string[];
 }
 
 /** Regroupement de conversations à l'intérieur d'un projet (voir src/sections.ts). */
@@ -185,6 +202,11 @@ export const api = {
   archiveSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<Config>("archive_session", { projectKey, sessionId, force }),
   restoreArchive: (sessionId: string) => invoke<Config>("restore_archive", { sessionId }),
+  /** Marque un projet comme archivé, une fois ses conversations archivées. */
+  markProjectArchived: (projectKey: string, sessionIds: string[]) =>
+    invoke<Config>("mark_project_archived", { projectKey, sessionIds }),
+  /** Restaure un projet archivé et les conversations archivées avec lui. */
+  restoreProject: (projectKey: string) => invoke<RestoreProjectResult>("restore_project", { projectKey }),
   trashSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<void>("trash_session", { projectKey, sessionId, force }),
   trashArchive: (sessionId: string) => invoke<Config>("trash_archive", { sessionId }),
