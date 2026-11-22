@@ -5,7 +5,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
-import type { ConversationEntry, DiffLine } from "./conversation";
+import type { ChunkMeta, ConversationEntry, DiffLine } from "./conversation";
 import type { SlashEntry } from "./slashCommands";
 
 const now = Date.now();
@@ -224,11 +224,16 @@ const changed = (id: string) => setTimeout(() => emit("conversation-changed", id
 function fakeReply(id: string, text: string) {
   const t = fakeTranscript(id) ?? (transcripts.set(id, []), transcripts.get(id)!);
   const next = () => (t.length ? t[t.length - 1].line + 1 : 0);
+  const mode = fakeModeState(id);
+  Object.assign(mode, { recorded: mode.current, line: next(), index: t.length });
   t.push(text.startsWith("/") ? { kind: "user", line: next(), uuid: `m${next()}`, text, command: true } : { kind: "user", line: next(), uuid: `m${next()}`, text, command: false });
   changed(id);
   if (text.startsWith("/")) return;
   const steps: (() => void)[] = [
-    () => t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: `Je m'occupe de « ${text.split("\n")[0]} ».` }),
+    () => {
+      fakeTurns.set(id, (fakeTurns.get(id) ?? 0) + 1);
+      t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: `Je m'occupe de « ${text.split("\n")[0]} ».` });
+    },
     () => t.push({ kind: "tool", line: next(), uuid: `m${next()}`, id: `x${next()}`, name: "Bash", title: "ls src", detail: null, path: null, diff: null, diffTruncated: false }),
     () => {
       const tool = [...t].reverse().find((e) => e.kind === "tool")!;
@@ -250,11 +255,52 @@ function fakeReply(id: string, text: string) {
   );
 }
 
+// Pied de conversation : modèle, mode de permission et consommation de la fausse
+// transcription. Le mode n'est « enregistré » qu'avec le message suivant, comme dans Claude
+// Code ; le faux terminal, lui, l'affiche tout de suite après Maj+Tab (« … on (shift+tab to cycle) »).
+const FAKE_MODES = ["default", "acceptEdits", "plan", "auto"] as const;
+const FAKE_INDICATORS: Record<string, string> = { acceptEdits: "⏵⏵ accept edits on", plan: "⏸ plan mode on", auto: "⏵⏵ auto mode on" };
+/** Mode courant du faux terminal, et dernier mode écrit dans la transcription (avec sa ligne). */
+const fakeModes = new Map<string, { current: string; recorded: string; line: number; index: number }>();
+/** Nombre de réponses fictives (la consommation grandit à chacune). */
+const fakeTurns = new Map<string, number>();
+
+function fakeModeState(id: string) {
+  let m = fakeModes.get(id);
+  if (!m) fakeModes.set(id, (m = { current: "auto", recorded: "auto", line: 3, index: 1 }));
+  return m;
+}
+
+/** Maj+Tab dans le faux terminal : mode suivant, affiché sous la fausse zone de saisie. */
+function fakeCycleMode(key: string) {
+  const m = fakeModeState(key);
+  m.current = FAKE_MODES[(FAKE_MODES.indexOf(m.current as (typeof FAKE_MODES)[number]) + 1) % FAKE_MODES.length];
+  const ind = FAKE_INDICATORS[m.current];
+  ptyOut(key, `\r\n\x1b[2m${ind ? `${ind} (shift+tab to cycle)` : "? for shortcuts"}\x1b[0m\r\n> `);
+}
+
+function fakeMeta(id: string, from: number, t: ConversationEntry[]): ChunkMeta {
+  const m = fakeModeState(id);
+  const turns = fakeTurns.get(id) ?? 0;
+  const fresh = from === 0;
+  const recordedNow = m.index >= from;
+  const cacheRead = 142_000 + turns * 9_000;
+  return {
+    model: fresh || turns ? "claude-opus-5-5" : null,
+    modelIdentity: fresh ? { id: "claude-opus-5-5", name: "Opus 5.5" } : null,
+    permissionMode: recordedNow ? m.recorded : null,
+    permissionModeLine: recordedNow ? m.line : null,
+    usage: fresh || from < t.length ? { inputTokens: 6, cacheCreationInputTokens: 1_850, cacheReadInputTokens: cacheRead, outputTokens: 420 } : null,
+    outputs: fresh ? [{ id: "msg_d1", tokens: 1_210 }, { id: "msg_d2", tokens: 3_400 }, ...Array.from({ length: turns }, (_, i) => ({ id: `msg_r${i}`, tokens: 420 }))] : from < t.length && turns ? [{ id: `msg_r${turns - 1}`, tokens: 420 }] : [],
+  };
+}
+
 function fakeConversationRead(a: Record<string, unknown>) {
-  const t = fakeTranscript(String(a.sessionId));
+  const id = String(a.sessionId);
+  const t = fakeTranscript(id);
   if (!t) return { exists: false, reset: false, headSkipped: false, entries: [], offset: 0, line: 0 };
   const from = Number(a.offset ?? 0);
-  return { exists: true, reset: false, headSkipped: false, entries: t.slice(from), offset: t.length, line: t.length };
+  return { exists: true, reset: false, headSkipped: false, entries: t.slice(from), offset: t.length, line: t.length, meta: fakeMeta(id, from, t) };
 }
 
 // ---- Faux états des conversations (hooks) ---------------------------------------------
@@ -367,6 +413,10 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
       const t = fakePtys.get(key);
       if (!t) throw "Ce terminal n'est pas ouvert.";
       const data = String(a.data);
+      if (data === "\x1b[Z") {
+        fakeCycleMode(key);
+        return null;
+      }
       if (data === "\x1b") {
         // Échap (« Arrêter ») : interrompt la réponse en cours.
         ptyOut(key, "\r\n\x1b[2m(interrompu)\x1b[0m\r\n> ");
