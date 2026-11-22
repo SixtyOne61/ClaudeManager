@@ -129,14 +129,17 @@ Le bouton **Vérifier les mises à jour** (bas de la barre latérale) lit `lates
 
 ### Publier une version
 
+Le skill Claude Code `/release` (`.claude/skills/release/`) fait toutes ces étapes, notes comprises.
+
 1. Changer la version dans `src-tauri/Cargo.toml` : c'est la seule source, `tauri.conf.json` n'en a plus. Mettre `package.json` à la même valeur par cohérence.
-2. Commiter, puis créer et pousser le tag correspondant :
+2. Écrire les notes de version dans `docs/releases/vX.Y.Z.md`. Elles deviennent le texte de la release et s'affichent, en texte brut, dans la fenêtre « Mise à jour disponible » de l'app : pas de Markdown (`**`, `#`), seulement des titres sur leur propre ligne et des puces `- `.
+3. Commiter, puis créer et pousser le tag correspondant :
 
    ```powershell
    git tag v0.2.0; git push origin v0.2.0
    ```
 
-3. Le workflow `.github/workflows/release.yml` compile, signe et crée une release **en brouillon**. Son texte s'affiche dans la fenêtre « Mise à jour disponible » : relisez-le, puis publiez la release. Les utilisateurs la verront à leur prochaine vérification.
+4. Le workflow `.github/workflows/release.yml` compile, signe et crée une release **en brouillon** avec ces notes. Relisez-la, puis publiez-la. Les utilisateurs la verront à leur prochaine vérification.
 
 ## Structure du code
 

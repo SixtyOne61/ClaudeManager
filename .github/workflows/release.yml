@@ -31,6 +31,22 @@ jobs:
             exit 1
           }
 
+      # Notes de version : docs/releases/<tag>.md, commité avant le tag. Elles deviennent le
+      # texte de la release et le champ `notes` de latest.json, affiché tel quel (texte brut)
+      # dans la fenêtre « Mise à jour disponible » de l'app.
+      - name: Lire les notes de version
+        id: notes
+        shell: pwsh
+        run: |
+          $file = "docs/releases/${{ github.ref_name }}.md"
+          if (-not (Test-Path $file)) {
+            Write-Error "Notes de version manquantes : $file"
+            exit 1
+          }
+          $body = (Get-Content $file -Raw -Encoding utf8).Trim()
+          $delim = "NOTES_$([guid]::NewGuid().ToString('N'))"
+          "body<<$delim`n$body`n$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24  # même npm (11) que celui qui génère package-lock.json
@@ -53,6 +69,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Claude Manager ${{ github.ref_name }}
           # Ce texte devient les notes affichées dans la fenêtre « Mise à jour disponible ».
-          releaseBody: Nouvelle version de Claude Manager.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
