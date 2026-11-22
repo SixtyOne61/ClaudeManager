@@ -506,6 +506,9 @@ span.session-check { visibility: hidden !important; }
 .conv-attachment button { display: inline-flex; padding: 2px; border: 0; background: none; cursor: pointer; opacity: .7; }
 .conv-attachment button:hover { opacity: 1; }
 .conv-input textarea { flex: 1 1 0; min-width: 0; }
+/* Pièces jointes d'un message envoyé, au-dessus de sa bulle. */
+.conv-bubble-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 100%; }
+.conv-bubble-attachments .conv-attachment { padding: 4px 8px; color: var(--text-muted); }
 
 /* Menu des commandes `/…` (SlashMenu), au-dessus de la zone de saisie. */
 .conv-input { position: relative; }

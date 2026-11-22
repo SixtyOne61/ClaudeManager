@@ -10,7 +10,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { File as FileIcon, Paperclip, Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
+import { baseName, composeMessage, isImagePath, splitAttachments } from "../attachments";
+import { File as FileIcon, Image as ImageIcon, Paperclip, Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
 import { groupEntries, messageKey, type ClaudeItem, type ConversationData, type ConversationEntry, type EditableMessage } from "../conversation";
 import { renderMarkdown } from "../markdown";
 import { GrillAnswers, grillHtml, isGrillAnswer } from "./Grill";
@@ -145,11 +146,33 @@ function UserBubble({ entry, replaced, onEdit }: BubbleProps) {
           <div className="conv-bubble grill-answers">
             <GrillAnswers text={entry.text} />
           </div>
+        ) : entry.command ? (
+          <div className="conv-bubble command">{entry.text}</div>
         ) : (
-          <div className={"conv-bubble" + (entry.command ? " command" : "")}>{entry.text}</div>
+          <UserText text={entry.text} />
         )}
       </div>
     </div>
+  );
+}
+
+/** Texte d'un message, ses pièces jointes (mentions `@"chemin"`) en pastilles au-dessus. */
+function UserText({ text }: { text: string }) {
+  const parts = useMemo(() => splitAttachments(text), [text]);
+  return (
+    <>
+      {parts.paths.length > 0 && (
+        <div className="conv-bubble-attachments">
+          {parts.paths.map((p, i) => (
+            <span key={i} className="conv-attachment" title={p}>
+              {isImagePath(p) ? <ImageIcon size={14} /> : <FileIcon size={14} />}
+              <span className="conv-attachment-name">{baseName(p)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {parts.text && <div className="conv-bubble">{parts.text}</div>}
+    </>
   );
 }
 
@@ -233,10 +256,7 @@ interface Attachment {
 
 let nextAttachmentId = 1;
 
-const baseName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-
-/** Référence `@chemin` de Claude Code (entre guillemets si le chemin a des espaces). */
-const mention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
+const toAttachments = (paths: string[]): Attachment[] => paths.map((path) => ({ id: nextAttachmentId++, path, name: baseName(path) }));
 
 const readDataUrl = (file: Blob) =>
   new Promise<string>((resolve, reject) => {
@@ -279,23 +299,28 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const wrapRef = useRef<HTMLDivElement>(null);
   const slash = useSlashMenu({ text, setText, cwd, sessionId });
   /** Brouillon en cours quand la modification a commencé. */
-  const draft = useRef<string | null>(null);
+  const draft = useRef<{ text: string; attachments: Attachment[] } | null>(null);
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
 
-  // Début de modification : le texte du message remplace le brouillon (gardé de côté), curseur
-  // à la fin. Fin sans envoi : le brouillon revient.
+  // Début de modification : le texte et les pièces jointes du message remplacent le brouillon
+  // (gardé de côté), curseur à la fin. Fin sans envoi : le brouillon revient.
   const editingKey = editing ? messageKey(editing) : null;
   useEffect(() => {
     if (!editing) {
-      if (draft.current !== null) setText(draft.current);
+      if (draft.current !== null) {
+        setText(draft.current.text);
+        setAttachments(draft.current.attachments);
+      }
       draft.current = null;
       return;
     }
-    if (draft.current === null) draft.current = text;
-    setText(editing.text);
+    if (draft.current === null) draft.current = { text, attachments };
+    const parts = splitAttachments(editing.text);
+    setText(parts.text);
+    setAttachments(toAttachments(parts.paths));
     requestAnimationFrame(() => {
       const el = ref.current;
       if (!el) return;
@@ -316,7 +341,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const addPaths = (paths: string[]) =>
     setAttachments((a) => [
       ...a,
-      ...paths.filter((p) => !a.some((x) => x.path === p)).map((path) => ({ id: nextAttachmentId++, path, name: baseName(path) })),
+      ...toAttachments(paths.filter((p) => !a.some((x) => x.path === p))),
     ]);
 
   // Fichiers glissés depuis l'explorateur : le webview donne leurs chemins ; pris en compte
@@ -376,8 +401,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
     if (!canSend || !enabled || sending) return;
     setSending(true);
     try {
-      const refs = attachments.map((a) => mention(a.path)).join(" ");
-      await onSend([t, refs].filter(Boolean).join("\n"));
+      await onSend(composeMessage(t, attachments.map((a) => a.path)));
       draft.current = null;
       setText("");
       setAttachments([]);
