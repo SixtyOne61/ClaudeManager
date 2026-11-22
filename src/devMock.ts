@@ -319,7 +319,24 @@ function setActivity(key: string, a: FakeActivity | null) {
   setTimeout(() => emit("conversation-activity", { sessionId: key, activity: full }), 0);
 }
 
+// ---- Fausses limites d'utilisation (ligne d'état) --------------------------------------
+// Aucune au démarrage ; la première conversation lancée les fait apparaître, et chaque
+// message fait monter la fenêtre de 5 h (orange au-delà de 80 %, rouge à partir de 95 %).
+let usageLimits: { fiveHour: { usedPercentage: number; resetsAt: number } | null; sevenDay: { usedPercentage: number; resetsAt: number } | null; at: number } | null = null;
+
+function bumpUsage() {
+  const nowS = Math.floor(Date.now() / 1000);
+  const five = usageLimits?.fiveHour?.usedPercentage ?? 30;
+  usageLimits = {
+    fiveHour: { usedPercentage: Math.min(100, five + 12), resetsAt: nowS + 2 * 3600 + 17 * 60 },
+    sevenDay: { usedPercentage: (usageLimits?.sevenDay?.usedPercentage ?? 17) + 1, resetsAt: nowS + 3 * 86400 + 5 * 3600 },
+    at: Date.now() - 4 * 60_000,
+  };
+  setTimeout(() => emit("usage-limits", usageLimits), 0);
+}
+
 function fakeTurn(key: string, line: string) {
+  bumpUsage();
   clearTimeout(activityTimers.get(key));
   setActivity(key, { state: "running", kind: "prompt" });
   activityTimers.set(
@@ -472,6 +489,7 @@ export function installDevMock() {
     const a = (args ?? {}) as Record<string, unknown>;
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
     if (cmd === "activity_list") return [...activities.values()];
+    if (cmd === "usage_limits") return usageLimits;
     if (cmd === "conversation_read") return fakeConversationRead(a);
     if (cmd === "list_slash_commands") return fakeSlashCommands();
     console.info("[mock]", cmd, a);

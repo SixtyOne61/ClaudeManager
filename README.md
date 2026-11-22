@@ -25,8 +25,9 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`).
 | --- | --- |
 | Projets et conversations (écrits par Claude Code) | `%USERPROFILE%\.claude\projects\<chemin-encodé>\<session-id>.jsonl` (ou `%CLAUDE_CONFIG_DIR%\projects`) |
 | Catégories, sections, couleurs, noms d'affichage, liste des archives | `%APPDATA%\claude-manager\config.json` |
-| Hooks de suivi d'état, passés à Claude Code avec `--settings` | `%APPDATA%\claude-manager\hooks-settings.json` |
+| Hooks de suivi d'état et ligne d'état, passés à Claude Code avec `--settings` | `%APPDATA%\claude-manager\hooks-settings.json` |
 | État de chaque conversation (écrit par les hooks) | `%APPDATA%\claude-manager\state\<session-id>.json` |
+| Limites d'utilisation du forfait (écrites par la ligne d'état) | `%APPDATA%\claude-manager\limits.json` |
 | Cache des résumés de conversations (supprimable sans risque) | `%APPDATA%\claude-manager\cache.json` |
 | Conversations archivées | `%APPDATA%\claude-manager\archive\<projet>\` |
 
@@ -37,6 +38,7 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`).
 - **Lignes corrompues ou incomplètes** : elles sont ignorées, et leur nombre est signalé sur la conversation concernée.
 - **Rafraîchissement** : le dossier `.claude\projects` est surveillé, et la liste se met à jour seule environ 1,5 s après un changement. Le bouton ⟳ force une relecture.
 - **État des conversations** : chaque conversation lancée dans l'app reçoit, par `--settings`, des hooks qui appellent `claude-manager.exe hook`. Cette commande écrit l'état dans le dossier `state\`, que l'app surveille. Les hooks que vous avez configurés continuent de fonctionner. Une conversation sans terminal ouvert est *terminée*.
+- **Limites d'utilisation** (bas de la barre latérale) : fenêtre de 5 heures et fenêtre hebdomadaire, en pourcentage, avec l'heure de remise à zéro (orange au-delà de 80 %, rouge à partir de 95 %). Le même fichier `--settings` déclare une [ligne d'état](https://code.claude.com/docs/en/statusline) `claude-manager.exe statusline` : Claude Code lui passe, après chaque réponse, les champs `rate_limits.five_hour` et `rate_limits.seven_day` (abonnements Pro, Max et Ultra seulement). La commande les enregistre dans `limits.json`, que l'app surveille. Aucune requête réseau : les chiffres ne bougent que pendant qu'une conversation tourne dans l'app. Si vous avez votre propre ligne d'état (`statusLine` dans `~/.claude/settings.json` ou dans le projet), elle est relancée avec la même entrée et s'affiche comme d'habitude (2 s au plus) ; sinon une ligne courte « modèle · contexte » s'affiche. Une ligne d'état passe par un shell (Git Bash ou PowerShell) : l'app ajoute son dossier au `PATH` de `claude` pour que la commande n'ait besoin ni de chemin ni de guillemets.
 
 ### Actions
 

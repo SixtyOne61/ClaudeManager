@@ -34,6 +34,7 @@ import type { Category, Config, ProjectInfo } from "../api";
 import { colorStyle, projectName, relativeDate } from "../util";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
+import { UsageLimits } from "./UsageLimits";
 import { ActivityCounts } from "./Activity";
 import { countActivities, useActivities, type ActivityCount } from "../activity";
 
@@ -297,6 +298,7 @@ export function Sidebar(props: Props) {
             Afficher les projets temporaires ({hiddenTemp})
           </label>
         )}
+        <UsageLimits />
         <UpdateButton />
       </div>
     </aside>

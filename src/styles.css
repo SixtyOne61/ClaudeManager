@@ -495,3 +495,15 @@ button.conv-footer-item:disabled { cursor: default; opacity: .6; }
 .conv-context-bar { width: 70px; height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; flex: none; }
 .conv-context-bar > span { display: block; height: 100%; background: var(--text-muted); }
 .conv-context-bar.high > span { background: var(--warn); }
+
+/* ---------- Limites d'utilisation (bas de la barre latérale) ---------- */
+.usage-limits { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 2px; font-size: 11.5px; color: var(--text-muted); cursor: default; }
+.limit { display: flex; flex-direction: column; gap: 3px; }
+.limit-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.limit-label, .limit-reset { color: var(--text-muted); }
+.limit-bar { height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; }
+.limit-bar > span { display: block; height: 100%; background: var(--text-muted); transition: width .3s; }
+.limit-bar.high > span { background: var(--activity-action); }
+.limit-bar.critical > span { background: var(--danger); }
+.limit-age, .limit-empty { font-size: 11px; color: var(--fg-muted); }
+.limit-empty { font-style: italic; }

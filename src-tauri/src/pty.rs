@@ -312,6 +312,11 @@ impl PtyManager {
         cmd.env_remove("CLAUDE_CODE_ENTRYPOINT");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Dossier de l'app en tête du PATH : la ligne d'état (`claude-manager.exe statusline`,
+        // voir limits.rs) passe par un shell et trouve l'exécutable par son nom.
+        if let Some(path) = std::env::current_exe().ok().and_then(|exe| crate::limits::path_with_exe_dir(&exe, std::env::var_os("PATH"))) {
+            cmd.env("PATH", path);
+        }
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| format!("Lancement de claude impossible : {e}"))?;
         drop(pair.slave);
 

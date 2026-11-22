@@ -28,6 +28,10 @@ dirs = "7.0.0"
 tauri-plugin-updater = "2"
 portable-pty = "0.9.0"
 
+[target.'cfg(windows)'.dependencies]
+# Sous-commande `statusline` : sortie standard non héritée par la ligne d'état de l'utilisateur.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

@@ -147,6 +147,25 @@ export interface SearchResult {
   elapsedMs: number;
 }
 
+/** Une fenêtre de limite d'utilisation du forfait (voir src-tauri/src/limits.rs). */
+export interface LimitWindow {
+  /** Part consommée, de 0 à 100. */
+  usedPercentage: number;
+  /** Remise à zéro, en secondes depuis 1970. */
+  resetsAt: number;
+}
+
+/** Limites d'utilisation (fenêtre de 5 h, fenêtre hebdomadaire), relevées par la ligne d'état. */
+export interface UsageLimits {
+  fiveHour: LimitWindow | null;
+  sevenDay: LimitWindow | null;
+  /** Dernière mise à jour (ms depuis 1970). */
+  at: number;
+}
+
+/** Évènement émis quand `limits.json` change (charge utile : UsageLimits). */
+export const EVT_USAGE_LIMITS = "usage-limits";
+
 /** Erreur renvoyée quand une session a été modifiée il y a peu (peut-être ouverte). */
 export const ERR_ACTIVE = "SESSION_ACTIVE";
 
@@ -175,6 +194,8 @@ export const api = {
    */
   checkOpenElsewhere: (projectKey: string, sessionId: string, releasedAt: number | null) =>
     invoke<void>("check_open_elsewhere", { projectKey, sessionId, releasedAt }),
+  /** Dernières limites d'utilisation connues (null : aucune encore). */
+  usageLimits: () => invoke<UsageLimits | null>("usage_limits"),
 };
 
 /** Convertit une erreur Tauri (chaîne) ou JS en message lisible. */
