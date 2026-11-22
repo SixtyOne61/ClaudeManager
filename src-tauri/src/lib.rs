@@ -7,6 +7,7 @@
 
 mod activity;
 mod actions;
+mod attachments;
 mod commands_list;
 mod config;
 mod conversation;
@@ -500,6 +501,8 @@ pub fn run() {
         .manage(commands_list::ListingCache::default())
         .on_window_event(pty::on_window_event)
         .setup(|app| {
+            // Restes d'une fermeture brutale (plantage, arrêt forcé).
+            attachments::clear();
             let root = app.state::<AppState>().paths.claude_projects.clone();
             start_watcher(app.handle().clone(), root);
             // États des conversations écrits par les hooks (voir activity.rs).
@@ -527,6 +530,7 @@ pub fn run() {
             trash_session,
             trash_archive,
             check_open_elsewhere,
+            attachments::save_pasted_image,
             pty::commands::pty_resume,
             pty::commands::pty_new_session,
             pty::commands::pty_write,
@@ -540,6 +544,12 @@ pub fn run() {
             limits::usage_limits,
             worktrees::commands::is_git_repo,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Les images collées sont des fichiers temporaires : supprimées à la fermeture.
+            if let tauri::RunEvent::Exit = event {
+                attachments::clear();
+            }
+        });
 }

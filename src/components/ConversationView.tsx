@@ -5,9 +5,12 @@
 // Les liens `http(s)` des réponses s'ouvrent dans le navigateur ; les blocs de commande
 // (`bash`, `powershell`, `cmd`…) ont un bouton ▶ pour les exécuter (`CodeRunner`).
 
-import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { File as FileIcon, Paperclip, Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
 import { groupEntries, messageKey, type ClaudeItem, type ConversationData, type ConversationEntry, type EditableMessage } from "../conversation";
 import { renderMarkdown } from "../markdown";
 import { GrillAnswers, grillHtml, isGrillAnswer } from "./Grill";
@@ -217,6 +220,39 @@ function ClaudeTurn({ items }: { items: ClaudeItem[] }) {
   );
 }
 
+// ---- Pièces jointes --------------------------------------------------------------------
+
+/** Pièce jointe en attente dans la zone de saisie. */
+interface Attachment {
+  id: number;
+  path: string;
+  name: string;
+  /** Aperçu (images collées). */
+  preview?: string;
+}
+
+let nextAttachmentId = 1;
+
+const baseName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+
+/** Référence `@chemin` de Claude Code (entre guillemets si le chemin a des espaces). */
+const mention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
+
+const readDataUrl = (file: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+
+/** Image collée → fichier temporaire (côté Rust), chemin renvoyé. */
+async function savePastedImage(file: File): Promise<Attachment> {
+  const ext = file.type.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png";
+  const path = await invoke<string>("save_pasted_image", new Uint8Array(await file.arrayBuffer()), { headers: { "x-ext": ext } });
+  return { id: nextAttachmentId++, path, name: baseName(path), preview: await readDataUrl(file) };
+}
+
 // ---- Zone de saisie --------------------------------------------------------------------
 
 interface InputProps {
@@ -238,7 +274,9 @@ interface InputProps {
 export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null, editing = null, onCancelEdit }: InputProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const slash = useSlashMenu({ text, setText, cwd, sessionId });
   /** Brouillon en cours quand la modification a commencé. */
   const draft = useRef<string | null>(null);
@@ -275,14 +313,74 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, [text]);
 
+  const addPaths = (paths: string[]) =>
+    setAttachments((a) => [
+      ...a,
+      ...paths.filter((p) => !a.some((x) => x.path === p)).map((path) => ({ id: nextAttachmentId++, path, name: baseName(path) })),
+    ]);
+
+  // Fichiers glissés depuis l'explorateur : le webview donne leurs chemins ; pris en compte
+  // quand le curseur est au-dessus de cette zone de saisie (visible).
+  const addPathsRef = useRef(addPaths);
+  addPathsRef.current = addPaths;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((e) => {
+        if (e.payload.type !== "drop" || !enabledRef.current) return;
+        const rect = wrapRef.current?.getBoundingClientRect();
+        if (!rect || rect.width === 0) return;
+        const x = e.payload.position.x / window.devicePixelRatio;
+        const y = e.payload.position.y / window.devicePixelRatio;
+        if (x >= rect.left && x <= rect.right && y >= rect.top - 40 && y <= rect.bottom) addPathsRef.current(e.payload.paths);
+      })
+      .then((fn) => (cancelled ? fn() : (off = fn)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
+  const pickFiles = async () => {
+    try {
+      const r = await openFileDialog({ multiple: true, title: "Joindre des fichiers" });
+      if (r) addPaths(Array.isArray(r) ? r : [r]);
+    } catch {
+      /* dialogue annulé ou indisponible */
+    }
+    ref.current?.focus();
+  };
+
+  // Ctrl+V : une image du presse-papiers (capture d'écran) devient une pièce jointe ; le texte
+  // collé garde son comportement habituel.
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.items]
+      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => !!f);
+    if (!files.length) return;
+    if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+    Promise.all(files.map(savePastedImage))
+      .then((added) => setAttachments((a) => [...a, ...added]))
+      .catch(() => {});
+  };
+
+  const canSend = !!(text.trim() || attachments.length);
+
   const send = async () => {
     const t = text.trim();
-    if (!t || !enabled || sending) return;
+    if (!canSend || !enabled || sending) return;
     setSending(true);
     try {
-      await onSend(t);
+      const refs = attachments.map((a) => mention(a.path)).join(" ");
+      await onSend([t, refs].filter(Boolean).join("\n"));
       draft.current = null;
       setText("");
+      setAttachments([]);
     } catch {
       /* terminal fermé entre-temps : le texte reste dans la zone */
     } finally {
@@ -324,8 +422,24 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         </button>
       </div>
     )}
-    <div className="conv-input">
+    <div className="conv-input" ref={wrapRef}>
       {enabled && slash.menu}
+      {attachments.length > 0 && (
+        <div className="conv-attachments">
+          {attachments.map((a) => (
+            <span key={a.id} className="conv-attachment" title={a.path}>
+              {a.preview ? <img src={a.preview} alt="" /> : <FileIcon size={14} />}
+              <span className="conv-attachment-name">{a.name}</span>
+              <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} title="Retirer">
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <button className="btn small" onClick={pickFiles} disabled={!enabled} title="Joindre des fichiers (ou glisser-déposer, Ctrl+V pour une capture)">
+        <Paperclip size={13} />
+      </button>
       <textarea
         ref={ref}
         rows={1}
@@ -334,11 +448,12 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         disabled={!enabled}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
       />
       <button className="btn small" onClick={onStop} disabled={!enabled} title="Interrompre l'agent (Échap)">
         <Square size={12} /> Arrêter
       </button>
-      <button className="btn small primary" onClick={send} disabled={!enabled || !text.trim() || sending} title="Envoyer (Entrée)">
+      <button className="btn small primary" onClick={send} disabled={!enabled || !canSend || sending} title="Envoyer (Entrée)">
         <SendHorizontal size={13} /> {editing ? "Relancer" : "Envoyer"}
       </button>
     </div>

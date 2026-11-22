@@ -494,6 +494,19 @@ span.session-check { visibility: hidden !important; }
 .conv-input textarea:focus { border-color: var(--accent); }
 .conv-input .btn { height: 34px; }
 
+/* Pièces jointes en attente, au-dessus de la zone de saisie. */
+.conv-input { flex-wrap: wrap; }
+.conv-attachments { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.conv-attachment {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 3px 4px 3px 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font-size: 12px;
+}
+.conv-attachment img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.conv-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-attachment button { display: inline-flex; padding: 2px; border: 0; background: none; cursor: pointer; opacity: .7; }
+.conv-attachment button:hover { opacity: 1; }
+.conv-input textarea { flex: 1 1 0; min-width: 0; }
+
 /* Menu des commandes `/…` (SlashMenu), au-dessus de la zone de saisie. */
 .conv-input { position: relative; }
 .slash-menu {
