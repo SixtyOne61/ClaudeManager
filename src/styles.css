@@ -458,6 +458,14 @@ span.session-check { visibility: hidden !important; }
 .run-panel-term { height: 220px; padding: 4px 0 0 6px; }
 .markdown blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-muted); }
 .markdown a { color: var(--accent); cursor: default; }
+/* Liens http(s) : curseur main + petite icône globe (ils s'ouvrent dans le navigateur). */
+.markdown a[href^="http://" i], .markdown a[href^="https://" i] { cursor: pointer; }
+.markdown a[href^="http://" i]::after, .markdown a[href^="https://" i]::after {
+  content: ""; display: inline-block; width: .85em; height: .85em; margin-left: .3em; vertical-align: -.1em;
+  background-color: currentColor; opacity: .75;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M2 12h20'/><path d='M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M2 12h20'/><path d='M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'/></svg>") center / contain no-repeat;
+}
 .markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .markdown hr { border: none; border-top: 1px solid var(--border); }
