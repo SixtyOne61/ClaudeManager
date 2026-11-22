@@ -45,11 +45,15 @@ type RunState = { kind: "starting" } | { kind: "running" } | { kind: "exited"; c
  * Pourquoi le terminal est affiché par-dessus la conversation (null : conversation affichée).
  * `manual` : « Voir le terminal », il ne redescend que sur demande.
  */
-type TerminalUp = null | "manual" | "permission" | "question" | "command" | "launch" | "new";
+type TerminalUp = null | "manual" | "permission" | "question" | "command" | "launch";
 
-/** Délai sans hook `SessionStart` après le lancement au-delà duquel Claude Code attend
- *  sans doute la question de confiance du dossier. */
-const TRUST_DELAY_MS = 1500;
+/** Question de confiance du dossier posée par Claude Code au démarrage (selon les versions :
+ *  « Do you trust the files in this folder? », « …one you trust? », « Yes, I trust this folder »). */
+const TRUST_PROMPT = /trust (the files in )?this folder|one you trust/i;
+/** Entre le lancement et le hook `SessionStart`, l'écran du terminal est relu à cet intervalle… */
+const TRUST_POLL_MS = 400;
+/** …pendant au plus ce délai (sans hooks, `SessionStart` n'arrive jamais). */
+const TRUST_WATCH_MS = 60_000;
 /** Après l'envoi d'une commande `/…`, l'évènement « message envoyé » qui suit est le sien. */
 const COMMAND_GRACE_MS = 2000;
 
@@ -63,9 +67,7 @@ function upReason(up: TerminalUp): string | null {
     case "command":
       return "Commande envoyée : termine-la dans le terminal si un menu s'est ouvert.";
     case "launch":
-      return "Démarrage de Claude Code : réponds dans le terminal s'il pose une question (confiance du dossier…).";
-    case "new":
-      return "Nouvelle conversation : réponds dans le terminal s'il pose une question (confiance du dossier…), puis écris ton premier message.";
+      return "Claude Code demande si tu fais confiance à ce dossier : réponds dans le terminal.";
     default:
       return null;
   }
@@ -79,32 +81,32 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
 
   // ---- Interface de conversation et terminal qui remonte --------------------------------
   const conversation = useConversation(sessionId, cwd);
-  const [up, setUp] = useState<TerminalUp>(isNew ? "new" : null);
+  const [up, setUp] = useState<TerminalUp>(null);
   /** Moment où une commande `/…` a été envoyée depuis la zone de saisie. */
   const commandSentAt = useRef(0);
   /** La commande `/…` envoyée a lancé un tour de l'agent (ce n'était pas un menu). */
   const commandTurn = useRef(false);
-  /** Nouvelle conversation dont le fichier n'a pas encore de première ligne. */
-  const waitingFirstLine = isNew === true && conversation.exists !== true;
-  const waitingFirstLineRef = useRef(waitingFirstLine);
-  waitingFirstLineRef.current = waitingFirstLine;
 
   /** Fait redescendre le terminal s'il était remonté tout seul. */
   const lowerAuto = useCallback(() => {
-    if (waitingFirstLineRef.current) return;
     setUp((u) => (u === "manual" ? u : null));
   }, []);
 
-  // Première ligne écrite : la nouvelle conversation s'affiche.
-  useEffect(() => {
-    if (!waitingFirstLine) setUp((u) => (u === "new" ? null : u));
-  }, [waitingFirstLine]);
+  /** L'écran du terminal affiche la question de confiance du dossier. */
+  const trustPromptShown = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return false;
+    const buf = term.buffer.active;
+    let screen = "";
+    for (let y = buf.viewportY; y < buf.viewportY + term.rows; y++) screen += (buf.getLine(y)?.translateToString(true) ?? "") + " ";
+    return TRUST_PROMPT.test(screen.replace(/\s+/g, " "));
+  }, []);
 
   // Suit l'état de la conversation (hooks de Claude Code, ticket 04).
   useEffect(() => {
-    let trustTimer: ReturnType<typeof setTimeout> | undefined;
+    let trustWatch: ReturnType<typeof setInterval> | undefined;
     const onActivity = (a: Activity | null) => {
-      clearTimeout(trustTimer);
+      clearInterval(trustWatch);
       if (a && isAwaitingPermission(a)) {
         const reason = a.kind === "question" ? "question" : "permission";
         setUp((u) => (u === "manual" ? u : reason));
@@ -117,11 +119,16 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         // Fin du tour lancé par une commande `/…` : sa réponse s'affiche dans la conversation.
         commandTurn.current = false;
         setUp((u) => (u === "command" ? null : u));
-      } else if (a?.kind === "start" && a.event === "Launch" && isNew) {
-        // `claude` lancé, aucun hook encore : s'il tarde, il attend sans doute la question de confiance.
-        // Seulement pour une nouvelle conversation : une reprise a déjà eu lieu dans ce dossier
-        // (déjà approuvé), et le chargement d'une longue conversation dépasse facilement le délai.
-        trustTimer = setTimeout(() => setUp((u) => (u === null ? "launch" : u)), TRUST_DELAY_MS);
+      } else if (a?.kind === "start" && a.event === "Launch") {
+        // `claude` lancé, aucun hook encore : on guette la question de confiance du dossier à
+        // l'écran (le terminal ne remonte que si elle s'affiche vraiment).
+        const until = Date.now() + TRUST_WATCH_MS;
+        trustWatch = setInterval(() => {
+          if (trustPromptShown()) {
+            clearInterval(trustWatch);
+            setUp((u) => (u === null ? "launch" : u));
+          } else if (Date.now() > until) clearInterval(trustWatch);
+        }, TRUST_POLL_MS);
       } else if (a?.kind === "start") {
         // `SessionStart` reçu : la question de confiance est passée.
         setUp((u) => (u === "launch" ? null : u));
@@ -130,10 +137,10 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     onActivity(getActivity(sessionId));
     const unsubscribe = subscribeActivity(sessionId, onActivity);
     return () => {
-      clearTimeout(trustTimer);
+      clearInterval(trustWatch);
       unsubscribe();
     };
-  }, [sessionId, isNew, lowerAuto]);
+  }, [sessionId, lowerAuto, trustPromptShown]);
 
   const send = async (text: string) => {
     const isCommand = text.startsWith("/");
