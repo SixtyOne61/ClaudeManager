@@ -205,11 +205,12 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
         <span className="grill-form-title">
           {round.questions.length > 1 ? `${round.questions.length} questions` : "1 question"} · {answered}/{round.questions.length} répondue{answered > 1 ? "s" : ""}
         </span>
-        <button className="link-btn" onClick={onFreeText} title="Répondre dans la zone de saisie habituelle (les réponses déjà données sont gardées ici)">
-          Répondre en texte libre
+        <button className="link-btn" onClick={onFreeText} title="Voir la conversation et répondre dans la zone de saisie habituelle (les réponses déjà données sont gardées)">
+          Voir la conversation / répondre en texte libre
         </button>
       </div>
       <div className="grill-list">
+        {round.intro && <div className="grill-text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(round.intro) }} />}
         {round.questions.map((q) => {
           const a = draft.answers[q.n];
           const hasReco = q.recommendation != null;
@@ -218,12 +219,18 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
           const done = isAnswered(hasReco ? a : a && { ...a, choice: "other" });
           return (
             <div key={q.n} className={"grill-q" + (done ? " done" : "")}>
-              <button className="grill-q-head" onClick={(e) => scrollToQuestion(e.currentTarget, q.n)} title="Voir la question complète dans la conversation">
+              <div className="grill-q-head">
                 <span className="grill-num">Q{q.n}</span>
                 <span className="grill-title" dangerouslySetInnerHTML={{ __html: renderMarkdownInline(q.title) }} />
                 {done && <Check size={13} className="grill-q-check" />}
-              </button>
-              {hasReco && <div className="grill-q-reco markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(q.recommendation!) }} />}
+              </div>
+              {q.body && <div className="grill-q-body markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(q.body) }} />}
+              {hasReco && (
+                <div className="grill-reco">
+                  <span className="grill-reco-label">Recommandé</span>
+                  <div className="markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(q.recommendation!) }} />
+                </div>
+              )}
               {hasReco && (
                 <div className="grill-choices">
                   {CHOICES.map((c) => (
@@ -249,6 +256,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
             </div>
           );
         })}
+        {round.outro && <div className="grill-text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(round.outro) }} />}
       </div>
       <div className="grill-form-foot">
         <AutoTextarea className="grill-comment" value={draft.comment} placeholder="Commentaire général (facultatif)" onChange={(comment) => update({ ...draft, comment })} />

@@ -187,6 +187,8 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     if (isCommand && !opts?.quiet) setUp((u) => (u === "manual" ? u : "command"));
   };
   const terminalShown = up !== null;
+  /** Série de questions affichée en formulaire plein espace (la conversation et le terminal sont repliés). */
+  const formVisible = grillMode.showForm && !terminalShown;
   const onStartedRef = useRef(onStarted);
   onStartedRef.current = onStarted;
 
@@ -330,7 +332,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         )}
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}
       </div>
-      <div className="conv-stage">
+      <div className={"conv-stage" + (formVisible ? " collapsed" : "")}>
         <div className="terminal-host" ref={hostRef} />
         <ConversationView
           data={conversation}
@@ -343,7 +345,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
           replaced={replaced}
         />
       </div>
-      {grill && grillMode.showForm && (
+      {grill && formVisible && (
         <GrillForm
           sessionId={sessionId}
           pending={grill}
@@ -356,12 +358,12 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
       )}
       {grill && grillMode.freeTextOnRound && <GrillBackBar count={grill.round.questions.length} onBack={() => grillMode.setFreeText(false)} />}
       {/* Gardée montée sous le formulaire : son brouillon reste. */}
-      <div className="conv-input-slot" hidden={grillMode.showForm}>
+      <div className="conv-input-slot" hidden={formVisible}>
       <ConversationInput
         enabled={state.kind === "running"}
         onSend={send}
         onStop={() => sendInterrupt(sessionId).catch(() => {})}
-        autoFocus={active && !terminalShown && !grillMode.showForm}
+        autoFocus={active && !terminalShown && !formVisible}
         cwd={cwd}
         sessionId={sessionId}
         editing={editing}
