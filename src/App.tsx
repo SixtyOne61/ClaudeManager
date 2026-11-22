@@ -641,6 +641,8 @@ export default function App() {
         searchActive={searchOpen}
         currentProject={currentProject}
         activeSessionId={activeTerminal}
+        onConfigChange={updateConfig}
+        onNewConversation={(p, sectionId) => startNewConversation(p.key, p.path, sectionId)}
         onOpenConversation={(s, p) => openInTerminal(s, p.path)}
         onSearch={() => {
           setActiveTerminal(null);

@@ -1,13 +1,14 @@
 // Barre latérale : catégories (réordonnables), projets (déplaçables entre catégories),
 // section « Non classés », accès aux archives.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
   closestCenter,
   pointerWithin,
+  useDraggable,
   useDroppable,
   useSensor,
   useSensors,
@@ -24,6 +25,8 @@ import {
   FolderPlus,
   FolderTree,
   GripVertical,
+  ListPlus,
+  MoreHorizontal,
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -34,8 +37,11 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import type { Category, Config, ProjectInfo, SessionInfo } from "../api";
+import type { Category, Config, ProjectInfo, Section, SessionInfo } from "../api";
 import { colorStyle, projectName, relativeDate } from "../util";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { addSection, deleteSection, groupBySection, moveSection, projectSections, putConversationInSection, renameSection, setSectionCollapsed, setSectionColor } from "../sections";
+import { TextPrompt } from "./Dialogs";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
 import { UsageLimits } from "./UsageLimits";
@@ -72,6 +78,10 @@ interface Props {
   activeSessionId?: string | null;
   /** Ouvre une conversation dans le terminal intégré. */
   onOpenConversation: (s: SessionInfo, project: ProjectInfo) => void;
+  /** Modifie la configuration (sections du projet courant). */
+  onConfigChange: (change: (c: Config) => Config) => void;
+  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
+  onNewConversation: (project: ProjectInfo, sectionId: string | null) => void;
 }
 
 /** Vue de la barre latérale : liste des projets, ou conversations du projet courant. */
@@ -281,11 +291,26 @@ export function Sidebar(props: Props) {
           <div className="sidebar-header">
             <h1>Claude Manager</h1>
             <span className="sidebar-header-actions">
-              {view === "projects" && (
-                <button className="icon-btn" title="Rafraîchir" onClick={props.onRefresh} disabled={props.loading}>
-                  <RefreshCw size={16} className={props.loading ? "spin" : ""} />
+              <button className="icon-btn" title="Ajouter un projet" onClick={props.onAddProject}>
+                <FolderPlus size={16} />
+              </button>
+              <button className="icon-btn" title="Rafraîchir" onClick={props.onRefresh} disabled={props.loading}>
+                <RefreshCw size={16} className={props.loading ? "spin" : ""} />
+              </button>
+              <MoreMenu>
+                <button
+                  className={"nav-item" + (props.selection?.kind === "archives" && !props.searchActive ? " selected" : "")}
+                  onClick={() => props.onSelect({ kind: "archives" })}
+                >
+                  <Archive size={15} /> Archives <span className="count">{config.archives.length}</span>
                 </button>
-              )}
+                {view === "projects" && (hiddenTemp > 0 || config.showTempProjects) && (
+                  <label className="checkbox small" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={config.showTempProjects} onChange={(e) => props.onToggleTemp(e.target.checked)} />
+                    Afficher les projets temporaires ({hiddenTemp})
+                  </label>
+                )}
+              </MoreMenu>
               <button className="icon-btn" title="Réduire la barre latérale" onClick={() => setReduced(true)}>
                 <PanelLeftClose size={16} />
               </button>
@@ -314,6 +339,8 @@ export function Sidebar(props: Props) {
           activeSessionId={props.activeSessionId ?? null}
           activities={activities}
           onOpen={props.onOpenConversation}
+          onConfigChange={props.onConfigChange}
+          onNew={props.onNewConversation}
         />
       )}
       {!reduced && view === "projects" && (
@@ -321,9 +348,6 @@ export function Sidebar(props: Props) {
       <div className="sidebar-toolbar">
         <button className="btn small" onClick={props.onAddCategory}>
           <Plus size={14} /> Catégorie
-        </button>
-        <button className="btn small" onClick={props.onAddProject}>
-          <FolderPlus size={14} /> Projet
         </button>
       </div>
 
@@ -395,18 +419,6 @@ export function Sidebar(props: Props) {
             <Search size={15} /> Rechercher partout
           </button>
         )}
-        <button
-          className={"nav-item" + (props.selection?.kind === "archives" && !props.searchActive ? " selected" : "")}
-          onClick={() => props.onSelect({ kind: "archives" })}
-        >
-          <Archive size={15} /> Archives <span className="count">{config.archives.length}</span>
-        </button>
-        {(hiddenTemp > 0 || config.showTempProjects) && (
-          <label className="checkbox small">
-            <input type="checkbox" checked={config.showTempProjects} onChange={(e) => props.onToggleTemp(e.target.checked)} />
-            Afficher les projets temporaires ({hiddenTemp})
-          </label>
-        )}
         <UsageLimits />
         <UpdateButton />
       </div>
@@ -415,42 +427,307 @@ export function Sidebar(props: Props) {
   );
 }
 
-/** Conversations du projet courant, de la plus récente à la plus ancienne. */
+/** Menu « … » de l'en-tête : options rarement utilisées. */
+function MoreMenu({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div className="color-picker" ref={ref}>
+      <button className="icon-btn" title="Plus" onClick={() => setOpen((o) => !o)}>
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div className="popover menu more-menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Conversations du projet courant, rangées par section (la plus récente d'abord). */
 function ConversationsPanel(props: {
   config: Config;
   project?: ProjectInfo;
   activeSessionId: string | null;
   activities: ReadonlyMap<string, import("../activity").Activity>;
   onOpen: (s: SessionInfo, project: ProjectInfo) => void;
+  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
+  onNew: (project: ProjectInfo, sectionId: string | null) => void;
+  onConfigChange: (change: (c: Config) => Config) => void;
 }) {
   const { project, config } = props;
+  const [dialog, setDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   if (!project) return <div className="sidebar-scroll"><div className="empty-zone">Aucun projet courant</div></div>;
   const list = [...project.sessions].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  const groups = groupBySection(config, project.key, list);
+  const hasSections = groups.sections.length > 0;
+  const change = props.onConfigChange;
+
+  const confirmDelete = async (section: Section) => {
+    const ok = await ask(`Supprimer la section « ${section.name} » ?\nSes conversations reviendront dans « Sans section ».`, {
+      title: "Supprimer la section",
+      kind: "warning",
+      okLabel: "Supprimer",
+      cancelLabel: "Annuler",
+    });
+    if (ok) change((c) => deleteSection(c, project.key, section.id));
+  };
+
+  /**
+   * Détection de la cible : une section glissée vise les autres sections ; une conversation
+   * glissée vise une zone de dépôt (corps d'une section ou « Sans section »), sinon un en-tête.
+   */
+  const collision: CollisionDetection = (args) => {
+    if (String(args.active.id).startsWith("s:")) {
+      const secs = args.droppableContainers.filter((c) => String(c.id).startsWith("s:"));
+      return closestCenter({ ...args, droppableContainers: secs });
+    }
+    const hits = pointerWithin(args);
+    for (const prefix of ["zone:", "s:"]) {
+      const hit = hits.filter((h) => String(h.id).startsWith(prefix));
+      if (hit.length) return hit;
+    }
+    return [];
+  };
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    setDragId(null);
+    if (!over) return;
+    const a = String(active.id);
+    const o = String(over.id);
+    if (a.startsWith("s:")) {
+      if (o.startsWith("s:")) change((c) => moveSection(c, project.key, a.slice(2), o.slice(2)));
+      return;
+    }
+    const target = o.startsWith("zone:") ? o.slice(5) : o.startsWith("s:") ? o.slice(2) : null;
+    if (!target || !a.startsWith("v:")) return;
+    const id = a.slice(2);
+    const current = groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE;
+    if (current === target) return;
+    change((c) => {
+      const next = putConversationInSection(c, project.key, target === NONE ? null : target, id);
+      const sec = projectSections(next, project.key).find((s) => s.id === target);
+      // Section repliée : dépliée pour voir la conversation arriver.
+      return sec?.collapsed ? setSectionCollapsed(next, project.key, sec.id, false) : next;
+    });
+  };
+
+  const convRow = (s: SessionInfo) => (
+    <ConversationRow
+      key={s.id}
+      session={s}
+      color={config.conversations[s.id]?.color}
+      selected={props.activeSessionId === s.id}
+      activity={props.activities.get(s.id)}
+      onClick={() => props.onOpen(s, project)}
+    />
+  );
+
+  const draggedSession = dragId?.startsWith("v:") ? list.find((s) => s.id === dragId.slice(2)) : undefined;
+  const draggedSection = dragId?.startsWith("s:") ? groups.sections.find((g) => g.section.id === dragId.slice(2))?.section : undefined;
+
+  const projectColor = config.projects[project.key]?.color;
   return (
     <>
-      <div className="sidebar-project-title" title={project.path ?? project.key}>
-        {projectName(project, config)} <span className="count">{list.length}</span>
+      <div className="sidebar-project-title" style={colorStyle(projectColor)} title={project.path ?? project.key}>
+        <span className="project-name">{projectName(project, config)}</span>
+        <span className="count">{list.length}</span>
+      </div>
+      <div className="sidebar-toolbar">
+        <button className="btn small" onClick={() => setDialog({ kind: "new" })} title="Regrouper des conversations de ce projet">
+          <ListPlus size={14} /> Section
+        </button>
+        <button
+          className="btn small"
+          disabled={!project.path}
+          onClick={() => props.onNew(project, null)}
+          title="Nouvelle conversation dans le terminal intégré"
+        >
+          <Plus size={14} /> Conversation
+        </button>
       </div>
       <div className="sidebar-scroll">
         {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
-        {list.map((s) => {
-          const color = config.conversations[s.id]?.color;
-          return (
-            <div
-              key={s.id}
-              className={"project-row conv-row" + (props.activeSessionId === s.id ? " selected" : "") + (color ? " colored" : "")}
-              style={colorStyle(color)}
-              title={s.firstPrompt ?? s.title}
-              onClick={() => props.onOpen(s, project)}
-            >
-              <ActivityDot activity={props.activities.get(s.id)} />
-              <span className="project-name">{s.title}</span>
-              <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
-            </div>
-          );
-        })}
+        <DndContext sensors={sensors} collisionDetection={collision} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
+          {hasSections ? (
+            <Zone id={NONE} className="category unsectioned">
+              <div className="category-header static">
+                <span className="category-name">Sans section</span>
+                <span className="count">{groups.unsectioned.length}</span>
+              </div>
+              <div className="category-body">
+                {groups.unsectioned.map(convRow)}
+                {groups.unsectioned.length === 0 && <div className="empty-zone">Déposez ici pour sortir d'une section</div>}
+              </div>
+            </Zone>
+          ) : (
+            groups.unsectioned.map(convRow)
+          )}
+          <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
+            {groups.sections.map(({ section, sessions }) => (
+              <SectionBlock
+                key={section.id}
+                section={section}
+                count={sessions.length}
+                onToggle={() => change((c) => setSectionCollapsed(c, project.key, section.id, !section.collapsed))}
+                onRename={() => setDialog({ kind: "rename", section })}
+                onDelete={() => confirmDelete(section)}
+                onColor={(color) => change((c) => setSectionColor(c, project.key, section.id, color))}
+                onNew={
+                  project.path
+                    ? () => {
+                        if (section.collapsed) change((c) => setSectionCollapsed(c, project.key, section.id, false));
+                        props.onNew(project, section.id);
+                      }
+                    : undefined
+                }
+              >
+                {sessions.map(convRow)}
+              </SectionBlock>
+            ))}
+          </SortableContext>
+          <DragOverlay dropAnimation={null}>
+            {draggedSession && (
+              <div className="project-row overlay" style={colorStyle(config.conversations[draggedSession.id]?.color)}>
+                {draggedSession.title}
+              </div>
+            )}
+            {draggedSection && (
+              <div className="category overlay" style={colorStyle(draggedSection.color)}>
+                <div className="category-header">{draggedSection.name}</div>
+              </div>
+            )}
+          </DragOverlay>
+        </DndContext>
       </div>
+      {dialog?.kind === "new" && (
+        <TextPrompt
+          title="Nouvelle section"
+          label="Nom"
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            change((c) => addSection(c, project.key, name));
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog?.kind === "rename" && (
+        <TextPrompt
+          title="Renommer la section"
+          label="Nom"
+          initial={dialog.section.name}
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            change((c) => renameSection(c, project.key, dialog.section.id, name));
+            setDialog(null);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/** Conversation de la liste (glissable vers une section). */
+function ConversationRow(props: {
+  session: SessionInfo;
+  color?: string | null;
+  selected: boolean;
+  activity?: import("../activity").Activity;
+  onClick: () => void;
+}) {
+  const { session: s } = props;
+  const drag = useDraggable({ id: "v:" + s.id });
+  return (
+    <div
+      ref={drag.setNodeRef}
+      className={"project-row conv-row" + (props.selected ? " selected" : "") + (props.color ? " colored" : "")}
+      style={{ ...colorStyle(props.color), opacity: drag.isDragging ? 0.35 : 1 }}
+      title={s.firstPrompt ?? s.title}
+      onClick={props.onClick}
+      {...drag.attributes}
+      {...drag.listeners}
+    >
+      <ActivityDot activity={props.activity} />
+      <span className="project-name">{s.title}</span>
+      <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
+    </div>
+  );
+}
+
+/** Section réordonnable, qui reçoit des conversations. */
+function SectionBlock(props: {
+  section: Section;
+  count: number;
+  onToggle: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+  onColor: (c: string | null) => void;
+  onNew?: () => void;
+  children: React.ReactNode;
+}) {
+  const { section } = props;
+  const sortable = useSortable({ id: "s:" + section.id });
+  const zone = useDroppable({ id: "zone:" + section.id });
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(sortable.transform),
+    transition: sortable.transition,
+    opacity: sortable.isDragging ? 0.4 : 1,
+    ...colorStyle(section.color),
+  };
+  // Les boutons ne doivent pas déclencher le glisser-déposer.
+  const stop = (e: React.PointerEvent) => e.stopPropagation();
+  return (
+    <section
+      ref={sortable.setNodeRef}
+      style={style}
+      className={"category" + (section.color ? " colored" : "") + (zone.isOver || sortable.isOver ? " drop-over" : "")}
+    >
+      <div className="category-header" {...sortable.attributes} {...sortable.listeners}>
+        <GripVertical size={14} className="grip" />
+        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? "Déplier" : "Replier"}>
+          {section.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button>
+        <span className="category-name" onDoubleClick={props.onRename}>
+          {section.name}
+        </span>
+        <span className="count">{props.count}</span>
+        <span className="hover-actions" onPointerDown={stop}>
+          {props.onNew && (
+            <button className="icon-btn" title="Nouvelle conversation dans cette section (terminal intégré)" onClick={props.onNew}>
+              <Plus size={13} />
+            </button>
+          )}
+          <button className="icon-btn" title="Renommer" onClick={props.onRename}>
+            <Pencil size={13} />
+          </button>
+          <ColorPicker compact value={section.color} onChange={props.onColor} title="Couleur de la section" />
+          <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
+            <Trash2 size={13} />
+          </button>
+        </span>
+      </div>
+      <div ref={zone.setNodeRef} className="category-body">
+        {!section.collapsed && props.children}
+        {!section.collapsed && props.count === 0 && <div className="empty-zone">Déposez des conversations ici</div>}
+      </div>
+    </section>
   );
 }
 
