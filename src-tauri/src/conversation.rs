@@ -250,7 +250,8 @@ fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// Ajoute à `out` les éléments affichables d'une ligne `.jsonl`. Ligne illisible, type
-/// inconnu, sous-agent, ligne technique : rien n'est ajouté.
+/// inconnu, sous-agent, ligne technique : rien n'est ajouté. (Utilisée par les tests.)
+#[cfg(test)]
 pub fn parse_line(text: &str, line: u32, out: &mut Vec<Entry>) {
     parse_line_meta(text, line, out, &mut Meta::default());
 }
