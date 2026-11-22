@@ -252,9 +252,43 @@ export function ProjectView(props: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [selecting]);
 
-  /** Range des conversations dans une section (`null` = « Sans section »). */
-  const putInSection = (cfg: Config, sectionId: string | null, ids: string[]) =>
-    ids.reduce((c, id) => putConversationInSection(c, p.key, sectionId, id), cfg);
+  /**
+   * Range des conversations dans une section (`null` = « Sans section ») et la déplie, pour
+   * que les conversations déplacées (souvent encore sélectionnées) restent visibles.
+   */
+  const putInSection = (cfg: Config, sectionId: string | null, ids: string[]) => {
+    const next = ids.reduce((c, id) => putConversationInSection(c, p.key, sectionId, id), cfg);
+    const target = sectionId ? projectSections(next, p.key).find((s) => s.id === sectionId) : undefined;
+    return target?.collapsed ? setSectionCollapsed(next, p.key, target.id, false) : next;
+  };
+
+  /**
+   * Conversations à faire défiler jusqu'à l'écran une fois arrivées dans leur section
+   * (après un déplacement) : `center` pour le menu « Ranger dans une section », `nearest`
+   * après un glisser-déposer (la cible est déjà sous les yeux).
+   */
+  const [reveal, setReveal] = useState<{ sectionId: string; ids: string[]; block: ScrollLogicalPosition } | null>(null);
+  const moveTo = (sectionId: string | null, ids: string[], block: ScrollLogicalPosition) => {
+    change((c) => putInSection(c, sectionId, ids));
+    setReveal({ sectionId: sectionId ?? NONE, ids, block });
+  };
+
+  useEffect(() => {
+    if (!reveal) return;
+    // La configuration se met à jour après coup : on attend que les lignes soient dans la section.
+    const zone = document.querySelector(`[data-section-id="${window.CSS.escape(reveal.sectionId)}"]`);
+    const rows = reveal.ids
+      .map((id) => zone?.querySelector(`[data-session-id="${window.CSS.escape(id)}"]`))
+      .filter((el): el is Element => !!el);
+    if (rows.length > 0) {
+      rows[0].scrollIntoView({ block: reveal.block, behavior: "smooth" });
+      setReveal(null);
+      return;
+    }
+    // Conversations masquées (recherche) : on abandonne.
+    const t = window.setTimeout(() => setReveal(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [reveal, groups]);
 
   /** Couleur commune des conversations sélectionnées (aucune si elles diffèrent). */
   const selectionColor = useMemo(() => {
@@ -302,7 +336,7 @@ export function ProjectView(props: Props) {
       (id) => (groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE) !== target,
     );
     if (ids.length === 0) return;
-    change((c) => putInSection(c, target === NONE ? null : target, ids));
+    moveTo(target === NONE ? null : target, ids, "nearest");
   };
 
   /** Conversations déplacées en glissant `id` : toute la sélection si elle en fait partie. */
@@ -519,7 +553,7 @@ export function ProjectView(props: Props) {
           <span className="selection-spacer" />
           <SectionMenu
             sections={projectSections(config, p.key)}
-            onPick={(sectionId) => change((c) => putInSection(c, sectionId, selectedSessions.map((s) => s.id)))}
+            onPick={(sectionId) => moveTo(sectionId, selectedSessions.map((s) => s.id), "center")}
             onNew={() => setSectionForSelection(true)}
           />
           <ColorPicker
@@ -568,7 +602,9 @@ export function ProjectView(props: Props) {
               const next = addSection(c, p.key, name);
               const list = projectSections(next, p.key);
               const created = list[list.length - 1];
-              return created ? putInSection(next, created.id, ids) : next;
+              if (!created) return next;
+              setReveal({ sectionId: created.id, ids, block: "center" });
+              return putInSection(next, created.id, ids);
             });
             setSectionForSelection(false);
           }}
@@ -594,7 +630,7 @@ export function ProjectView(props: Props) {
 function SessionZone({ id, className, children }: { id: string; className: string; children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: "zone:" + id });
   return (
-    <section ref={setNodeRef} className={className + (isOver ? " drop-over" : "")}>
+    <section ref={setNodeRef} data-section-id={id} className={className + (isOver ? " drop-over" : "")}>
       {children}
     </section>
   );
@@ -626,6 +662,7 @@ function SectionBlock(props: {
   return (
     <section
       ref={sortable.setNodeRef}
+      data-section-id={section.id}
       style={style}
       className={"section" + (section.color ? " colored" : "") + (zone.isOver || sortable.isOver ? " drop-over" : "")}
     >

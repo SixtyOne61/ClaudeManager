@@ -117,8 +117,10 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         // Fin du tour lancé par une commande `/…` : sa réponse s'affiche dans la conversation.
         commandTurn.current = false;
         setUp((u) => (u === "command" ? null : u));
-      } else if (a?.kind === "start" && a.event === "Launch") {
+      } else if (a?.kind === "start" && a.event === "Launch" && isNew) {
         // `claude` lancé, aucun hook encore : s'il tarde, il attend sans doute la question de confiance.
+        // Seulement pour une nouvelle conversation : une reprise a déjà eu lieu dans ce dossier
+        // (déjà approuvé), et le chargement d'une longue conversation dépasse facilement le délai.
         trustTimer = setTimeout(() => setUp((u) => (u === null ? "launch" : u)), TRUST_DELAY_MS);
       } else if (a?.kind === "start") {
         // `SessionStart` reçu : la question de confiance est passée.
@@ -131,7 +133,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
       clearTimeout(trustTimer);
       unsubscribe();
     };
-  }, [sessionId, lowerAuto]);
+  }, [sessionId, isNew, lowerAuto]);
 
   const send = async (text: string) => {
     const isCommand = text.startsWith("/");

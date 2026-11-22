@@ -390,6 +390,9 @@ fn user_entry(raw: &str, line: u32, uuid: Option<String>) -> Option<Entry> {
     for tag in NOISE_SECTIONS.iter().copied().chain(["task-notification", "command-message"]) {
         text = remove_section(&text, tag);
     }
+    // Texte collé (c'est ainsi que l'app envoie les messages) : Claude Code l'encadre de
+    // `<pasted_content id="…">…</pasted_content id="…">` ; on ne garde que le contenu.
+    let text = unwrap_tag(&text, "pasted_content");
     let text = text.trim();
     if text.is_empty() || text.starts_with("Caveat:") {
         return None;
@@ -398,6 +401,37 @@ fn user_entry(raw: &str, line: u32, uuid: Option<String>) -> Option<Entry> {
         return Some(Entry::Notice { line, uuid, text: "Interrompu par l'utilisateur".into() });
     }
     Some(Entry::User { line, uuid, text: text.to_string(), command: false })
+}
+
+/// Retire les balises ouvrantes et fermantes `<tag …>` / `</tag …>` en gardant leur contenu.
+fn unwrap_tag(text: &str, tag: &str) -> String {
+    let (open, close) = (format!("<{tag}"), format!("</{tag}"));
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let next = [rest.find(&open), rest.find(&close)].into_iter().flatten().min();
+        let Some(start) = next else { break };
+        let len = if rest[start..].starts_with(&close) { close.len() } else { open.len() };
+        // Vraie balise : le nom est suivi de `>` ou d'un espace (attributs), puis d'un `>`.
+        let after = &rest[start + len..];
+        let end = match after.chars().next() {
+            Some('>') => Some(0),
+            Some(c) if c.is_whitespace() => after.find('>').filter(|&e| !after[..e].contains('\n')),
+            _ => None,
+        };
+        match end {
+            Some(e) => {
+                out.push_str(&rest[..start]);
+                rest = &after[e + 1..];
+            }
+            None => {
+                out.push_str(&rest[..start + len]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn parse_assistant(content: &Value, line: u32, uuid: Option<String>, out: &mut Vec<Entry>) {
@@ -583,6 +617,20 @@ pub fn line_diff(old: &str, new: &str) -> Vec<DiffLine> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn texte_colle_sans_balises() {
+        let raw = "<pasted_content id=\"2a56\">
+Bonjour
+<b>gras</b> et <pasted_contentx>
+</pasted_content id=\"2a56\">";
+        match user_entry(raw, 1, None) {
+            Some(Entry::User { text, .. }) => assert_eq!(text, "Bonjour
+<b>gras</b> et <pasted_contentx>"),
+            _ => panic!("message attendu"),
+        }
+        assert_eq!(unwrap_tag("a <pasted_content>b</pasted_content> c", "pasted_content"), "a b c");
+    }
 
     // Formes de lignes relevées dans de vrais fichiers de Claude Code (contenu inventé).
     const USER: &str = r#"{"parentUuid":null,"isSidechain":false,"promptId":"p1","type":"user","message":{"role":"user","content":"Corrige le menu\nsur mobile"},"uuid":"u1","timestamp":"2026-11-20T10:00:00.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\Projets\\Site","sessionId":"s1","version":"2.1.0","gitBranch":"main"}"#;
