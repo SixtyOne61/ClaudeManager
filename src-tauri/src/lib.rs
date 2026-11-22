@@ -10,6 +10,7 @@ mod actions;
 mod commands_list;
 mod config;
 mod conversation;
+mod limits;
 mod pty;
 mod scanner;
 mod search;
@@ -405,14 +406,18 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
     });
 }
 
-/// Sous-commande `hook` (appelée par les hooks de Claude Code, voir activity.rs) :
-/// écrit l'état de la conversation puis rend la main. À appeler avant tout démarrage
-/// de Tauri ; renvoie vrai si la ligne de commande était bien cette sous-commande.
+/// Sous-commandes appelées par Claude Code, à traiter avant tout démarrage de Tauri :
+/// - `hook` (hooks, voir activity.rs) : écrit l'état de la conversation ;
+/// - `statusline` (ligne d'état, voir limits.rs) : écrit les limites d'utilisation et
+///   affiche la ligne d'état.
+///
+/// Renvoie vrai si la ligne de commande était l'une d'elles.
 pub fn run_subcommand() -> bool {
-    if std::env::args().nth(1).as_deref() != Some(activity::HOOK_SUBCOMMAND) {
-        return false;
+    match std::env::args().nth(1).as_deref() {
+        Some(activity::HOOK_SUBCOMMAND) => activity::run_hook(),
+        Some(limits::STATUSLINE_SUBCOMMAND) => limits::run_statusline(),
+        _ => return false,
     }
-    activity::run_hook();
     true
 }
 
@@ -442,6 +447,8 @@ pub fn run() {
             // États des conversations écrits par les hooks (voir activity.rs).
             let app_dir = app.state::<AppState>().paths.app_dir.clone();
             activity::start_watcher(app.handle().clone(), &app_dir);
+            // Limites d'utilisation écrites par la ligne d'état (voir limits.rs).
+            limits::start_watcher(app.handle().clone(), &app_dir);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -468,6 +475,7 @@ pub fn run() {
             pty::commands::pty_list,
             pty::commands::pty_quit,
             activity::activity_list,
+            limits::usage_limits,
             worktrees::commands::is_git_repo,
         ])
         .run(tauri::generate_context!())

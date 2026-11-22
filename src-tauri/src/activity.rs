@@ -23,7 +23,8 @@
 //!   `%APPDATA%\claude-manager\hooks-settings.json`, qui ajoute des hooks à cette
 //!   conversation seulement. Claude Code additionne les hooks de tous les niveaux de
 //!   réglages : ceux de l'utilisateur continuent de fonctionner, et ses fichiers ne sont
-//!   jamais modifiés.
+//!   jamais modifiés. Le même fichier déclare aussi la ligne d'état qui relève les limites
+//!   d'utilisation (voir limits.rs).
 //! - Les hooks lancent l'exécutable de l'app lui-même : `claude-manager.exe hook`
 //!   (forme « exec » : pas de shell, donc aucun souci de guillemets ni d'espaces dans le
 //!   chemin). [`run_hook`] lit le JSON du hook sur l'entrée standard et écrit
@@ -168,7 +169,8 @@ const NOTIFICATION_MATCHER: &str = "permission_prompt|idle_prompt|elicitation_di
 /// Réglages passés à `claude --settings` : un hook par évènement suivi, qui lance
 /// `<exe> hook` en forme « exec » (`args` présent : pas de shell, chaque argument est
 /// transmis tel quel, le chemin n'a pas besoin de guillemets même avec des espaces).
-pub fn settings_json(exe: &Path) -> serde_json::Value {
+/// `statusline` : ligne d'état qui relève les limites d'utilisation (voir limits.rs).
+pub fn settings_json(exe: &Path, statusline: Option<serde_json::Value>) -> serde_json::Value {
     let handler = json!({
         "type": "command",
         "command": exe_for_hook(exe),
@@ -179,7 +181,7 @@ pub fn settings_json(exe: &Path) -> serde_json::Value {
         Some(m) => json!([{ "matcher": m, "hooks": [handler.clone()] }]),
         None => json!([{ "hooks": [handler.clone()] }]),
     };
-    json!({
+    let mut settings = json!({
         "hooks": {
             "SessionStart": group(None),
             "UserPromptSubmit": group(None),
@@ -191,7 +193,11 @@ pub fn settings_json(exe: &Path) -> serde_json::Value {
             "StopFailure": group(None),
             "SessionEnd": group(None),
         }
-    })
+    });
+    if let Some(sl) = statusline {
+        settings["statusLine"] = sl;
+    }
+    settings
 }
 
 /// Chemin de l'exécutable tel qu'écrit dans le hook : sans le préfixe `\\?\` que
@@ -210,7 +216,7 @@ pub fn state_dir(app_dir: &Path) -> PathBuf {
 
 /// Écrit un fichier d'un coup (fichier temporaire puis renommage) : l'app ne lit jamais
 /// un fichier à moitié écrit.
-fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path).inspect_err(|_| {
@@ -250,7 +256,8 @@ pub fn settings_args() -> Vec<String> {
     let app_dir = AppPaths::detect().app_dir;
     let file = app_dir.join(SETTINGS_FILE);
     let written = std::env::current_exe().ok().and_then(|exe| {
-        let text = serde_json::to_vec_pretty(&settings_json(&exe)).ok()?;
+        let statusline = crate::limits::statusline_settings(&exe, crate::limits::user_settings().as_ref());
+        let text = serde_json::to_vec_pretty(&settings_json(&exe, statusline)).ok()?;
         std::fs::create_dir_all(&app_dir).ok()?;
         write_atomic(&file, &text).ok()
     });
@@ -411,7 +418,8 @@ mod tests {
     #[test]
     fn generates_settings() {
         let exe = Path::new(r"C:\Program Files\Claude Manager\claude-manager.exe");
-        let v = settings_json(exe);
+        let v = settings_json(exe, None);
+        assert!(v.get("statusLine").is_none());
         let hooks = v["hooks"].as_object().unwrap();
         for ev in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"] {
             let h = &hooks[ev][0]["hooks"][0];
@@ -428,6 +436,11 @@ mod tests {
         // Le JSON produit, relu, garde le chemin intact (échappement des barres obliques inverses).
         let text = serde_json::to_string(&v).unwrap();
         assert!(text.contains(r#""command":"C:\\Program Files\\Claude Manager\\claude-manager.exe""#));
+        // Avec la ligne d'état des limites.
+        let sl = crate::limits::statusline_settings(exe, None);
+        let v = settings_json(exe, sl);
+        assert_eq!(v["statusLine"], json!({"type": "command", "command": "claude-manager.exe statusline"}));
+        assert_eq!(v["hooks"].as_object().unwrap().len(), 9);
     }
 
     #[test]
