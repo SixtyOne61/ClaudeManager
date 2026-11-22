@@ -48,6 +48,8 @@ export interface Usage {
 export interface ChunkMeta {
   model: string | null;
   modelIdentity: { id: string; name: string | null } | null;
+  modelLine: number | null;
+  modelSwitch: { name: string; line: number } | null;
   permissionMode: string | null;
   permissionModeLine: number | null;
   usage: Usage | null;
@@ -70,6 +72,10 @@ export interface ConversationMeta {
   model: string | null;
   /** Dernier modèle annoncé par Claude Code (identifiant avec `[1m]`, nom lisible). */
   modelIdentity: { id: string; name: string | null } | null;
+  /** Ligne de la dernière réponse ou annonce de modèle. */
+  modelLine: number | null;
+  /** Dernier changement par `/model` (nom lisible), plus récent que `modelLine` s'il y a lieu. */
+  modelSwitch: { name: string; line: number } | null;
   /** Dernier mode de permission enregistré, et la ligne où il l'a été. */
   permissionMode: string | null;
   permissionModeLine: number | null;
@@ -79,7 +85,7 @@ export interface ConversationMeta {
   outputTotal: number;
 }
 
-const EMPTY_META: ConversationMeta = { model: null, modelIdentity: null, permissionMode: null, permissionModeLine: null, usage: null, outputTotal: 0 };
+const EMPTY_META: ConversationMeta = { model: null, modelIdentity: null, modelLine: null, modelSwitch: null, permissionMode: null, permissionModeLine: null, usage: null, outputTotal: 0 };
 
 /** Ajoute à `prev` les valeurs d'une partie lue (`outputs` : jetons produits par message). */
 function mergeMeta(prev: ConversationMeta, m: ChunkMeta | undefined, outputs: Map<string, number>): ConversationMeta {
@@ -90,6 +96,8 @@ function mergeMeta(prev: ConversationMeta, m: ChunkMeta | undefined, outputs: Ma
   const next: ConversationMeta = {
     model: m.model ?? prev.model,
     modelIdentity: m.modelIdentity ?? prev.modelIdentity,
+    modelLine: m.modelLine ?? prev.modelLine,
+    modelSwitch: m.modelSwitch ?? prev.modelSwitch,
     permissionMode: m.permissionMode ?? prev.permissionMode,
     permissionModeLine: m.permissionMode ? m.permissionModeLine : prev.permissionModeLine,
     usage: m.usage ?? prev.usage,

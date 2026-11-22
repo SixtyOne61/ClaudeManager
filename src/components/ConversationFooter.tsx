@@ -1,7 +1,9 @@
 // Pied de la conversation, comme dans Claude Desktop : modèle, mode de permission et contexte
 // utilisé, lus dans le `.jsonl` (voir `conversation::Meta`).
 //
-// - Modèle : clic → `/model` envoyé au terminal, qui remonte (son menu s'y ouvre).
+// - Modèle : clic → petit menu de choix ; `/model <alias>` est envoyé au terminal sans le faire
+//   remonter. Claude Code n'écrit le nouveau modèle dans le `.jsonl` (réponse, annonce) qu'au
+//   message suivant, mais tout de suite la sortie « Set model to … » : elle sert d'affichage.
 // - Mode : clic → Maj+Tab (ESC [ Z) envoyé au terminal, qui passe au mode suivant. Claude Code
 //   n'écrit le mode dans le `.jsonl` qu'avec le message suivant : le nouveau mode est donc lu
 //   dans la sortie du terminal (« ⏵⏵ accept edits on (shift+tab to cycle) »). S'il n'y est pas
@@ -10,7 +12,7 @@
 //   de contexte du modèle quand elle est connue.
 
 import { useEffect, useRef, useState } from "react";
-import { Cpu, ShieldCheck } from "lucide-react";
+import { Check, Cpu, ShieldCheck } from "lucide-react";
 import type { ConversationMeta } from "../conversation";
 import { watchPtyOutput, writeToTerminal } from "../pty";
 
@@ -22,7 +24,7 @@ interface Props {
   /** `claude` tourne dans le terminal : les clics peuvent lui envoyer des touches. */
   enabled: boolean;
   /** Envoie une commande `/…` comme la zone de saisie (le terminal remonte). */
-  onCommand: (text: string) => Promise<void>;
+  onCommand: (text: string, opts?: { quiet?: boolean }) => Promise<void>;
 }
 
 // ---- Modèle ----------------------------------------------------------------------------
@@ -61,9 +63,31 @@ export function contextWindow(id: string): number | null {
   }
 }
 
-/** Modèle affiché : l'annonce de Claude Code (nom lisible, `[1m]`) si elle porte sur le même
- *  modèle que la dernière réponse, sinon le modèle de la dernière réponse. */
+/** Choix du menu : argument de `/model`, libellé. */
+const MODEL_CHOICES: { arg: string; label: string; family: string | null; oneM: boolean }[] = [
+  { arg: "default", label: "Par défaut", family: null, oneM: false },
+  { arg: "opus", label: "Opus", family: "opus", oneM: false },
+  { arg: "sonnet", label: "Sonnet", family: "sonnet", oneM: false },
+  { arg: "haiku", label: "Haiku", family: "haiku", oneM: false },
+  { arg: "opus[1m]", label: "Opus (1M de contexte)", family: "opus", oneM: true },
+  { arg: "sonnet[1m]", label: "Sonnet (1M de contexte)", family: "sonnet", oneM: true },
+];
+
+/** « Sonnet 5.5 (1M context) » → « claude-sonnet-5-5[1m] » (pour la fenêtre de contexte). */
+export function modelIdFromName(name: string): string | null {
+  const m = /^([A-Za-z]+) (\d+)(?:\.(\d+))?( \(1M.*\))?$/.exec(name.trim());
+  if (!m) return null;
+  return `claude-${m[1].toLowerCase()}-${m[2]}${m[3] ? "-" + m[3] : ""}${m[4] ? "[1m]" : ""}`;
+}
+
+/** Modèle affiché : le dernier changement par `/model` s'il est plus récent que la dernière
+ *  réponse ou annonce ; sinon l'annonce de Claude Code (nom lisible, `[1m]`) si elle porte sur
+ *  le même modèle que la dernière réponse, sinon le modèle de la dernière réponse. */
 function currentModel(meta: ConversationMeta): { id: string; name: string } | null {
+  const sw = meta.modelSwitch;
+  if (sw && (meta.modelLine == null || sw.line > meta.modelLine)) {
+    return { id: modelIdFromName(sw.name) ?? sw.name, name: sw.name };
+  }
   const ident = meta.modelIdentity;
   const sameAsLast = ident && (!meta.model || ident.id.replace(/\[1m\]$/i, "") === meta.model);
   if (ident && sameAsLast) return { id: ident.id, name: modelLabel(ident.id) };
@@ -180,6 +204,28 @@ export function ConversationFooter({ sessionId, meta, headSkipped, enabled, onCo
   };
 
   const model = currentModel(meta);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Fermeture au clic à l'extérieur ou sur Échap.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+  const chooseModel = (arg: string) => {
+    setMenuOpen(false);
+    onCommand(`/model ${arg}`, { quiet: true }).catch(() => {});
+  };
+  const currentFamily = model ? /^claude-([a-z]+)/i.exec(model.id)?.[1]?.toLowerCase() ?? model.name.split(" ")[0].toLowerCase() : null;
+  const currentOneM = model ? /\[1m\]$/i.test(model.id) : false;
   const usage = meta.usage;
   const used = usage ? usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens : null;
   const ctxWindow = model ? contextWindow(model.id) : null;
@@ -200,14 +246,29 @@ export function ConversationFooter({ sessionId, meta, headSkipped, enabled, onCo
 
   return (
     <div className="conv-footer">
-      <button
-        className="conv-footer-item conv-footer-model"
-        disabled={!enabled}
-        onClick={() => onCommand("/model").catch(() => {})}
-        title={model ? `Modèle : ${model.id}\nCliquer pour en changer (/model, dans le terminal)` : "Changer de modèle (/model)"}
-      >
-        <Cpu size={12} /> {model?.name ?? "Modèle"}
-      </button>
+      <div className="conv-model-menu" ref={menuRef}>
+        <button
+          className="conv-footer-item conv-footer-model"
+          disabled={!enabled}
+          onClick={() => setMenuOpen((o) => !o)}
+          title={model ? `Modèle : ${model.id}
+Cliquer pour en changer` : "Changer de modèle"}
+        >
+          <Cpu size={12} /> {model?.name ?? "Modèle"}
+        </button>
+        {menuOpen && (
+          <div className="popover menu conv-model-popover">
+            {MODEL_CHOICES.map((c) => {
+              const current = c.family != null && c.family === currentFamily && c.oneM === currentOneM;
+              return (
+                <button key={c.arg} className="menu-item" onClick={() => chooseModel(c.arg)}>
+                  <span className="conv-model-check">{current && <Check size={13} />}</span> {c.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
       <button
         className={`conv-footer-item conv-mode ${pending ? "pending" : mode?.tone ?? "normal"}`}
         disabled={!enabled}

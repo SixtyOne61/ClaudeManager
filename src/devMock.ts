@@ -318,6 +318,8 @@ function fakeMeta(id: string, from: number, t: ConversationEntry[]): ChunkMeta {
   return {
     model: fresh || turns ? "claude-opus-5-5" : null,
     modelIdentity: fresh ? { id: "claude-opus-5-5", name: "Opus 5.5" } : null,
+    modelLine: fresh || turns ? 1 : null,
+    modelSwitch: null,
     permissionMode: recordedNow ? m.recorded : null,
     permissionModeLine: recordedNow ? m.line : null,
     usage: fresh || from < t.length ? { inputTokens: 6, cacheCreationInputTokens: 1_850, cacheReadInputTokens: cacheRead, outputTokens: 420 } : null,

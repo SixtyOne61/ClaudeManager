@@ -123,6 +123,28 @@ pub struct ModelIdentity {
     pub name: Option<String>,
 }
 
+/// Modèle choisi par `/model` (« Set model to `Sonnet 5.5` and saved… »).
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSwitch {
+    /// Nom lisible (« Sonnet 5.5 », « Opus 5.5 (1M context) »).
+    pub name: String,
+    /// Ligne où le changement a été écrit.
+    pub line: u32,
+}
+
+/// Nom du modèle dans la sortie de `/model` : « Set model to `Sonnet 5.5` and saved as… ».
+fn model_switch_name(stdout: &str) -> Option<String> {
+    let text = strip_ansi(stdout);
+    let rest = text.trim().strip_prefix("Set model to")?.trim_start();
+    let name = match rest.strip_prefix('`') {
+        Some(r) => r.split('`').next()?,
+        None => rest.split(" and ").next()?,
+    };
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Jetons produits par une réponse, repérée par l'identifiant du message : une même réponse
 /// est écrite sur plusieurs lignes (une par bloc) qui répètent la même consommation.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -141,6 +163,12 @@ pub struct Meta {
     pub model: Option<String>,
     /// Dernier modèle annoncé (`attachment` de type `model`).
     pub model_identity: Option<ModelIdentity>,
+    /// Ligne de la dernière réponse ou annonce de modèle (pour savoir si un changement de
+    /// modèle `model_switch` est plus récent).
+    pub model_line: Option<u32>,
+    /// Dernier changement de modèle par `/model` (sortie « Set model to … »), écrit tout de
+    /// suite, alors que la réponse et l'annonce du nouveau modèle n'arrivent qu'au message suivant.
+    pub model_switch: Option<ModelSwitch>,
     /// Dernier mode de permission enregistré (`permissionMode`).
     pub permission_mode: Option<String>,
     /// Ligne où ce mode a été enregistré.
@@ -307,11 +335,16 @@ fn read_meta(v: &Value, line: u32, meta: &mut Meta) {
                 meta.permission_mode = Some(mode.to_string());
                 meta.permission_mode_line = Some(line);
             }
+            let content = v.pointer("/message/content").and_then(Value::as_str);
+            if let Some(name) = content.and_then(|c| tag_content(c, "local-command-stdout")).and_then(model_switch_name) {
+                meta.model_switch = Some(ModelSwitch { name, line });
+            }
         }
         Some("assistant") => {
             let Some(msg) = v.get("message") else { return };
             let Some(model) = str_at(msg, "model").filter(|m| !m.is_empty() && !m.starts_with('<')) else { return };
             meta.model = Some(model.to_string());
+            meta.model_line = Some(line);
             let Some(u) = msg.get("usage") else { return };
             let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
             let usage = Usage {
@@ -334,6 +367,7 @@ fn read_meta(v: &Value, line: u32, meta: &mut Meta) {
             let Some(id) = a.pointer("/identity/modelId").and_then(Value::as_str).filter(|m| !m.is_empty()) else { return };
             let name = a.pointer("/identity/marketingName").and_then(Value::as_str).map(str::to_string);
             meta.model_identity = Some(ModelIdentity { id: id.to_string(), name });
+            meta.model_line = Some(line);
         }
         _ => {}
     }
@@ -709,6 +743,16 @@ Bonjour
         assert_eq!(d.iter().map(|l| l.op).collect::<String>(), "++");
         let Entry::Tool { diff: Some(d), .. } = &e[1] else { panic!() };
         assert_eq!(d.iter().map(|l| l.op).collect::<String>(), "-+~-");
+    }
+
+    #[test]
+    fn reads_model_switch_from_model_command() {
+        let line = r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set model to `Sonnet 5.5` and saved as your default for new sessions</local-command-stdout>"},"uuid":"u"}"#;
+        let (mut out, mut meta) = (Vec::new(), Meta::default());
+        parse_line_meta(line, 7, &mut out, &mut meta);
+        assert_eq!(meta.model_switch, Some(ModelSwitch { name: "Sonnet 5.5".into(), line: 7 }));
+        assert_eq!(model_switch_name("Set model to Opus 5.5 (1M context)").as_deref(), Some("Opus 5.5 (1M context)"));
+        assert_eq!(model_switch_name("Modèle : opus"), None);
     }
 
     #[test]

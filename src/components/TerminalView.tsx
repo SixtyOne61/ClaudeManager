@@ -169,7 +169,8 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     setEditing(m);
   };
 
-  const send = async (text: string) => {
+  /** `quiet` : commande dont on connaît l'effet (ex. `/model opus`), qui n'ouvre aucun menu. */
+  const send = async (text: string, opts?: { quiet?: boolean }) => {
     if (editing) {
       await sendEditedMessage(sessionId, text, editing.text);
       setReplaced((r) => new Set(r).add(messageKey(editing)));
@@ -183,7 +184,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
     }
     await sendMessage(sessionId, text);
     // Une commande `/…` peut ouvrir un menu interactif : le terminal remonte.
-    if (isCommand) setUp((u) => (u === "manual" ? u : "command"));
+    if (isCommand && !opts?.quiet) setUp((u) => (u === "manual" ? u : "command"));
   };
   const terminalShown = up !== null;
   const onStartedRef = useRef(onStarted);

@@ -519,6 +519,9 @@ button.conv-footer-item:disabled { cursor: default; opacity: .6; }
 .conv-footer-model { color: var(--text); }
 .conv-footer-model:hover:not(:disabled) { background: var(--bg-hover); }
 .conv-footer-spacer { flex: 1; }
+.conv-model-menu { position: relative; display: inline-flex; min-width: 0; }
+.conv-model-popover { top: auto; bottom: calc(100% + 6px); width: 210px; }
+.conv-model-check { display: inline-flex; width: 13px; }
 /* Badge du mode : bien visible, une couleur par mode. */
 .conv-mode { font-weight: 600; }
 .conv-mode:hover:not(:disabled) { filter: brightness(1.2); }
