@@ -298,7 +298,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
       </div>
       <div className="conv-stage">
         <div className="terminal-host" ref={hostRef} />
-        <ConversationView data={conversation} focus={focus} hidden={terminalShown} />
+        <ConversationView data={conversation} focus={focus} hidden={terminalShown} cwd={cwd} />
       </div>
       <ConversationInput
         enabled={state.kind === "running"}

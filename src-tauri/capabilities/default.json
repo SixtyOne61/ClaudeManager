@@ -10,6 +10,8 @@
     "dialog:allow-open",
     "dialog:allow-ask",
     "dialog:allow-message",
-    "updater:default"
+    "updater:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
   ]
 }

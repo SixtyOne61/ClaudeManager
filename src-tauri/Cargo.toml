@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2.8.4"
 dirs = "7.0.0"
 tauri-plugin-updater = "2"
 portable-pty = "0.9.0"
+tauri-plugin-opener = "2"
 
 [target.'cfg(windows)'.dependencies]
 # Sous-commande `statusline` : sortie standard non héritée par la ligne d'état de l'utilisateur.

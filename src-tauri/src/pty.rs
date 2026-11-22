@@ -8,6 +8,8 @@
 //!   [`resume_args`] (`--resume <id>`) pour reprendre, [`new_session_args`]
 //!   (`--session-id <uuid>`) pour une nouvelle conversation. `launch` y ajoute toujours
 //!   `--settings <fichier>` : les hooks de suivi d'état (voir `activity.rs`).
+//!   Avec [`Program::Raw`], il lance une ligne de commande quelconque (commande proposée
+//!   par l'agent, clé `run-<id>`, voir `run.rs`), sans suivi d'état.
 //! - [`PtyManager::write`] envoie du texte au terminal (frappes, ou texte d'une zone
 //!   de saisie) ; [`PtyManager::is_running`] dit si le terminal d'une conversation
 //!   est ouvert et que `claude` y tourne encore ; [`PtyManager::list`] les énumère.
@@ -53,14 +55,22 @@ pub struct PtyInfo {
     pub running: bool,
 }
 
-/// Ce qu'il faut pour démarrer `claude` dans un terminal intégré.
+/// Programme lancé dans un terminal intégré.
+pub enum Program {
+    /// `claude <args…>` (une conversation), avec le suivi d'état par les hooks.
+    Claude(Vec<String>),
+    /// Ligne de commande quelconque (commande proposée par l'agent, voir `run.rs`) : pas de
+    /// suivi d'état.
+    Raw(Vec<String>),
+}
+
+/// Ce qu'il faut pour démarrer un terminal intégré.
 pub struct LaunchSpec {
-    /// Clé du terminal : l'identifiant de la conversation.
+    /// Clé du terminal : l'identifiant de la conversation (ou `run-<id>`, voir `run.rs`).
     pub key: String,
     /// Dossier de travail (sera normalisé).
     pub cwd: String,
-    /// Arguments passés à `claude`.
-    pub args: Vec<String>,
+    pub program: Program,
     pub cols: u16,
     pub rows: u16,
 }
@@ -295,15 +305,21 @@ impl PtyManager {
         if let Some(s) = sessions.get(&spec.key).filter(|s| s.running()) {
             return Ok(PtyInfo { key: spec.key.clone(), cwd: s.cwd.clone(), running: true });
         }
-        let claude = find_claude().ok_or(ERR_CLAUDE_MISSING)?;
+        // Suivi de l'état de la conversation (hooks), pour tout lancement de `claude` : reprise ou nouvelle.
+        let (argv, is_claude) = match &spec.program {
+            Program::Claude(args) => {
+                let claude = find_claude().ok_or(ERR_CLAUDE_MISSING)?;
+                let mut args = args.clone();
+                args.extend(crate::activity::settings_args());
+                (build_argv(&claude, &args), true)
+            }
+            Program::Raw(argv) if !argv.is_empty() => (argv.clone(), false),
+            Program::Raw(_) => return Err("Commande vide.".into()),
+        };
 
         let pair = native_pty_system()
             .openpty(PtySize { rows: spec.rows.max(2), cols: spec.cols.max(10), pixel_width: 0, pixel_height: 0 })
             .map_err(|e| format!("Ouverture du terminal impossible : {e}"))?;
-        // Suivi de l'état de la conversation (hooks), pour tout lancement : reprise ou nouvelle.
-        let mut args = spec.args.clone();
-        args.extend(crate::activity::settings_args());
-        let argv = build_argv(&claude, &args);
         let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
         cmd.cwd(&cwd);
         // Si l'app a elle-même été lancée depuis Claude Code (développement), ces variables
@@ -317,7 +333,9 @@ impl PtyManager {
         if let Some(path) = std::env::current_exe().ok().and_then(|exe| crate::limits::path_with_exe_dir(&exe, std::env::var_os("PATH"))) {
             cmd.env("PATH", path);
         }
-        let mut child = pair.slave.spawn_command(cmd).map_err(|e| format!("Lancement de claude impossible : {e}"))?;
+        let mut child = pair.slave.spawn_command(cmd).map_err(|e| {
+            if is_claude { format!("Lancement de claude impossible : {e}") } else { format!("Lancement de la commande impossible : {e}") }
+        })?;
         drop(pair.slave);
 
         let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -330,13 +348,15 @@ impl PtyManager {
             PtySession { generation, cwd: cwd.clone(), master: Some(pair.master), writer: Some(writer), killer: child.clone_killer() },
         );
         drop(sessions);
-        crate::activity::on_launched(&spec.key);
+        if is_claude {
+            crate::activity::on_launched(&spec.key);
+        }
 
         // Lecture de la sortie → évènements. À la fin du flux (pseudo-terminal fermé),
         // annonce la fin de `claude`.
         {
             let (app, key, exit_code) = (app.clone(), spec.key.clone(), exit_code.clone());
-            std::thread::spawn(move || read_loop(app, key, reader, exit_code));
+            std::thread::spawn(move || read_loop(app, key, reader, exit_code, is_claude));
         }
         // Attente de la fin du processus, puis fermeture du pseudo-terminal (ConPTY ne
         // termine le flux de sortie qu'à ce moment-là).
@@ -402,7 +422,7 @@ impl PtyManager {
     }
 }
 
-fn read_loop(app: AppHandle, key: String, mut reader: Box<dyn Read + Send>, exit_code: Arc<Mutex<Option<u32>>>) {
+fn read_loop(app: AppHandle, key: String, mut reader: Box<dyn Read + Send>, exit_code: Arc<Mutex<Option<u32>>>, is_claude: bool) {
     let mut buf = [0u8; 16 * 1024];
     let mut utf8 = Utf8Stream::default();
     loop {
@@ -419,7 +439,7 @@ fn read_loop(app: AppHandle, key: String, mut reader: Box<dyn Read + Send>, exit
     let code = *exit_code.lock().unwrap();
     let _ = app.emit(EVT_EXIT, PtyExit { key: key.clone(), code });
     // Conversation terminée (sauf si un nouveau terminal a déjà pris le relais).
-    {
+    if is_claude {
         use tauri::Manager;
         if !app.state::<PtyManager>().is_running(&key) {
             crate::activity::emit(&app, &key, None);
@@ -542,14 +562,14 @@ mod tests {
 
 /// Commandes Tauri du terminal intégré (voir `src/pty.ts` côté interface).
 pub mod commands {
-    use super::{new_or_resume_worktree_args, resume_args, session_file_exists, LaunchSpec, PtyInfo, PtyManager};
+    use super::{new_or_resume_worktree_args, resume_args, session_file_exists, LaunchSpec, Program, PtyInfo, PtyManager};
     use tauri::{AppHandle, State};
 
     /// Ouvre (ou retrouve) le terminal d'une conversation et y lance `claude --resume <id>`.
     #[tauri::command]
     pub fn pty_resume(app: AppHandle, ptys: State<PtyManager>, session_id: String, cwd: String, cols: u16, rows: u16) -> Result<PtyInfo, String> {
         let args = resume_args(&session_id)?;
-        ptys.launch(&app, LaunchSpec { key: session_id, cwd, args, cols, rows })
+        ptys.launch(&app, LaunchSpec { key: session_id, cwd, program: Program::Claude(args), cols, rows })
     }
 
     /// Nouvelle conversation créée par l'app : lance `claude --session-id <id>` (identifiant
@@ -570,7 +590,7 @@ pub mod commands {
     ) -> Result<PtyInfo, String> {
         let exists = session_file_exists(state.scanner.root(), &session_id);
         let args = new_or_resume_worktree_args(&session_id, exists, worktree.as_deref())?;
-        ptys.launch(&app, LaunchSpec { key: session_id, cwd, args, cols, rows })
+        ptys.launch(&app, LaunchSpec { key: session_id, cwd, program: Program::Claude(args), cols, rows })
     }
 
     #[tauri::command]

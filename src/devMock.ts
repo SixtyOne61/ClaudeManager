@@ -183,7 +183,7 @@ function demoTranscript(): ConversationEntry[] {
       kind: "assistant",
       line: 8,
       uuid: "d8",
-      text: "J'ai trouvé le problème :\n\n1. le menu est **ouvert** mais jamais refermé ;\n2. `aria-expanded` n'est pas mis à jour.\n\n```js\nmenu.classList.toggle('open');\n```\n\n| Fichier | Changement |\n| --- | --- |\n| menu.js | bascule |\n\nVoir [la doc](https://example.com) (lien non suivi).",
+      text: "J'ai trouvé le problème :\n\n1. le menu est **ouvert** mais jamais refermé ;\n2. `aria-expanded` n'est pas mis à jour.\n\n```js\nmenu.classList.toggle('open');\n```\n\nPour vérifier :\n\n```bash\nnpm test -- menu\n```\n\n```powershell\nGet-ChildItem src\n```\n\n| Fichier | Changement |\n| --- | --- |\n| menu.js | bascule |\n\nVoir [la doc](https://example.com) (ouverte dans le navigateur).",
     },
     { kind: "tool", line: 9, uuid: "d9", id: "t3", name: "Edit", title: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", detail: null, path: "C:\\Users\\moi\\Projets\\SiteVitrine\\src\\menu.js", diff, diffTruncated: false },
     { kind: "toolResult", line: 10, toolUseId: "t3", text: "The file has been updated.", isError: false, truncated: false },
@@ -483,6 +483,15 @@ function fakePty(cmd: string, a: Record<string, unknown>): unknown {
   }
 }
 
+/** Commande d'un bloc ▶ exécutée « dans le terminal intégré » : fausse sortie, puis fin. */
+function fakeRun(a: Record<string, unknown>) {
+  const key = `run-${a.runId}`;
+  const shown = String(a.code).replace(/\n/g, "\r\n$ ");
+  ptyOut(key, `\x1b[2m$ ${shown}\x1b[0m\r\n(sortie fictive, dans ${a.cwd})\r\n`);
+  setTimeout(() => emit("pty-exit", { key, code: 0 }), 800);
+  return { key, cwd: a.cwd, running: true };
+}
+
 export function installDevMock() {
   mockWindows("main");
   mockIPC((cmd, args) => {
@@ -492,6 +501,8 @@ export function installDevMock() {
     if (cmd === "usage_limits") return usageLimits;
     if (cmd === "conversation_read") return fakeConversationRead(a);
     if (cmd === "list_slash_commands") return fakeSlashCommands();
+    if (cmd === "run_integrated") return fakeRun(a);
+    if (cmd === "plugin:opener|open_url") return void window.open(String(a.url), "_blank");
     console.info("[mock]", cmd, a);
     switch (cmd) {
       case "scan":

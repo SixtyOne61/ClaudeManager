@@ -4,12 +4,19 @@
 // petites bibliothèques embarquées dans l'app, aucune ressource réseau, la politique de
 // sécurité de la fenêtre ne change pas. Le texte vient de l'agent : le HTML brut qu'il
 // pourrait contenir est nettoyé (pas de script, d'image, de formulaire ni de style). Les
-// liens restent affichés mais ne sont pas suivis (voir `ConversationView`).
+// liens `http(s)` s'ouvrent dans le navigateur, les autres ne sont pas suivis (voir
+// `ConversationView`). La classe `language-…` des blocs de code est gardée : elle dit si un
+// bloc est une commande exécutable (bouton ▶, voir `CodeRunner`).
 
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 
 const marked = new Marked({ gfm: true, breaks: true, async: false });
+
+// Seule exception aux attributs interdits : `class="language-…"` d'un `<code>`.
+DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+  if (data.attrName === "class" && node.nodeName === "CODE" && /^language-[\w+-]+$/.test(data.attrValue)) data.forceKeepAttr = true;
+});
 
 const cache = new Map<string, string>();
 const CACHE_MAX = 2000;

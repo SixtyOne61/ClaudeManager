@@ -51,6 +51,8 @@ Prérequis : Claude Code installé (`claude` dans le `PATH`).
 - **Archiver le projet** (en-tête du projet) : archive toutes ses conversations, worktrees compris, puis masque le projet de la barre latérale. Il garde sa catégorie, sa couleur et ses sections, et son dossier n'est pas touché. Si une conversation ne peut pas être archivée (ignorée ou en erreur), le projet ne l'est pas. Les onglets ouverts du projet doivent d'abord être fermés. **Restaurer le projet**, dans la vue **Archives**, remet en place les conversations archivées avec lui. Restaurer seule l'une d'elles, ou démarrer une nouvelle conversation dans ce dossier depuis Claude Desktop ou un terminal, fait aussi revenir le projet.
 - **Supprimer** : envoie le fichier et son dossier dans la **Corbeille Windows**, après confirmation. Ils restent récupérables.
 - Ces deux actions demandent une confirmation supplémentaire si la conversation a été modifiée il y a moins de 2 minutes (elle est peut-être encore ouverte).
+- **Liens des réponses** : un lien `http(s)` s'ouvre dans le navigateur par défaut (c'est le navigateur qui se connecte, pas l'app). Les autres liens ne sont pas suivis.
+- **Commandes proposées** : un bloc de code `bash`/`sh`/`console`, `powershell`/`ps1` ou `cmd`/`bat` d'une réponse a un bouton **▶**. Il exécute le bloc dans le dossier de la conversation, dans un petit terminal intégré qui se déplie sous le bloc (Arrêter, Relancer, Fermer). **Clic droit sur ▶**, ou le bouton fenêtre à côté, ouvre plutôt un terminal externe (Windows Terminal, sinon une console), qui reste ouvert ensuite. Rien ne s'exécute sans ce clic. Le bloc est écrit dans un script temporaire (`%TEMP%\claude-manager-run`, vidé après 24 h) et lancé avec PowerShell 7 s'il est installé (sinon Windows PowerShell), `cmd`, ou le Bash de Git pour Windows. Pour un bloc `console`, seules les lignes `$ …` sont exécutées.
 - **Fermer un onglet ou l'app** ne demande confirmation que si un agent travaille ou qu'une action attend ta permission. Les conversations restent enregistrées.
 - **Nouveau projet** : choisissez un dossier ; la fenêtre de sélection Windows permet aussi d'en créer un. Choisissez ensuite une catégorie.
 - Les projets situés dans `AppData\Local\Temp` sont masqués par défaut (case à cocher en bas de la barre latérale).
@@ -143,6 +145,7 @@ src/                      Interface React + TypeScript
   App.tsx                 État global, actions, onglets, boîtes de dialogue
   api.ts                  Types et appels au backend
   pty.ts                  Terminal intégré : appels au backend et évènements
+  runner.ts               Commandes ▶ des blocs de code (terminal intégré ou externe)
   activity.ts             État des conversations (pastilles, compteurs)
   sections.ts             Sections et couleurs des conversations
   util.ts                 Couleurs (contraste automatique), dates, noms
@@ -152,6 +155,7 @@ src/                      Interface React + TypeScript
     ProjectView.tsx       Conversations d'un projet, sections, recherche
     TerminalTabs.tsx      Onglets des conversations ouvertes
     TerminalView.tsx      Terminal intégré (xterm.js)
+    CodeRunner.tsx        Bouton ▶ d'un bloc de commande et son terminal déplié
     Activity.tsx          Pastille d'activité et compteurs
     GlobalSearch.tsx      Recherche dans toutes les conversations
     ArchivesView.tsx      Archives
@@ -164,6 +168,7 @@ src-tauri/src/            Backend Rust
   worktrees.rs            Conversations de worktree rangées sous leur projet
   search.rs               Recherche dans le contenu
   pty.rs                  Terminal intégré (ConPTY) et arguments de `claude`
+  run.rs                  Commandes proposées par l'agent : scripts temporaires, shells
   activity.rs             Hooks de suivi d'état, sous-commande `claude-manager.exe hook`
   config.rs               config.json (écriture atomique, migrations)
   actions.rs              Terminal externe, archivage, restauration, Corbeille

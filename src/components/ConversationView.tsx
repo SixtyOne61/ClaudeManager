@@ -2,14 +2,22 @@
 // messages de l'utilisateur (bulles à droite), réponses de Claude (texte Markdown à gauche,
 // sous une étiquette « Claude ») et ses actions, regroupées en lignes compactes
 // (`ConversationActions`). La zone de saisie est `ConversationInput`.
+// Les liens `http(s)` des réponses s'ouvrent dans le navigateur ; les blocs de commande
+// (`bash`, `powershell`, `cmd`…) ont un bouton ▶ pour les exécuter (`CodeRunner`).
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { SendHorizontal, Sparkle, Square } from "lucide-react";
 import { groupEntries, type ClaudeItem, type ConversationData, type ConversationEntry } from "../conversation";
 import { renderMarkdown } from "../markdown";
 import { ActionGroup } from "./ConversationActions";
 import type { SearchFocus } from "./GlobalSearch";
 import { useSlashMenu } from "./SlashMenu";
+import { CodeRunnerPortal, type RunnableBlock } from "./CodeRunner";
+import { isRunnableLang } from "../runner";
+
+/** Dossier de la conversation : les commandes des blocs ▶ s'y exécutent. */
+const CwdContext = createContext<string | null>(null);
 
 interface Props {
   data: ConversationData;
@@ -17,9 +25,11 @@ interface Props {
   focus?: SearchFocus | null;
   /** Masquée (terminal affiché) : gardée montée pour conserver sa position de défilement. */
   hidden: boolean;
+  /** Dossier de la conversation (commandes exécutées depuis les blocs de code). */
+  cwd?: string | null;
 }
 
-export function ConversationView({ data, focus, hidden }: Props) {
+export function ConversationView({ data, focus, hidden, cwd = null }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
 
@@ -51,9 +61,14 @@ export function ConversationView({ data, focus, hidden }: Props) {
     setTimeout(() => el.classList.remove("search-focused"), 2500);
   }, [focus, data.entries, hidden]);
 
-  // Les liens de l'agent ne sont pas suivis (la fenêtre de l'app ne navigue jamais).
+  // La fenêtre de l'app ne navigue jamais : les liens `http(s)` de l'agent s'ouvrent dans le
+  // navigateur par défaut, les autres (fichiers, ancres, `javascript:`…) ne sont pas suivis.
   const onClick = (e: MouseEvent) => {
-    if ((e.target as HTMLElement).closest("a")) e.preventDefault();
+    const a = (e.target as HTMLElement).closest("a");
+    if (!a) return;
+    e.preventDefault();
+    const href = a.getAttribute("href") ?? "";
+    if (/^https?:\/\//i.test(href)) openUrl(href).catch(() => {});
   };
 
   return (
@@ -67,6 +82,7 @@ export function ConversationView({ data, focus, hidden }: Props) {
       }}
       onClick={onClick}
     >
+      <CwdContext.Provider value={cwd}>
       <div className="conversation-inner">
         {data.headSkipped && <div className="conv-notice">Début de la conversation non affiché (fichier volumineux) : il reste visible dans le terminal.</div>}
         {data.exists === false && <div className="conv-empty">Nouvelle conversation : écris ton premier message ci-dessous.</div>}
@@ -86,6 +102,7 @@ export function ConversationView({ data, focus, hidden }: Props) {
           }
         })}
       </div>
+      </CwdContext.Provider>
     </div>
   );
 }
@@ -100,7 +117,47 @@ function UserBubble({ entry }: { entry: Extract<ConversationEntry, { kind: "user
 
 const AssistantText = memo(function AssistantText({ line, uuid, text }: { line: number; uuid: string | null; text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
-  return <div className="conv-assistant markdown" data-line={line} data-uuid={uuid ?? undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+  const ref = useRef<HTMLDivElement>(null);
+  const cwd = useContext(CwdContext);
+  const [blocks, setBlocks] = useState<RunnableBlock[]>([]);
+
+  // Blocs de commande : chacun est enveloppé (`.code-block`) et reçoit, sous son `<pre>`, un
+  // emplacement où `CodeRunner` dessine son bouton ▶ et son terminal. Refait quand le HTML
+  // change (React le remplace alors en entier).
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const found: RunnableBlock[] = [];
+    root.querySelectorAll<HTMLElement>("pre > code").forEach((code, i) => {
+      const lang = /(?:^|\s)language-([\w+-]+)/.exec(code.className)?.[1] ?? "";
+      if (!isRunnableLang(lang)) return;
+      const pre = code.parentElement!;
+      let wrap = pre.parentElement!;
+      if (!wrap.classList.contains("code-block")) {
+        wrap = document.createElement("div");
+        wrap.className = "code-block";
+        pre.replaceWith(wrap);
+        wrap.appendChild(pre);
+      }
+      let host = wrap.querySelector<HTMLElement>(":scope > .code-runner");
+      if (!host) {
+        host = document.createElement("div");
+        host.className = "code-runner";
+        wrap.appendChild(host);
+      }
+      found.push({ id: `${uuid ?? `l${line}`}-${i}`, lang, code: (code.textContent ?? "").replace(/\n$/, ""), host });
+    });
+    setBlocks(found);
+  }, [html, uuid, line]);
+
+  return (
+    <>
+      <div ref={ref} className="conv-assistant markdown" data-line={line} data-uuid={uuid ?? undefined} dangerouslySetInnerHTML={{ __html: html }} />
+      {blocks.map((b) => (
+        <CodeRunnerPortal key={b.id} block={b} cwd={cwd} />
+      ))}
+    </>
+  );
 });
 
 /** Tour de Claude : étiquette « Claude », puis ses textes et groupes d'actions. */

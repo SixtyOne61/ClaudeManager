@@ -12,6 +12,7 @@ mod config;
 mod conversation;
 mod limits;
 mod pty;
+mod run;
 mod scanner;
 mod search;
 mod sessions;
@@ -489,6 +490,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Liens des réponses de l'agent ouverts dans le navigateur (http/https uniquement).
+        .plugin(tauri_plugin_opener::init())
         // Mises à jour : uniquement quand l'utilisateur clique sur « Vérifier les mises à jour ».
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
@@ -531,6 +534,8 @@ pub fn run() {
             pty::commands::pty_kill,
             pty::commands::pty_list,
             pty::commands::pty_quit,
+            run::commands::run_integrated,
+            run::commands::run_external,
             activity::activity_list,
             limits::usage_limits,
             worktrees::commands::is_git_repo,
