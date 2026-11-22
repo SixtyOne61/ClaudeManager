@@ -506,6 +506,7 @@ dependencies = [
 name = "claude-manager"
 version = "0.6.0"
 dependencies = [
+ "base64 0.21.7",
  "dirs",
  "notify",
  "portable-pty",

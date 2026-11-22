@@ -337,6 +337,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
           focus={focus}
           hidden={terminalShown}
           cwd={cwd}
+          sessionId={sessionId}
           editable={state.kind === "running" ? editable : null}
           onEdit={startEdit}
           replaced={replaced}

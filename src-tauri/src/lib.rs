@@ -166,6 +166,26 @@ fn conversation_read(state: State<AppState>, session_id: String, cwd: Option<Str
     })
 }
 
+/// Pièce jointe d'un message pour la visionneuse ; une image disparue est cherchée dans le
+/// `.jsonl` de la conversation (voir `attachments::preview`).
+#[tauri::command(async)]
+fn attachment_preview(state: State<AppState>, path: String, session_id: Option<String>, cwd: Option<String>) -> attachments::Preview {
+    let transcript = session_id
+        .filter(|id| actions::validate_session_id(id).is_ok())
+        .and_then(|id| conversation::locate(state.scanner.root(), &id, cwd.as_deref()));
+    attachments::preview(&path, transcript.as_deref())
+}
+
+/// Ouvre une pièce jointe avec l'application par défaut de Windows.
+#[tauri::command]
+fn open_attachment(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !Path::new(&path).is_file() {
+        return Err("Fichier introuvable.".into());
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Commandes `/…` proposées dans la zone de saisie pour une conversation : intégrées,
 /// skills et commandes personnels, du projet (`cwd` et ses parents) et des plugins activés,
 /// complétés par les skills que Claude Code a annoncés dans le `.jsonl` de la conversation.
@@ -531,6 +551,8 @@ pub fn run() {
             trash_archive,
             check_open_elsewhere,
             attachments::save_pasted_image,
+            attachment_preview,
+            open_attachment,
             pty::commands::pty_resume,
             pty::commands::pty_new_session,
             pty::commands::pty_write,

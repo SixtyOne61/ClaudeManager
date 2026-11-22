@@ -18,11 +18,14 @@ import { GrillAnswers, grillHtml, isGrillAnswer } from "./Grill";
 import { ActionGroup } from "./ConversationActions";
 import type { SearchFocus } from "./GlobalSearch";
 import { useSlashMenu } from "./SlashMenu";
+import { AttachmentViewer } from "./AttachmentViewer";
 import { CodeRunnerPortal, type RunnableBlock } from "./CodeRunner";
 import { isRunnableLang } from "../runner";
 
 /** Dossier de la conversation : les commandes des blocs ▶ s'y exécutent. */
 const CwdContext = createContext<string | null>(null);
+/** Identifiant de la conversation : copie d'une image jointe disparue (visionneuse). */
+const SessionContext = createContext<string | null>(null);
 
 interface Props {
   data: ConversationData;
@@ -32,6 +35,8 @@ interface Props {
   hidden: boolean;
   /** Dossier de la conversation (commandes exécutées depuis les blocs de code). */
   cwd?: string | null;
+  /** Identifiant de la conversation (visionneuse des pièces jointes). */
+  sessionId?: string | null;
   /** Dernier message encore modifiable (Claude n'a pas commencé à répondre), ou null. */
   editable?: EditableMessage | null;
   onEdit?: (m: EditableMessage) => void;
@@ -39,7 +44,7 @@ interface Props {
   replaced?: ReadonlySet<string>;
 }
 
-export function ConversationView({ data, focus, hidden, cwd = null, editable = null, onEdit, replaced }: Props) {
+export function ConversationView({ data, focus, hidden, cwd = null, sessionId = null, editable = null, onEdit, replaced }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
 
@@ -93,6 +98,7 @@ export function ConversationView({ data, focus, hidden, cwd = null, editable = n
       onClick={onClick}
     >
       <CwdContext.Provider value={cwd}>
+      <SessionContext.Provider value={sessionId}>
       <div className="conversation-inner">
         {data.headSkipped && <div className="conv-notice">Début de la conversation non affiché (fichier volumineux) : il reste visible dans le terminal.</div>}
         {data.exists === false && <div className="conv-empty">Nouvelle conversation : écris ton premier message ci-dessous.</div>}
@@ -119,6 +125,7 @@ export function ConversationView({ data, focus, hidden, cwd = null, editable = n
           }
         })}
       </div>
+      </SessionContext.Provider>
       </CwdContext.Provider>
     </div>
   );
@@ -159,19 +166,24 @@ function UserBubble({ entry, replaced, onEdit }: BubbleProps) {
 /** Texte d'un message, ses pièces jointes (mentions `@"chemin"`) en pastilles au-dessus. */
 function UserText({ text }: { text: string }) {
   const parts = useMemo(() => splitAttachments(text), [text]);
+  const cwd = useContext(CwdContext);
+  const sessionId = useContext(SessionContext);
+  const [viewing, setViewing] = useState<string | null>(null);
   return (
     <>
       {parts.paths.length > 0 && (
         <div className="conv-bubble-attachments">
           {parts.paths.map((p, i) => (
-            <span key={i} className="conv-attachment" title={p}>
+            <button key={i} type="button" className="conv-attachment clickable" title={`${p}
+Cliquer pour afficher`} onClick={() => setViewing(p)}>
               {isImagePath(p) ? <ImageIcon size={14} /> : <FileIcon size={14} />}
               <span className="conv-attachment-name">{baseName(p)}</span>
-            </span>
+            </button>
           ))}
         </div>
       )}
       {parts.text && <div className="conv-bubble">{parts.text}</div>}
+      {viewing && <AttachmentViewer path={viewing} sessionId={sessionId} cwd={cwd} onClose={() => setViewing(null)} />}
     </>
   );
 }
@@ -295,6 +307,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [viewing, setViewing] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const slash = useSlashMenu({ text, setText, cwd, sessionId });
@@ -452,8 +465,11 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         <div className="conv-attachments">
           {attachments.map((a) => (
             <span key={a.id} className="conv-attachment" title={a.path}>
-              {a.preview ? <img src={a.preview} alt="" /> : <FileIcon size={14} />}
-              <span className="conv-attachment-name">{a.name}</span>
+              <span className="conv-attachment-open" onClick={() => setViewing(a.path)} title={`${a.path}
+Cliquer pour afficher`}>
+                {a.preview ? <img src={a.preview} alt="" /> : <FileIcon size={14} />}
+                <span className="conv-attachment-name">{a.name}</span>
+              </span>
               <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} title="Retirer">
                 <X size={11} />
               </button>
@@ -461,6 +477,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
           ))}
         </div>
       )}
+      {viewing && <AttachmentViewer path={viewing} sessionId={sessionId} cwd={cwd} onClose={() => { setViewing(null); ref.current?.focus(); }} />}
       <button className="btn small" onClick={pickFiles} disabled={!enabled} title="Joindre des fichiers (ou glisser-déposer, Ctrl+V pour une capture)">
         <Paperclip size={13} />
       </button>

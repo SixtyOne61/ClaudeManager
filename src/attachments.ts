@@ -51,4 +51,4 @@ export function splitAttachments(message: string): { text: string; paths: string
 export const baseName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
 /** Extension d'image reconnue (icône dans la bulle). */
-export const isImagePath = (path: string) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(path);
+export const isImagePath = (path: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path);
