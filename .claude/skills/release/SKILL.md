@@ -47,7 +47,9 @@ cargo check --manifest-path src-tauri/Cargo.toml  # met Cargo.lock à jour
 
 Commite ces quatre fichiers et les notes, message `Version <version>` (plus la ligne Co-Authored-By habituelle).
 
-Terminé quand : `git status` est propre et `git diff HEAD~1 --stat` montre exactement `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` et `docs/releases/v<version>.md`.
+Puis `npm ci` en local : le workflow le lance, et il échoue si le lock n'est pas synchronisé (npm retire parfois des dépendances optionnelles comme `@emnapi/*` lors d'un `npm install`). En cas d'échec, repars du `package-lock.json` du dernier tag et rajoute à la main les seules entrées des dépendances ajoutées depuis.
+
+Terminé quand : `npm ci` réussit, `git status` est propre et `git diff HEAD~1 --stat` montre exactement `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` et `docs/releases/v<version>.md`.
 
 ## 5. Tag et workflow
 
