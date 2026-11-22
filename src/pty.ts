@@ -8,6 +8,7 @@
 // - ptyApi.write(key, texte)  envoie du texte au terminal (frappes, message à envoyer)
 // - isTerminalRunning(key)    vrai si `claude` tourne dans le terminal de la conversation
 // - subscribePty(key, ...)    reçoit la sortie et la fin de `claude` pour cette clé
+// - watchPtyOutput(key, fn)   observe aussi la sortie (pied de conversation : mode affiché)
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -48,13 +49,31 @@ let listening: Promise<void> | null = null;
 /** Abonnement unique aux évènements du backend, réparti ensuite par clé. */
 function ensureListening(): Promise<void> {
   listening ??= Promise.all([
-    listen<{ key: string; data: string }>("pty-output", (e) => handlers.get(e.payload.key)?.onData(e.payload.data)),
+    listen<{ key: string; data: string }>("pty-output", (e) => {
+      handlers.get(e.payload.key)?.onData(e.payload.data);
+      outputWatchers.get(e.payload.key)?.forEach((w) => w(e.payload.data));
+    }),
     listen<{ key: string; code: number | null }>("pty-exit", (e) => {
       running.delete(e.payload.key);
       handlers.get(e.payload.key)?.onExit(e.payload.code);
     }),
   ]).then(() => undefined);
   return listening;
+}
+
+/** Observateurs supplémentaires de la sortie (lecture seule, en plus du terminal affiché). */
+const outputWatchers = new Map<string, Set<(data: string) => void>>();
+
+/** Observe la sortie d'un terminal sans la consommer. Renvoie la fonction de désabonnement. */
+export function watchPtyOutput(key: string, fn: (data: string) => void): () => void {
+  let set = outputWatchers.get(key);
+  if (!set) outputWatchers.set(key, (set = new Set()));
+  set.add(fn);
+  ensureListening();
+  return () => {
+    set.delete(fn);
+    if (set.size === 0 && outputWatchers.get(key) === set) outputWatchers.delete(key);
+  };
 }
 
 /** Reçoit la sortie d'un terminal. Renvoie la fonction de désabonnement. */

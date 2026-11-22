@@ -402,3 +402,33 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 }
 .conv-input textarea:focus { border-color: var(--accent); }
 .conv-input .btn { height: 34px; }
+
+/* Pied de conversation : modèle, mode de permission, contexte utilisé. */
+.conv-footer {
+  display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; flex: none;
+  background: var(--bg-elev); font-size: 12px; color: var(--text-muted); min-width: 0;
+}
+.conv-footer-item {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  border-radius: 11px; border: 1px solid transparent; background: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+button.conv-footer-item { cursor: pointer; }
+button.conv-footer-item:disabled { cursor: default; opacity: .6; }
+.conv-footer-model { color: var(--text); }
+.conv-footer-model:hover:not(:disabled) { background: var(--bg-hover); }
+.conv-footer-spacer { flex: 1; }
+/* Badge du mode : bien visible, une couleur par mode. */
+.conv-mode { font-weight: 600; }
+.conv-mode:hover:not(:disabled) { filter: brightness(1.2); }
+.conv-mode.normal { color: var(--text); background: var(--bg-elev-2); border-color: var(--border); }
+.conv-mode.edits { color: #c4b5fd; background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.55); }
+.conv-mode.plan { color: #5eead4; background: rgba(20,184,166,.16); border-color: rgba(20,184,166,.55); }
+.conv-mode.auto { color: #fcd34d; background: rgba(245,158,11,.16); border-color: rgba(245,158,11,.55); }
+.conv-mode.danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.conv-mode.dontask { color: #fca5a5; background: rgba(239,68,68,.16); border-color: rgba(239,68,68,.55); }
+.conv-mode.pending { color: var(--text-muted); background: var(--bg-elev-2); border-color: var(--border); border-style: dashed; font-weight: 400; }
+.conv-context { gap: 7px; cursor: default; }
+.conv-context-bar { width: 70px; height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; flex: none; }
+.conv-context-bar > span { display: block; height: 100%; background: var(--text-muted); }
+.conv-context-bar.high > span { background: var(--warn); }

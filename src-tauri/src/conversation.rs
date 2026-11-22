@@ -99,6 +99,56 @@ pub struct Chunk {
     pub offset: u64,
     /// Numéro de la ligne qui commence à `offset`.
     pub line: u32,
+    /// Modèle, mode de permission et consommation relevés dans la partie lue.
+    pub meta: Meta,
+}
+
+/// Consommation de jetons d'une réponse de l'agent (`message.usage`).
+#[derive(Serialize, Debug, Default, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// Modèle annoncé par Claude Code (ligne `attachment` de type `model`).
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelIdentity {
+    /// Identifiant, avec `[1m]` pour la variante à 1 M de contexte (« claude-opus-5[1m] »).
+    pub id: String,
+    /// Nom lisible (« Opus 5.5 »), s'il est donné.
+    pub name: Option<String>,
+}
+
+/// Jetons produits par une réponse, repérée par l'identifiant du message : une même réponse
+/// est écrite sur plusieurs lignes (une par bloc) qui répètent la même consommation.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputTokens {
+    pub id: String,
+    pub tokens: u64,
+}
+
+/// Informations du pied de conversation : dernières valeurs vues dans la partie lue (absentes
+/// si la partie lue n'en contient pas : l'interface garde alors les précédentes).
+#[derive(Serialize, Debug, Default, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Meta {
+    /// Modèle de la dernière réponse (`message.model`).
+    pub model: Option<String>,
+    /// Dernier modèle annoncé (`attachment` de type `model`).
+    pub model_identity: Option<ModelIdentity>,
+    /// Dernier mode de permission enregistré (`permissionMode`).
+    pub permission_mode: Option<String>,
+    /// Ligne où ce mode a été enregistré.
+    pub permission_mode_line: Option<u32>,
+    /// Consommation de la dernière réponse.
+    pub usage: Option<Usage>,
+    /// Jetons produits par chaque réponse lue (une entrée par message).
+    pub outputs: Vec<OutputTokens>,
 }
 
 /// Trouve le fichier d'une conversation : d'abord dans le dossier du répertoire de travail
@@ -153,7 +203,7 @@ pub fn read_chunk(path: &Path, offset: u64, line: u32) -> Chunk {
             break; // Ligne en cours d'écriture : relue la prochaine fois.
         }
         if let Ok(text) = std::str::from_utf8(&buf) {
-            parse_line(text, line_no, &mut chunk.entries);
+            parse_line_meta(text, line_no, &mut chunk.entries, &mut chunk.meta);
         }
         pos += n as u64;
         line_no += 1;
@@ -202,12 +252,20 @@ fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 /// Ajoute à `out` les éléments affichables d'une ligne `.jsonl`. Ligne illisible, type
 /// inconnu, sous-agent, ligne technique : rien n'est ajouté.
 pub fn parse_line(text: &str, line: u32, out: &mut Vec<Entry>) {
+    parse_line_meta(text, line, out, &mut Meta::default());
+}
+
+/// Comme [`parse_line`], et relève en plus dans `meta` le modèle, le mode de permission et
+/// la consommation de jetons.
+pub fn parse_line_meta(text: &str, line: u32, out: &mut Vec<Entry>, meta: &mut Meta) {
     let text = text.trim();
     if text.is_empty() {
         return;
     }
-    // Repérage rapide avant décodage : seules les lignes de message nous intéressent.
-    if !text.contains("\"user\"") && !text.contains("\"assistant\"") {
+    // Repérage rapide avant décodage : lignes de message, ou lignes portant le modèle / le mode.
+    let message = text.contains("\"user\"") || text.contains("\"assistant\"");
+    let info = text.contains("\"permissionMode\"") || text.contains("\"identity\"");
+    if !message && !info {
         return;
     }
     let Ok(v) = serde_json::from_str::<Value>(text) else { return };
@@ -215,6 +273,7 @@ pub fn parse_line(text: &str, line: u32, out: &mut Vec<Entry>) {
     if flag("isSidechain") {
         return;
     }
+    read_meta(&v, line, meta);
     let uuid = str_at(&v, "uuid").map(str::to_string);
     let Some(content) = v.pointer("/message/content") else { return };
     match str_at(&v, "type") {
@@ -229,6 +288,52 @@ pub fn parse_line(text: &str, line: u32, out: &mut Vec<Entry>) {
             parse_user(content, line, uuid, out);
         }
         Some("assistant") => parse_assistant(content, line, uuid, out),
+        _ => {}
+    }
+}
+
+/// Modèle, mode de permission et consommation d'une ligne (sous-agents exclus en amont).
+///
+/// - `permissionMode` : sur les messages de l'utilisateur (mode au moment de l'envoi) et sur
+///   les lignes `{"type":"permission-mode"}` (écrites avec l'état de la session) ;
+/// - `message.model` et `message.usage` : sur les réponses de l'agent (`<synthetic>` : message
+///   d'erreur fabriqué par Claude Code, ignoré) ;
+/// - `attachment` de type `model` : modèle annoncé, avec son nom lisible.
+fn read_meta(v: &Value, line: u32, meta: &mut Meta) {
+    match str_at(v, "type") {
+        Some("user") | Some("permission-mode") => {
+            if let Some(mode) = str_at(v, "permissionMode").filter(|m| !m.is_empty()) {
+                meta.permission_mode = Some(mode.to_string());
+                meta.permission_mode_line = Some(line);
+            }
+        }
+        Some("assistant") => {
+            let Some(msg) = v.get("message") else { return };
+            let Some(model) = str_at(msg, "model").filter(|m| !m.is_empty() && !m.starts_with('<')) else { return };
+            meta.model = Some(model.to_string());
+            let Some(u) = msg.get("usage") else { return };
+            let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+            let usage = Usage {
+                input_tokens: n("input_tokens"),
+                cache_creation_input_tokens: n("cache_creation_input_tokens"),
+                cache_read_input_tokens: n("cache_read_input_tokens"),
+                output_tokens: n("output_tokens"),
+            };
+            if let Some(id) = str_at(msg, "id") {
+                // Les lignes d'une même réponse se suivent : seule la dernière entrée est à voir.
+                match meta.outputs.last_mut() {
+                    Some(o) if o.id == id => o.tokens = usage.output_tokens,
+                    _ => meta.outputs.push(OutputTokens { id: id.to_string(), tokens: usage.output_tokens }),
+                }
+            }
+            meta.usage = Some(usage);
+        }
+        Some("attachment") => {
+            let Some(a) = v.get("attachment").filter(|a| str_at(a, "type") == Some("model")) else { return };
+            let Some(id) = a.pointer("/identity/modelId").and_then(Value::as_str).filter(|m| !m.is_empty()) else { return };
+            let name = a.pointer("/identity/marketingName").and_then(Value::as_str).map(str::to_string);
+            meta.model_identity = Some(ModelIdentity { id: id.to_string(), name });
+        }
         _ => {}
     }
 }
@@ -555,6 +660,43 @@ mod tests {
         assert_eq!(d.iter().map(|l| l.op).collect::<String>(), "++");
         let Entry::Tool { diff: Some(d), .. } = &e[1] else { panic!() };
         assert_eq!(d.iter().map(|l| l.op).collect::<String>(), "-+~-");
+    }
+
+    #[test]
+    fn reads_model_mode_and_usage() {
+        let lines = [
+            r#"{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-opus-5-5[1m]","marketingName":"Opus 5.5 (1M context)","knowledgeCutoff":"June 2026"},"text":"…"},"uuid":"m"}"#,
+            r#"{"type":"user","permissionMode":"default","message":{"role":"user","content":"Salut"},"uuid":"u1"}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":5000,"output_tokens":40}},"uuid":"a1"}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_1","role":"assistant","content":[{"type":"text","text":"Bonjour"}],"usage":{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":5000,"output_tokens":40}},"uuid":"a2"}"#,
+            r#"{"type":"user","permissionMode":"acceptEdits","message":{"role":"user","content":"Encore"},"uuid":"u2"}"#,
+            r#"{"type":"assistant","message":{"model":"<synthetic>","id":"msg_x","role":"assistant","content":[{"type":"text","text":"API Error"}],"usage":{"input_tokens":0,"output_tokens":0}},"uuid":"ax"}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-5-5","id":"msg_s","content":[],"usage":{"input_tokens":9,"output_tokens":9}},"uuid":"s"}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_2","role":"assistant","content":[{"type":"text","text":"Voilà"}],"usage":{"input_tokens":1,"cache_creation_input_tokens":50,"cache_read_input_tokens":5100,"output_tokens":12}},"uuid":"a3"}"#,
+            r#"{"type":"permission-mode","permissionMode":"plan","sessionId":"s1"}"#,
+        ];
+        let (mut out, mut meta) = (Vec::new(), Meta::default());
+        for (i, l) in lines.iter().enumerate() {
+            parse_line_meta(l, i as u32, &mut out, &mut meta);
+        }
+        assert_eq!(meta.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(
+            meta.model_identity,
+            Some(ModelIdentity { id: "claude-opus-5-5[1m]".into(), name: Some("Opus 5.5 (1M context)".into()) })
+        );
+        assert_eq!((meta.permission_mode.as_deref(), meta.permission_mode_line), (Some("plan"), Some(8)));
+        assert_eq!(
+            meta.usage,
+            Some(Usage { input_tokens: 1, cache_creation_input_tokens: 50, cache_read_input_tokens: 5100, output_tokens: 12 })
+        );
+        let outputs: Vec<_> = meta.outputs.iter().map(|o| (o.id.as_str(), o.tokens)).collect();
+        assert_eq!(outputs, [("msg_1", 40), ("msg_2", 12)]);
+        // Les éléments affichés ne changent pas.
+        assert_eq!(out.len(), 5);
+        // Une ligne sans ces informations laisse tout absent.
+        let mut empty = Meta::default();
+        parse_line_meta(USER, 0, &mut Vec::new(), &mut empty);
+        assert_eq!(empty, Meta::default());
     }
 
     #[test]

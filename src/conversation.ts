@@ -36,6 +36,24 @@ export type ConversationEntry =
   | { kind: "toolResult"; line: number; toolUseId: string; text: string; isError: boolean; truncated: boolean }
   | { kind: "notice"; line: number; uuid: string | null; text: string };
 
+/** Consommation de jetons d'une réponse de l'agent (`message.usage`). */
+export interface Usage {
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  outputTokens: number;
+}
+
+/** Modèle, mode et consommation relevés dans une partie lue (voir `conversation::Meta`). */
+export interface ChunkMeta {
+  model: string | null;
+  modelIdentity: { id: string; name: string | null } | null;
+  permissionMode: string | null;
+  permissionModeLine: number | null;
+  usage: Usage | null;
+  outputs: { id: string; tokens: number }[];
+}
+
 interface Chunk {
   exists: boolean;
   reset: boolean;
@@ -43,6 +61,42 @@ interface Chunk {
   entries: ConversationEntry[];
   offset: number;
   line: number;
+  meta?: ChunkMeta;
+}
+
+/** Informations du pied de conversation : dernières valeurs connues. */
+export interface ConversationMeta {
+  /** Modèle de la dernière réponse (`claude-opus-5-5`). */
+  model: string | null;
+  /** Dernier modèle annoncé par Claude Code (identifiant avec `[1m]`, nom lisible). */
+  modelIdentity: { id: string; name: string | null } | null;
+  /** Dernier mode de permission enregistré, et la ligne où il l'a été. */
+  permissionMode: string | null;
+  permissionModeLine: number | null;
+  /** Consommation de la dernière réponse (contexte utilisé). */
+  usage: Usage | null;
+  /** Somme des jetons produits par les réponses lues. */
+  outputTotal: number;
+}
+
+const EMPTY_META: ConversationMeta = { model: null, modelIdentity: null, permissionMode: null, permissionModeLine: null, usage: null, outputTotal: 0 };
+
+/** Ajoute à `prev` les valeurs d'une partie lue (`outputs` : jetons produits par message). */
+function mergeMeta(prev: ConversationMeta, m: ChunkMeta | undefined, outputs: Map<string, number>): ConversationMeta {
+  if (!m) return prev;
+  for (const o of m.outputs) outputs.set(o.id, o.tokens);
+  let outputTotal = 0;
+  for (const n of outputs.values()) outputTotal += n;
+  const next: ConversationMeta = {
+    model: m.model ?? prev.model,
+    modelIdentity: m.modelIdentity ?? prev.modelIdentity,
+    permissionMode: m.permissionMode ?? prev.permissionMode,
+    permissionModeLine: m.permissionMode ? m.permissionModeLine : prev.permissionModeLine,
+    usage: m.usage ?? prev.usage,
+    outputTotal,
+  };
+  const same = (Object.keys(next) as (keyof ConversationMeta)[]).every((k) => next[k] === prev[k]);
+  return same ? prev : next;
 }
 
 export const conversationApi = {
@@ -56,6 +110,8 @@ export interface ConversationData {
   exists: boolean | null;
   /** Gros fichier : seule la fin est affichée. */
   headSkipped: boolean;
+  /** Modèle, mode de permission et consommation (pied de conversation). */
+  meta: ConversationMeta;
 }
 
 /** Filet de sécurité si un évènement de changement est manqué (relecture de la fin seulement). */
@@ -63,7 +119,7 @@ const POLL_MS = 3000;
 
 /** Conversation lue dans son `.jsonl`, mise à jour à chaque écriture de Claude Code. */
 export function useConversation(sessionId: string, cwd: string | null): ConversationData {
-  const [data, setData] = useState<ConversationData>({ entries: [], exists: null, headSkipped: false });
+  const [data, setData] = useState<ConversationData>({ entries: [], exists: null, headSkipped: false, meta: EMPTY_META });
 
   useEffect(() => {
     let disposed = false;
@@ -71,6 +127,8 @@ export function useConversation(sessionId: string, cwd: string | null): Conversa
     let again = false;
     let offset = 0;
     let line = 0;
+    /** Jetons produits par réponse (identifiant du message), pour la somme. */
+    const outputs = new Map<string, number>();
 
     /** Lit la suite du fichier ; une demande pendant une lecture relance une lecture après. */
     const pull = async () => {
@@ -88,15 +146,18 @@ export function useConversation(sessionId: string, cwd: string | null): Conversa
           const unchanged = !fresh && c.entries.length === 0;
           offset = c.offset;
           line = c.line;
-          setData((d) =>
-            unchanged && d.exists === c.exists
+          if (fresh) outputs.clear();
+          setData((d) => {
+            const meta = mergeMeta(fresh ? EMPTY_META : d.meta, c.meta, outputs);
+            return unchanged && d.exists === c.exists && meta === d.meta
               ? d
               : {
                   exists: c.exists,
                   headSkipped: fresh ? c.headSkipped : d.headSkipped,
                   entries: fresh ? c.entries : c.entries.length ? [...d.entries, ...c.entries] : d.entries,
-                },
-          );
+                  meta,
+                };
+          });
         } while (again && !disposed);
       } catch {
         /* fichier momentanément illisible : la prochaine lecture réessaiera */

@@ -23,6 +23,7 @@ import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "..
 import { getActivity, isAwaitingPermission, subscribeActivity, type Activity } from "../activity";
 import { sendInterrupt, sendMessage, useConversation } from "../conversation";
 import { ConversationInput, ConversationView } from "./ConversationView";
+import { ConversationFooter } from "./ConversationFooter";
 import type { SearchFocus } from "./GlobalSearch";
 
 interface Props {
@@ -295,6 +296,13 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         onSend={send}
         onStop={() => sendInterrupt(sessionId).catch(() => {})}
         autoFocus={active && !terminalShown}
+      />
+      <ConversationFooter
+        sessionId={sessionId}
+        meta={conversation.meta}
+        headSkipped={conversation.headSkipped}
+        enabled={state.kind === "running"}
+        onCommand={send}
       />
     </div>
   );
