@@ -12,6 +12,7 @@ mod commands_list;
 mod config;
 mod conversation;
 mod limits;
+mod project_settings;
 mod pty;
 mod run;
 mod scanner;
@@ -240,11 +241,15 @@ fn save_config(state: State<AppState>, mut cfg: Config) -> Result<Config, String
 }
 
 /// Enregistre un dossier comme projet (création depuis l'appli). Renvoie sa clé.
+/// `language` : langue dans laquelle Claude répondra dans ce projet (rien = inchangée).
 #[tauri::command]
-fn add_project(state: State<AppState>, path: String) -> Result<String, String> {
+fn add_project(state: State<AppState>, path: String, language: Option<String>) -> Result<String, String> {
     let p = Path::new(&path);
     if !p.is_absolute() || !p.is_dir() {
         return Err(format!("Ce dossier n'existe pas : {path}"));
+    }
+    if let Some(lang) = language.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        project_settings::set_language(p, lang)?;
     }
     let key = sessions::encode_project_path(&path);
     let mut cfg = state.config.lock().unwrap();

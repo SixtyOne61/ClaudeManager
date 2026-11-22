@@ -103,8 +103,24 @@ export interface NewProjectResult {
   path: string;
   categoryId: string | null;
   displayName: string;
+  /** Langue des réponses de Claude dans ce projet (null = réglage habituel). */
+  language: string | null;
   startConversation: boolean;
 }
+
+/** Langues proposées : valeur du réglage `language` de Claude Code → libellé. */
+const LANGUAGES: [string, string][] = [
+  ["french", "Français"],
+  ["english", "English"],
+  ["spanish", "Español"],
+  ["german", "Deutsch"],
+  ["italian", "Italiano"],
+  ["portuguese", "Português"],
+  ["dutch", "Nederlands"],
+  ["japanese", "日本語"],
+  ["chinese", "中文"],
+  ["korean", "한국어"],
+];
 
 /**
  * Nouveau projet : choix (ou création, via le bouton « Nouveau dossier » de la
@@ -119,6 +135,7 @@ export function NewProjectDialog(props: {
   const [path, setPath] = useState("");
   const [categoryId, setCategoryId] = useState<string>(props.defaultCategoryId ?? "");
   const [displayName, setDisplayName] = useState("");
+  const [language, setLanguage] = useState("");
   const [startConversation, setStartConversation] = useState(true);
 
   const pick = async () => {
@@ -131,7 +148,7 @@ export function NewProjectDialog(props: {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (path) props.onSubmit({ path, categoryId: categoryId || null, displayName: displayName.trim(), startConversation });
+          if (path) props.onSubmit({ path, categoryId: categoryId || null, displayName: displayName.trim(), language: language || null, startConversation });
         }}
       >
         <label className="field">
@@ -158,6 +175,18 @@ export function NewProjectDialog(props: {
         <label className="field">
           <span>Nom d'affichage (facultatif)</span>
           <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Nom du dossier par défaut" />
+        </label>
+        <label className="field">
+          <span>Langue des réponses de Claude</span>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="">Par défaut (réglage habituel)</option>
+            {LANGUAGES.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <small>Enregistrée dans .claude\settings.local.json du projet.</small>
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={startConversation} onChange={(e) => setStartConversation(e.target.checked)} />

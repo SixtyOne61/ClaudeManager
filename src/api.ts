@@ -193,7 +193,8 @@ export const api = {
   searchAll: (query: string) => invoke<SearchResult>("search_all", { query }),
   getConfig: () => invoke<Config>("get_config"),
   saveConfig: (cfg: Config) => invoke<Config>("save_config", { cfg }),
-  addProject: (path: string) => invoke<string>("add_project", { path }),
+  /** `language` : langue des réponses de Claude dans ce projet (null = inchangée). */
+  addProject: (path: string, language: string | null) => invoke<string>("add_project", { path, language }),
   launchClaude: (path: string, sessionId?: string) =>
     invoke<void>("launch_claude", { path, sessionId: sessionId ?? null }),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),

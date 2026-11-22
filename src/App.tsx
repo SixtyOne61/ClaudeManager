@@ -658,7 +658,14 @@ export default function App() {
       />
 
       <div className="main-column">
-      <TerminalTabBar terminals={tabs} active={activeTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
+      <TerminalTabBar terminals={tabs} active={activeTerminal} onSelect={(id) => {
+        // « Projets » : retour au projet de la conversation qu'on quitte.
+        if (id === null && activeProject) {
+          setSearchOpen(false);
+          setSelection({ kind: "project", key: activeProject.key });
+        }
+        setActiveTerminal(id);
+      }} onClose={closeTerminal} />
       <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} onStarted={terminalStarted} focus={searchFocus} />
       {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
@@ -748,7 +755,7 @@ export default function App() {
           onSubmit={async (r) => {
             setDialog(null);
             try {
-              const key = await api.addProject(r.path);
+              const key = await api.addProject(r.path, r.language);
               // add_project a enregistré le chemin côté backend : on repart de la config à jour.
               const fresh = await api.getConfig();
               const prefs = { ...fresh.projects[key], ...(r.displayName ? { displayName: r.displayName } : {}) };
