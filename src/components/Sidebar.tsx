@@ -38,7 +38,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { Category, Config, ProjectInfo, Section, SessionInfo } from "../api";
-import { colorStyle, projectName, relativeDate } from "../util";
+import { colorStyle, modKey, projectName, relativeDate } from "../util";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { addSection, deleteSection, groupBySection, moveSection, projectSections, putConversationInSection, renameSection, setSectionCollapsed, setSectionColor } from "../sections";
 import { TextPrompt } from "./Dialogs";
@@ -414,7 +414,7 @@ export function Sidebar(props: Props) {
           <button
             className={"nav-item" + (props.searchActive ? " selected" : "")}
             onClick={props.onSearch}
-            title="Chercher dans le contenu de toutes les conversations (Ctrl+Maj+F)"
+            title={`Chercher dans le contenu de toutes les conversations (${modKey}+Maj+F)`}
           >
             <Search size={15} /> Rechercher partout
           </button>

@@ -54,6 +54,12 @@ pub fn validate_project_key(key: &str) -> Result<(), String> {
 pub enum Terminal {
     WindowsTerminal,
     PowerShell,
+    /// Terminal de macOS (`Terminal.app`).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    MacTerminal,
+    /// iTerm2, sous macOS.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    ITerm,
 }
 
 impl Terminal {
@@ -61,11 +67,25 @@ impl Terminal {
         match self {
             Terminal::WindowsTerminal => "Windows Terminal",
             Terminal::PowerShell => "PowerShell",
+            Terminal::MacTerminal => "Terminal",
+            Terminal::ITerm => "iTerm",
         }
     }
 }
 
+/// macOS : iTerm2 s'il est installé, sinon le Terminal du système.
+#[cfg(target_os = "macos")]
+pub fn detect_terminal() -> Terminal {
+    let home_apps = dirs::home_dir().map(|h| h.join("Applications/iTerm.app"));
+    if Path::new("/Applications/iTerm.app").is_dir() || home_apps.is_some_and(|p| p.is_dir()) {
+        Terminal::ITerm
+    } else {
+        Terminal::MacTerminal
+    }
+}
+
 /// Windows Terminal est présent si `wt.exe` est trouvable (alias d'exécution dans WindowsApps).
+#[cfg(not(target_os = "macos"))]
 pub fn detect_terminal() -> Terminal {
     let alias = dirs::data_local_dir().map(|d| d.join(r"Microsoft\WindowsApps\wt.exe"));
     if alias.is_some_and(|p| p.exists()) {
@@ -95,8 +115,13 @@ pub fn launch_claude(terminal: Terminal, dir: &str, session_id: Option<&str>) ->
         None => "claude".to_string(),
     };
 
+    if matches!(terminal, Terminal::MacTerminal | Terminal::ITerm) {
+        return open_mac_terminal(terminal, &format!("cd {} && {claude_cmd}", shell_quote(dir)));
+    }
+
     let spawn = |t: Terminal| -> std::io::Result<std::process::Child> {
         match t {
+            Terminal::MacTerminal | Terminal::ITerm => unreachable!(),
             Terminal::WindowsTerminal => {
                 // Les arguments sont passés séparément : pas d'interprétation par un shell.
                 Command::new("wt.exe")
@@ -124,12 +149,65 @@ pub fn launch_claude(terminal: Terminal, dir: &str, session_id: Option<&str>) ->
     }
 }
 
-/// Ouvre un dossier dans l'Explorateur Windows.
+/// Entoure un texte d'apostrophes pour un shell POSIX (`'` devient `'\''`).
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Script AppleScript qui ouvre une fenêtre du Terminal et y tape la ligne de commande
+/// passée en argument (`item 1 of argv`) : aucun texte à échapper pour AppleScript.
+const OSA_TERMINAL: &str = r#"on run argv
+    tell application "Terminal"
+        activate
+        do script (item 1 of argv)
+    end tell
+end run"#;
+
+/// Même chose dans une nouvelle fenêtre d'iTerm2.
+const OSA_ITERM: &str = r#"on run argv
+    tell application "iTerm"
+        activate
+        set w to (create window with default profile)
+        tell current session of w to write text (item 1 of argv)
+    end tell
+end run"#;
+
+/// macOS : ouvre une fenêtre de terminal qui exécute `command_line` dans le shell de
+/// l'utilisateur. La fenêtre reste ouverte après la commande. Si iTerm échoue, le Terminal
+/// du système prend le relais.
+pub fn open_mac_terminal(terminal: Terminal, command_line: &str) -> Result<(), String> {
+    let run = |script: &str| -> Result<(), String> {
+        let out = Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .arg(command_line)
+            .output()
+            .map_err(|e| format!("Impossible d'ouvrir un terminal : {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("Impossible d'ouvrir un terminal : {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    };
+    match terminal {
+        Terminal::ITerm => run(OSA_ITERM).or_else(|_| run(OSA_TERMINAL)),
+        _ => run(OSA_TERMINAL),
+    }
+}
+
+/// Ouvre un dossier dans le gestionnaire de fichiers (Explorateur, Finder…).
 pub fn open_folder(dir: &str) -> Result<(), String> {
     if !Path::new(dir).is_dir() {
         return Err(format!("Dossier introuvable : {dir}"));
     }
-    Command::new("explorer.exe").arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+    let opener = if cfg!(windows) {
+        "explorer.exe"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(opener).arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +398,13 @@ mod tests {
         assert!(validate_project_key("C--Users-x").is_ok());
         assert!(validate_project_key("..").is_err());
         assert!(validate_project_key("a\\b").is_err());
+    }
+
+    #[test]
+    fn quotes_for_posix_shell() {
+        assert_eq!(shell_quote("/Users/moi/Mon projet"), "'/Users/moi/Mon projet'");
+        assert_eq!(shell_quote("/a/l'été"), r"'/a/l'\''été'");
+        assert_eq!(shell_quote("$(rm -rf ~)"), "'$(rm -rf ~)'");
     }
 
     #[test]

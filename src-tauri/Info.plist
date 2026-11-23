@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS : fusionné par Tauri dans l'Info.plist de l'app. Sans ce texte, macOS refuse
+       sans rien demander que l'app pilote le Terminal ou iTerm (« Lancer dans un terminal »). -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Claude Manager ouvre Claude Code dans une fenêtre du Terminal ou d'iTerm.</string>
+</dict>
+</plist>

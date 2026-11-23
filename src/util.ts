@@ -2,6 +2,23 @@
 
 import type { Config, ProjectInfo } from "./api";
 
+/** Vrai sous macOS. */
+export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
+/** Touche de raccourci affichée : « ⌘ » sur Mac, « Ctrl » ailleurs. */
+export const modKey = isMac ? "⌘" : "Ctrl";
+
+/**
+ * Dossier d'un worktree créé par Claude Code (`<dépôt>/.claude/worktrees/<nom>`), avec le
+ * séparateur du chemin du dépôt (`\` sous Windows, `/` ailleurs). Sans nom : le dossier parent.
+ */
+export function worktreePath(repo: string, name?: string): string {
+  const sep = repo.includes("\\") ? "\\" : "/";
+  const parts = [repo.replace(/[\\/]+$/, ""), ".claude", "worktrees"];
+  if (name) parts.push(name);
+  return parts.join(sep);
+}
+
 /** Couleurs proposées dans le sélecteur (lisibles sur fond sombre). */
 export const PRESET_COLORS = [
   "#7c3aed", "#2563eb", "#0891b2", "#059669", "#65a30d", "#ca8a04",

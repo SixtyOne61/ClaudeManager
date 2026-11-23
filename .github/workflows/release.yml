@@ -1,7 +1,14 @@
 # Publie une version : pousser un tag vX.Y.Z (identique à la version de src-tauri/Cargo.toml).
-# Le workflow compile l'installateur NSIS, le signe pour le module de mise à jour et crée
-# une release GitHub en brouillon avec l'installateur, sa signature et latest.json.
+# Le workflow compile l'installateur NSIS (Windows) et le .dmg universel (macOS, Intel et
+# Apple Silicon), les signe pour le module de mise à jour et crée une release GitHub en
+# brouillon avec les installateurs, leurs signatures et latest.json (les deux plateformes).
 # Les utilisateurs ne voient la mise à jour qu'une fois le brouillon publié.
+#
+# Les deux compilations passent l'une après l'autre (max-parallel: 1) : la seconde retrouve
+# le brouillon créé par la première et complète son latest.json, sans course entre les deux.
+#
+# macOS : l'app n'est signée qu'« ad hoc » (pas de compte Apple Developer), sans
+# notarisation. Au premier lancement, macOS demande une autorisation (voir le README).
 #
 # Secrets requis (Settings > Secrets and variables > Actions) :
 #   TAURI_SIGNING_PRIVATE_KEY           contenu de la clé privée générée par `tauri signer generate`
@@ -18,7 +25,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +68,9 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS : les deux architectures, réunies en un binaire universel.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -72,3 +90,4 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}

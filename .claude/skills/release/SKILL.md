@@ -62,7 +62,7 @@ gh run watch <id> --exit-status                   # ~10 min, à lancer en arriè
 
 Le workflow vérifie que le tag égale la version de `Cargo.toml` et que le fichier de notes existe, compile, signe et crée une release **en brouillon**.
 
-Terminé quand : le run est vert et `gh release view v<version> --json isDraft,assets` montre un brouillon avec `latest.json`, l'installateur `.exe` et sa signature `.sig`. Vérifie que les notes sont arrivées : `gh release download v<version> -p latest.json -O -` doit contenir tes notes dans `notes`.
+Terminé quand : le run est vert et `gh release view v<version> --json isDraft,assets` montre un brouillon avec `latest.json`, l'installateur `.exe` et sa signature `.sig`, le `.dmg` universel, et l'archive `.app.tar.gz` de macOS avec sa `.sig`. `latest.json` doit lister les plateformes `windows-x86_64`, `darwin-aarch64` et `darwin-x86_64`. Vérifie que les notes sont arrivées : `gh release download v<version> -p latest.json -O -` doit contenir tes notes dans `notes`.
 
 Si le run échoue : lis le journal (`gh run view <id> --log-failed`), corrige, supprime le tag (`git push origin :refs/tags/v<version>; git tag -d v<version>`) et la release brouillon éventuelle, puis reprends l'étape.
 

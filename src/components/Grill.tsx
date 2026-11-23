@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Check, MessageSquareText, PenLine, SendHorizontal, Square, X } from "lucide-react";
+import { modKey } from "../util";
 import { renderMarkdown, renderMarkdownInline } from "../markdown";
 import { ANSWER_LINE, formatAnswers, getDraft, isAnswered, parseGrill, setDraft, type Answer, type Choice, type Draft, type PendingRound } from "../grill";
 
@@ -179,9 +180,9 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
     }
   };
 
-  // Ctrl+Entrée envoie, depuis n'importe quel champ du formulaire.
+  // Ctrl+Entrée (⌘+Entrée sur Mac) envoie, depuis n'importe quel champ du formulaire.
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && e.ctrlKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
     }
@@ -267,7 +268,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
           className="btn small primary grill-send"
           onClick={send}
           disabled={!enabled || !complete || sending}
-          title={complete ? "Envoyer les réponses (Ctrl+Entrée)" : "Réponds à chaque question pour envoyer"}
+          title={complete ? `Envoyer les réponses (${modKey}+Entrée)` : "Réponds à chaque question pour envoyer"}
         >
           <SendHorizontal size={13} /> Envoyer
         </button>

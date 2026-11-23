@@ -41,7 +41,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errorMessage, type Config, type ProjectInfo, type Section, type SessionInfo } from "../api";
-import { colorStyle, formatDate, projectName, relativeDate } from "../util";
+import { colorStyle, formatDate, isMac, modKey, projectName, relativeDate } from "../util";
 import {
   addSection,
   conversationColor,
@@ -390,7 +390,7 @@ export function ProjectView(props: Props) {
         </div>
         <button
           className="project-path"
-          title="Ouvrir dans l'Explorateur"
+          title={isMac ? "Ouvrir dans le Finder" : "Ouvrir dans l'Explorateur"}
           disabled={!canLaunch}
           onClick={() => p.path && api.openFolder(p.path).catch((e) => props.onError(errorMessage(e)))}
         >
@@ -464,7 +464,7 @@ export function ProjectView(props: Props) {
           className="icon-btn"
           disabled={displayed.length === 0 || allDisplayedSelected}
           onClick={selectAll}
-          title="Tout sélectionner (conversations affichées) — ou Ctrl+clic, Maj+clic sur les conversations"
+          title={`Tout sélectionner (conversations affichées) — ou ${modKey}+clic, Maj+clic sur les conversations`}
         >
           <ListChecks size={15} />
         </button>
@@ -813,7 +813,7 @@ function SessionRow(props: {
           className="session-check"
           checked={props.selected}
           readOnly
-          title="Sélectionner (Ctrl+clic, Maj+clic pour une plage)"
+          title={`Sélectionner (${modKey}+clic, Maj+clic pour une plage)`}
           onPointerDown={stop}
           onClick={(e) => {
             e.stopPropagation();

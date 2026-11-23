@@ -165,7 +165,8 @@ pub fn default_line(input: &Value) -> String {
 }
 
 /// Git Bash, comme Claude Code : `CLAUDE_CODE_GIT_BASH_PATH`, sinon à côté de `git.exe`
-/// du `PATH`, sinon l'emplacement d'installation habituel.
+/// du `PATH`, sinon l'emplacement d'installation habituel (Windows seulement).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn find_bash() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").map(PathBuf::from).filter(|p| p.is_file()) {
         return Some(p);
@@ -192,7 +193,9 @@ fn find_bash() -> Option<PathBuf> {
 /// Lance la commande de l'utilisateur dans un shell, lui passe `input`, et renvoie sa
 /// sortie standard. `None` : échec, ou plus de [`USER_COMMAND_TIMEOUT`].
 fn run_user_command(command: &str, input: &str, cwd: Option<&Path>) -> Option<String> {
-    let mut cmd = match find_bash() {
+    // Hors Windows, le shell du système, comme Claude Code.
+    let bash = if cfg!(windows) { find_bash() } else { Some(PathBuf::from("/bin/sh")) };
+    let mut cmd = match bash {
         Some(bash) => {
             let mut c = Command::new(bash);
             c.arg("-c").arg(command);
@@ -450,6 +453,11 @@ mod tests {
 
     #[test]
     fn statusline_settings_block() {
+        if cfg!(unix) {
+            let mac = Path::new("/Applications/Claude Manager.app/Contents/MacOS/claude-manager");
+            assert_eq!(statusline_settings(mac, None), Some(json!({"type":"command","command":"claude-manager statusline"})));
+            return;
+        }
         let exe = Path::new(r"C:\Program Files\Claude Manager\claude-manager.exe");
         assert_eq!(statusline_settings(exe, None), Some(json!({"type":"command","command":"claude-manager.exe statusline"})));
         let user = json!({"statusLine":{"type":"command","command":"x","padding":2,"refreshInterval":5,"other":1}});
@@ -462,6 +470,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn path_gets_exe_dir_first_unix() {
+        let exe = Path::new("/Applications/Claude Manager.app/Contents/MacOS/claude-manager");
+        let p = path_with_exe_dir(exe, Some(OsString::from("/usr/bin:/bin"))).unwrap();
+        assert_eq!(p, OsString::from("/Applications/Claude Manager.app/Contents/MacOS:/usr/bin:/bin"));
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn path_gets_exe_dir_first() {
         let exe = Path::new(r"\\?\C:\Program Files\Claude Manager\claude-manager.exe");
         let p = path_with_exe_dir(exe, Some(OsString::from(r"C:\Windows;C:\Tools"))).unwrap();

@@ -86,7 +86,8 @@ pub fn script_file_content(shell: Shell, body: &str, keep_open: bool) -> Vec<u8>
                 s.push('\n');
             }
             if keep_open {
-                s.push_str("exec bash -i\n");
+                // macOS : le shell de l'utilisateur (zsh par défaut) plutôt que le vieux bash.
+                s.push_str(if cfg!(target_os = "macos") { "exec \"${SHELL:-/bin/zsh}\" -i\n" } else { "exec bash -i\n" });
             }
             s.into_bytes()
         }
@@ -111,15 +112,19 @@ pub fn shell_argv(shell: Shell, script: &Path, keep_open: bool, powershell: &Pat
             v.extend(["-ExecutionPolicy".into(), "Bypass".into(), "-File".into(), script_s]);
             v
         }
+        Shell::Cmd if !cfg!(windows) => return Err(ERR_CMD_NOT_WINDOWS.into()),
         Shell::Cmd => vec!["cmd.exe".into(), "/d".into(), if keep_open { "/k" } else { "/c" }.into(), script_s],
         Shell::Bash => {
             let bash = bash.ok_or(ERR_BASH_MISSING)?;
-            vec![bash.to_string_lossy().to_string(), forward_slashes(script)]
+            let script = if cfg!(windows) { forward_slashes(script) } else { script_s };
+            vec![bash.to_string_lossy().to_string(), script]
         }
     })
 }
 
 const ERR_BASH_MISSING: &str = "Git Bash est introuvable : installez Git pour Windows (git-scm.com) pour exécuter les commandes bash, ou demandez à Claude la version PowerShell.";
+const ERR_CMD_NOT_WINDOWS: &str = "Les commandes cmd ne s'exécutent que sous Windows : demandez à Claude la version bash.";
+const ERR_PWSH_MISSING: &str = "PowerShell (pwsh) est introuvable : installez-le pour exécuter ce bloc, ou demandez à Claude la version bash.";
 
 /// Cherche un exécutable par son nom dans le PATH.
 fn in_path(name: &str) -> Option<PathBuf> {
@@ -127,13 +132,34 @@ fn in_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// PowerShell 7 (`pwsh.exe`) s'il est installé, sinon Windows PowerShell.
-fn find_powershell() -> PathBuf {
-    in_path("pwsh.exe").unwrap_or_else(|| PathBuf::from("powershell.exe"))
+/// Windows : PowerShell 7 (`pwsh.exe`) s'il est installé, sinon Windows PowerShell.
+/// Ailleurs : `pwsh`, s'il est installé.
+fn find_powershell() -> Option<PathBuf> {
+    if cfg!(windows) {
+        Some(in_path("pwsh.exe").unwrap_or_else(|| PathBuf::from("powershell.exe")))
+    } else {
+        in_path("pwsh")
+    }
+}
+
+/// Ligne de commande d'un bloc, avec les shells trouvés sur cette machine.
+fn argv_for(shell: Shell, script: &Path, keep_open: bool) -> Result<Vec<String>, String> {
+    let powershell = match shell {
+        Shell::PowerShell => find_powershell().ok_or(ERR_PWSH_MISSING)?,
+        _ => PathBuf::new(),
+    };
+    shell_argv(shell, script, keep_open, &powershell, find_bash().as_deref())
+}
+
+/// Hors Windows : le bash du système.
+#[cfg(not(windows))]
+fn find_bash() -> Option<PathBuf> {
+    ["/bin/bash", "/usr/bin/bash"].into_iter().map(PathBuf::from).find(|p| p.is_file()).or_else(|| in_path("bash"))
 }
 
 /// Bash de Git pour Windows (jamais celui de `System32`, qui est WSL) : à côté de `git.exe`
 /// dans le PATH, puis aux emplacements d'installation habituels.
+#[cfg(windows)]
 fn find_bash() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(git) = in_path("git.exe") {
@@ -198,8 +224,13 @@ fn prepare(run_id: &str, lang: &str, code: &str, cwd: &str, keep_open: bool) -> 
 }
 
 /// Ouvre une nouvelle fenêtre de terminal dans `cwd` qui exécute `argv` : Windows Terminal
-/// s'il est présent, sinon une console classique.
+/// s'il est présent, sinon une console classique ; sous macOS, iTerm ou le Terminal.
 fn open_window(terminal: crate::actions::Terminal, cwd: &str, argv: &[String]) -> Result<(), String> {
+    use crate::actions::{open_mac_terminal, shell_quote, Terminal};
+    if matches!(terminal, Terminal::MacTerminal | Terminal::ITerm) {
+        let args: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
+        return open_mac_terminal(terminal, &format!("cd {} && {}", shell_quote(cwd), args.join(" ")));
+    }
     let console = || -> std::io::Result<std::process::Child> {
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]).current_dir(cwd).env_remove("CLAUDECODE").env_remove("CLAUDE_CODE_ENTRYPOINT");
@@ -256,7 +287,8 @@ mod tests {
         let cmd = String::from_utf8(script_file_content(Shell::Cmd, "dir\necho ok", false)).unwrap();
         assert_eq!(cmd, "@chcp 65001 >nul\r\ndir\r\necho ok\r\n");
         let sh = String::from_utf8(script_file_content(Shell::Bash, "ls\r\npwd", true)).unwrap();
-        assert_eq!(sh, "ls\npwd\nexec bash -i\n");
+        let interactive = if cfg!(target_os = "macos") { "exec \"${SHELL:-/bin/zsh}\" -i\n" } else { "exec bash -i\n" };
+        assert_eq!(sh, format!("ls\npwd\n{interactive}"));
         let sh = String::from_utf8(script_file_content(Shell::Bash, "ls\n", false)).unwrap();
         assert_eq!(sh, "ls\n");
     }
@@ -274,9 +306,14 @@ mod tests {
             shell_argv(Shell::PowerShell, script, false, ps, None).unwrap(),
             ["powershell.exe", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", r"C:\Temp\r\a1.ps1"]
         );
-        assert_eq!(shell_argv(Shell::Cmd, Path::new(r"C:\t\a.cmd"), true, ps, None).unwrap(), ["cmd.exe", "/d", "/k", r"C:\t\a.cmd"]);
-        assert_eq!(shell_argv(Shell::Cmd, Path::new(r"C:\t\a.cmd"), false, ps, None).unwrap(), ["cmd.exe", "/d", "/c", r"C:\t\a.cmd"]);
-        assert_eq!(shell_argv(Shell::Bash, Path::new(r"C:\t\a.sh"), false, ps, Some(bash)).unwrap(), [r"C:\Program Files\Git\bin\bash.exe", "C:/t/a.sh"]);
+        if cfg!(windows) {
+            assert_eq!(shell_argv(Shell::Cmd, Path::new(r"C:\t\a.cmd"), true, ps, None).unwrap(), ["cmd.exe", "/d", "/k", r"C:\t\a.cmd"]);
+            assert_eq!(shell_argv(Shell::Cmd, Path::new(r"C:\t\a.cmd"), false, ps, None).unwrap(), ["cmd.exe", "/d", "/c", r"C:\t\a.cmd"]);
+            assert_eq!(shell_argv(Shell::Bash, Path::new(r"C:\t\a.sh"), false, ps, Some(bash)).unwrap(), [r"C:\Program Files\Git\bin\bash.exe", "C:/t/a.sh"]);
+        } else {
+            assert!(shell_argv(Shell::Cmd, Path::new("/t/a.cmd"), true, ps, None).is_err());
+            assert_eq!(shell_argv(Shell::Bash, Path::new("/tmp/r/a.sh"), false, ps, Some(Path::new("/bin/bash"))).unwrap(), ["/bin/bash", "/tmp/r/a.sh"]);
+        }
         assert!(shell_argv(Shell::Bash, Path::new(r"C:\t\a.sh"), false, ps, None).is_err());
     }
 
@@ -298,7 +335,7 @@ mod tests {
         for (i, (lang, code)) in cases.iter().enumerate() {
             let id = format!("test-{i}");
             let (shell, script, dir) = prepare(&id, lang, code, &cwd.to_string_lossy(), false).unwrap();
-            let argv = shell_argv(shell, &script, false, &find_powershell(), find_bash().as_deref()).unwrap();
+            let argv = argv_for(shell, &script, false).unwrap();
             let out = Command::new(&argv[0]).args(&argv[1..]).current_dir(&dir).output().unwrap();
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             println!("--- {lang}: {argv:?}\n{text}{}", String::from_utf8_lossy(&out.stderr));
@@ -339,7 +376,7 @@ pub mod commands {
         rows: u16,
     ) -> Result<PtyInfo, String> {
         let (shell, script, cwd) = prepare(&run_id, &lang, &code, &cwd, false)?;
-        let argv = shell_argv(shell, &script, false, &find_powershell(), find_bash().as_deref())?;
+        let argv = argv_for(shell, &script, false)?;
         ptys.launch(&app, LaunchSpec { key: format!("run-{run_id}"), cwd, program: Program::Raw(argv), cols, rows })
     }
 
@@ -347,7 +384,7 @@ pub mod commands {
     #[tauri::command(async)]
     pub fn run_external(state: State<crate::AppState>, run_id: String, lang: String, code: String, cwd: String) -> Result<(), String> {
         let (shell, script, cwd) = prepare(&run_id, &lang, &code, &cwd, true)?;
-        let argv = shell_argv(shell, &script, true, &find_powershell(), find_bash().as_deref())?;
+        let argv = argv_for(shell, &script, true)?;
         open_window(state.terminal, &cwd, &argv)
     }
 }

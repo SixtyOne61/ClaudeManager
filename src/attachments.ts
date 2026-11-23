@@ -20,7 +20,8 @@ export function composeMessage(text: string, paths: string[]): string {
 }
 
 const TOKEN = /@"([^"]+)"|@(\S+)/g;
-const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+/** Chemin absolu Windows (`C:\`, `\\serveur`) ou Unix (`/`). */
+const ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
 
 /** Chemins d'une ligne faite uniquement de mentions de chemins absolus, sinon null. */
 function attachmentLine(line: string): string[] | null {

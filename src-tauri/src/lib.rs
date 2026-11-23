@@ -18,6 +18,7 @@ mod run;
 mod scanner;
 mod search;
 mod sessions;
+mod shell_env;
 mod worktrees;
 
 use actions::{SessionFiles, Terminal};
@@ -505,6 +506,9 @@ pub fn run_subcommand() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Avant tout autre thread : `PATH` du shell de l'utilisateur (voir shell_env.rs).
+    #[cfg(target_os = "macos")]
+    shell_env::import_login_path();
     let paths = AppPaths::detect();
     let _ = std::fs::create_dir_all(&paths.app_dir);
     let state = AppState {

@@ -149,10 +149,31 @@ pub fn session_file_exists(projects_root: &Path, session_id: &str) -> bool {
         .any(|d| d.path().join(&name).is_file())
 }
 
-/// Écrit un dossier sous une forme unique : barres obliques inverses, lettre de lecteur
-/// en majuscule, séparateurs en double fusionnés, pas de séparateur final (sauf `C:\`).
-/// Évite que Claude Code redemande sa confiance pour un même dossier écrit autrement.
+/// Écrit un dossier sous une forme unique, pour que Claude Code ne redemande pas sa
+/// confiance pour un même dossier écrit autrement. Voir [`normalize_windows_dir`] et
+/// [`normalize_unix_dir`].
 pub fn normalize_dir(path: &str) -> String {
+    if cfg!(windows) { normalize_windows_dir(path) } else { normalize_unix_dir(path) }
+}
+
+/// Unix : séparateurs en double fusionnés, pas de `/` final (sauf la racine).
+pub fn normalize_unix_dir(path: &str) -> String {
+    let p = path.trim();
+    let mut out = String::with_capacity(p.len());
+    for c in p.chars() {
+        if !(c == '/' && out.ends_with('/')) {
+            out.push(c);
+        }
+    }
+    while out.len() > 1 && out.ends_with('/') {
+        out.pop();
+    }
+    out
+}
+
+/// Windows : barres obliques inverses, lettre de lecteur en majuscule, séparateurs en
+/// double fusionnés, pas de séparateur final (sauf `C:\`).
+pub fn normalize_windows_dir(path: &str) -> String {
     let p = path.trim().replace('/', "\\");
     // Préfixe UNC (`\\serveur\partage`) conservé tel quel.
     let (prefix, rest) = match p.strip_prefix("\\\\") {
@@ -204,12 +225,13 @@ pub fn build_argv(claude: &Path, args: &[String]) -> Vec<String> {
     argv
 }
 
-/// Cherche l'exécutable `claude` : dans le PATH (`claude.exe`, puis `claude.cmd`),
-/// puis aux emplacements d'installation habituels.
+/// Cherche l'exécutable `claude` : dans le PATH (`claude.exe`, puis `claude.cmd` sous
+/// Windows ; `claude` ailleurs), puis aux emplacements d'installation habituels.
 pub fn find_claude() -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
-    for name in ["claude.exe", "claude.cmd"] {
+    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
+    for name in names {
         for d in &dirs {
             let c = d.join(name);
             if c.is_file() {
@@ -218,16 +240,29 @@ pub fn find_claude() -> Option<PathBuf> {
         }
     }
     let home = dirs::home_dir()?;
-    let fallbacks = [
-        home.join(r".local\bin\claude.exe"),
-        dirs::data_dir().map(|d| d.join(r"npm\claude.cmd")).unwrap_or_default(),
-    ];
+    let fallbacks: Vec<PathBuf> = if cfg!(windows) {
+        vec![home.join(r".local\bin\claude.exe"), dirs::data_dir().map(|d| d.join(r"npm\claude.cmd")).unwrap_or_default()]
+    } else {
+        vec![
+            home.join(".local/bin/claude"),
+            home.join(".claude/local/claude"),
+            home.join(".npm-global/bin/claude"),
+            PathBuf::from("/opt/homebrew/bin/claude"),
+            PathBuf::from("/usr/local/bin/claude"),
+        ]
+    };
     fallbacks.into_iter().find(|p| p.is_file())
 }
 
 /// Message affiché quand `claude` est introuvable.
+#[cfg(windows)]
 pub const ERR_CLAUDE_MISSING: &str = "Claude Code (la commande « claude ») est introuvable.\n\
 Installez-le (par exemple, dans PowerShell : irm https://claude.ai/install.ps1 | iex ; \
+voir la documentation de Claude Code), \
+vérifiez que « claude » fonctionne dans un terminal, puis redémarrez Claude Manager.";
+#[cfg(not(windows))]
+pub const ERR_CLAUDE_MISSING: &str = "Claude Code (la commande « claude ») est introuvable.\n\
+Installez-le (par exemple, dans un terminal : curl -fsSL https://claude.ai/install.sh | bash ; \
 voir la documentation de Claude Code), \
 vérifiez que « claude » fonctionne dans un terminal, puis redémarrez Claude Manager.";
 
@@ -328,6 +363,14 @@ impl PtyManager {
         cmd.env_remove("CLAUDE_CODE_ENTRYPOINT");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Une app lancée depuis le Finder n'a pas de locale : sans elle, les accents et
+        // les symboles de Claude Code s'afficheraient mal.
+        #[cfg(unix)]
+        {
+            if std::env::var_os("LANG").is_none_or(|l| l.is_empty()) {
+                cmd.env("LANG", "en_US.UTF-8");
+            }
+        }
         // Dossier de l'app en tête du PATH : la ligne d'état (`claude-manager.exe statusline`,
         // voir limits.rs) passe par un shell et trouve l'exécutable par son nom.
         if let Some(path) = std::env::current_exe().ok().and_then(|exe| crate::limits::path_with_exe_dir(&exe, std::env::var_os("PATH"))) {
@@ -452,18 +495,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_dirs() {
-        assert_eq!(normalize_dir("c:/Users/moi/Projet"), r"C:\Users\moi\Projet");
-        assert_eq!(normalize_dir(r"C:\Users\moi\Projet\"), r"C:\Users\moi\Projet");
-        assert_eq!(normalize_dir(r"d:\a//b\\c/"), r"D:\a\b\c");
-        assert_eq!(normalize_dir("c:/"), r"C:\");
-        assert_eq!(normalize_dir("c:"), r"C:\");
-        assert_eq!(normalize_dir(r"C:\"), r"C:\");
-        assert_eq!(normalize_dir(r"\\serveur\partage\dossier\"), r"\\serveur\partage\dossier");
-        assert_eq!(normalize_dir("  C:\\x  "), r"C:\x");
+    fn normalizes_windows_dirs() {
+        let n = normalize_windows_dir;
+        assert_eq!(n("c:/Users/moi/Projet"), r"C:\Users\moi\Projet");
+        assert_eq!(n(r"C:\Users\moi\Projet\"), r"C:\Users\moi\Projet");
+        assert_eq!(n(r"d:\a//b\\c/"), r"D:\a\b\c");
+        assert_eq!(n("c:/"), r"C:\");
+        assert_eq!(n("c:"), r"C:\");
+        assert_eq!(n(r"C:\"), r"C:\");
+        assert_eq!(n(r"\\serveur\partage\dossier\"), r"\\serveur\partage\dossier");
+        assert_eq!(n("  C:\\x  "), r"C:\x");
         // Déjà normalisé : inchangé.
         let p = r"C:\Users\olivi\OneDrive\Desktop\Projets";
-        assert_eq!(normalize_dir(p), p);
+        assert_eq!(n(p), p);
+    }
+
+    #[test]
+    fn normalizes_unix_dirs() {
+        let n = normalize_unix_dir;
+        assert_eq!(n("/Users/moi/Projet/"), "/Users/moi/Projet");
+        assert_eq!(n("//Users//moi///Projet"), "/Users/moi/Projet");
+        assert_eq!(n("  /Users/moi/Mon projet  "), "/Users/moi/Mon projet");
+        assert_eq!(n("/"), "/");
+        assert_eq!(n("///"), "/");
+        // Une barre oblique inverse est un caractère comme un autre sous Unix.
+        assert_eq!(n(r"/a/b\c"), r"/a/b\c");
     }
 
     #[test]

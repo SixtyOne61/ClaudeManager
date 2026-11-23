@@ -22,7 +22,7 @@ import { ProjectView } from "./components/ProjectView";
 import { ArchivesView } from "./components/ArchivesView";
 import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
 import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
-import { newId, projectName } from "./util";
+import { newId, projectName, worktreePath } from "./util";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
 import { putConversationInSection } from "./sections";
@@ -52,10 +52,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
 
-  // Ctrl+Maj+F ouvre la recherche globale.
+  // Ctrl+Maj+F (⌘+Maj+F sur Mac) ouvre la recherche globale.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setActiveTerminal(null);
         setSearchOpen(true);
@@ -323,7 +323,7 @@ export default function App() {
           ? null
           : {
               name: wtName || "(nom automatique)",
-              path: wtName ? `${path.replace(/[\\/]+$/, "")}\\.claude\\worktrees\\${wtName}` : `${path.replace(/[\\/]+$/, "")}\\.claude\\worktrees`,
+              path: worktreePath(path, wtName),
               exists: true,
             },
     };
@@ -418,7 +418,7 @@ export default function App() {
   };
 
   const trashSession = async (s: SessionInfo) => {
-    const ok = await ask(`Mettre la conversation « ${s.title} » à la Corbeille ?\nElle pourra être récupérée depuis la Corbeille Windows.`, {
+    const ok = await ask(`Mettre la conversation « ${s.title} » à la Corbeille ?\nElle pourra être récupérée depuis la Corbeille.`, {
       title: "Supprimer la conversation",
       kind: "warning",
       okLabel: "Mettre à la Corbeille",
@@ -457,7 +457,7 @@ export default function App() {
       confirmed ||
       (await ask(
       trash
-        ? `Mettre ${count(list.length)} à la Corbeille ?\n${plural ? "Elles pourront être récupérées" : "Elle pourra être récupérée"} depuis la Corbeille Windows.\n\n${titles(list)}`
+        ? `Mettre ${count(list.length)} à la Corbeille ?\n${plural ? "Elles pourront être récupérées" : "Elle pourra être récupérée"} depuis la Corbeille.\n\n${titles(list)}`
         : `Archiver ${count(list.length)} ?\n${plural ? "Elles pourront être restaurées" : "Elle pourra être restaurée"} depuis les Archives.\n\n${titles(list)}`,
       {
         title: trash ? "Supprimer les conversations" : "Archiver les conversations",

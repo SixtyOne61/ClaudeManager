@@ -30,9 +30,12 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis"
+      "nsis",
+      "app",
+      "dmg"
     ],
     "shortDescription": "Organiseur de projets et conversations Claude Code",
+    "category": "DeveloperTool",
     "windows": {
       "nsis": {
         "installMode": "currentUser",
@@ -40,6 +43,10 @@
           "French"
         ]
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
     },
     "icon": [
       "icons/32x32.png",
