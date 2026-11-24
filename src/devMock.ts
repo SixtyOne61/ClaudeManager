@@ -705,6 +705,11 @@ export function installDevMock() {
     if (cmd === "conversation_read") return fakeConversationRead(a);
     if (cmd === "hub_messages") return fakeHubMessages(String(a.hubId));
     if (cmd === "messaging_directory") return fakeNames;
+    // Nom de messagerie actuel : seulement si la conversation « tourne » (terminal fictif ouvert).
+    if (cmd === "messaging_name") {
+      const id = String(a.sessionId);
+      return fakePtys.has(id) ? (fakeNames.find((n) => n.sessionId === id)?.name ?? `fictif-${id.slice(0, 4)}`) : null;
+    }
     if (cmd === "list_slash_commands") return fakeSlashCommands();
     if (cmd === "run_integrated") return fakeRun(a);
     if (cmd === "plugin:opener|open_url") return void window.open(String(a.url), "_blank");

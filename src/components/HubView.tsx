@@ -13,6 +13,7 @@ import { roleLabel, sortedMembers } from "../hubs";
 import { messageHeadline, useHubThread, type HubMessage, type HubPeer } from "../messages";
 import { renderMarkdown } from "../markdown";
 import { ActivityDot } from "./Activity";
+import { AddExecutorButton } from "./Hubs";
 
 interface Props {
   hub: Hub;
@@ -22,9 +23,11 @@ interface Props {
   titleOf: (id: string) => string | null;
   /** Ouvre une conversation par son identifiant (onglet, ou archives). */
   onOpenConversation: (id: string) => void;
+  /** « + Exécutant » (grisé sans coordinateur). */
+  onAddExecutor: () => void;
 }
 
-export function HubView({ hub, config, projects, titleOf, onOpenConversation }: Props) {
+export function HubView({ hub, config, projects, titleOf, onOpenConversation, onAddExecutor }: Props) {
   const activities = useActivities();
   const thread = useHubThread(hub);
   const projectOf = (id: string) => [...projects.values()].find((p) => p.sessions.some((s) => s.id === id)) ?? null;
@@ -39,6 +42,9 @@ export function HubView({ hub, config, projects, titleOf, onOpenConversation }: 
             </span>{" "}
             {hub.name}
           </h2>
+          <div className="project-actions hub-view-actions">
+            <AddExecutorButton hub={hub} onClick={onAddExecutor} />
+          </div>
         </div>
         <p className="muted">
           Hub de {hub.members.length} conversation{hub.members.length > 1 ? "s" : ""}. Les messages sont ceux que les conversations s'envoient avec la

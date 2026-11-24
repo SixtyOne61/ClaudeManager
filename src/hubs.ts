@@ -12,6 +12,7 @@
 // - defaultRole(hub)           rôle d'une conversation ajoutée par glisser-déposer
 // - sortedMembers(hub)         membres, coordinateur en tête
 // - HUB_ROLES, roleLabel()     libellés des rôles
+// - executorFirstMessage()     premier message d'un exécutant lancé avec « + Exécutant »
 
 import type { Config, Hub, HubMember, HubRole } from "./api";
 
@@ -62,4 +63,24 @@ export function sortedMembers(hub: Hub): HubMember[] {
 /** Info-bulle de l'icône 🔗 d'une conversation membre. */
 export function hubHint(hub: Hub, role: HubRole): string {
   return `Hub « ${hub.name} » · ${roleLabel(role)}` + (hub.archived ? " (archivé)" : "");
+}
+
+/** Explication du bouton « + Exécutant » grisé (hub sans coordinateur) ; null : disponible. */
+export function executorBlocker(hub: Hub): string | null {
+  return coordinatorOf(hub) ? null : "Désignez d'abord un coordinateur : c'est à lui que l'exécutant rendra compte";
+}
+
+/**
+ * Premier message d'un exécutant lancé avec « + Exécutant » : la tâche, puis qui est son
+ * coordinateur et la consigne de lui rendre compte. `coordinator.messagingName` : nom de
+ * messagerie actuel du coordinateur (null s'il ne tourne pas : seul le titre de sa
+ * conversation est cité).
+ */
+export function executorFirstMessage(task: string, hubName: string, coordinator: { messagingName: string | null; title: string }): string {
+  const who = coordinator.messagingName ? `\`${coordinator.messagingName}\`` : `« ${coordinator.title} »`;
+  return (
+    `${task.trim()}\n\n` +
+    `Tu es un exécutant du hub « ${hubName} ». Ton coordinateur est la conversation ${who}. ` +
+    "Quand tu as fini (ou si tu es bloqué), envoie-lui un compte rendu avec l'outil SendMessage."
+  );
 }

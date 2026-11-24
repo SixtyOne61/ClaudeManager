@@ -1,14 +1,15 @@
 // Hubs dans l'interface (voir src/hubs.ts) : bloc en haut de la barre latérale, icône 🔗 d'une
-// conversation membre, fenêtre « Ajouter à un hub… ».
+// conversation membre, fenêtres « Ajouter à un hub… » et « + Exécutant ».
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { Archive, ChevronDown, ChevronRight, Pencil, Trash2, X } from "lucide-react";
-import type { ArchiveEntry, Config, Hub, HubRole, ProjectInfo, SessionInfo } from "../api";
+import { Archive, ChevronDown, ChevronRight, Pencil, Trash2, UserPlus, X } from "lucide-react";
+import { api, type ArchiveEntry, type Config, type Hub, type HubRole, type ProjectInfo, type SessionInfo } from "../api";
 import { colorStyle, projectName } from "../util";
 import { countActivities, type Activity } from "../activity";
 import { hasSuggestion, useSuggestions } from "../suggestions";
-import { HUB_ROLES, activeHubs, coordinatorOf, hubHint, hubOf, roleLabel, sortedMembers } from "../hubs";
+import { HUB_ROLES, activeHubs, coordinatorOf, executorBlocker, hubHint, hubOf, roleLabel, sortedMembers } from "../hubs";
+import { messagesApi } from "../messages";
 import { ActivityCounts, ActivityDot } from "./Activity";
 import { ColorPicker } from "./ColorPicker";
 import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
@@ -46,6 +47,8 @@ export interface HubActions {
   onDelete: (hub: Hub) => void;
   onSetRole: (hub: Hub, sessionId: string, role: HubRole) => void;
   onRemoveMember: (hub: Hub, sessionId: string) => void;
+  /** « + Exécutant » : lance une nouvelle conversation exécutante (hub avec coordinateur). */
+  onAddExecutor?: (hub: Hub) => void;
 }
 
 /** Conversation d'un membre : dans un projet, ou dans les archives. */
@@ -130,6 +133,7 @@ function HubBlock(props: {
         <ActivityCounts {...countActivities(props.activities, ids)} />
         <span className="count">{hub.members.length}</span>
         <span className="hover-actions" onPointerDown={stop}>
+          {actions.onAddExecutor && <AddExecutorButton hub={hub} onClick={() => actions.onAddExecutor?.(hub)} compact />}
           <button className="icon-btn" title="Renommer" onClick={() => actions.onRename(hub)}>
             <Pencil size={13} />
           </button>
@@ -288,6 +292,183 @@ export function HubDialog(props: {
           </button>
           <button type="submit" className="btn primary" disabled={!valid || unchanged}>
             {current ? "Valider" : "Ajouter"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---- « + Exécutant » ---------------------------------------------------------------------
+
+/** Bouton « + Exécutant », grisé (avec l'explication) si le hub n'a pas de coordinateur. */
+export function AddExecutorButton({ hub, onClick, compact }: { hub: Hub; onClick: () => void; compact?: boolean }) {
+  const blocker = executorBlocker(hub);
+  return compact ? (
+    <button className="icon-btn" title={blocker ? `+ Exécutant : ${blocker}` : "+ Exécutant…"} disabled={!!blocker} onClick={onClick}>
+      <UserPlus size={13} />
+    </button>
+  ) : (
+    <button className="btn" title={blocker ?? "Lancer une nouvelle conversation exécutante, qui rendra compte au coordinateur"} disabled={!!blocker} onClick={onClick}>
+      <UserPlus size={14} /> Exécutant
+    </button>
+  );
+}
+
+/** Demande de la fenêtre « + Exécutant ». */
+export interface ExecutorRequest {
+  projectKey: string;
+  task: string;
+  /** Nom du nouveau worktree (vide = nom choisi par Claude Code), ou null : dans le dossier du projet. */
+  worktree: string | null;
+}
+
+/** Relecture du nom de messagerie du coordinateur tant que la fenêtre est ouverte (il peut être lancé entre-temps). */
+const COORDINATOR_POLL_MS = 3000;
+
+/**
+ * « + Exécutant » : projet (par défaut celui du coordinateur), tâche, et « Dans un nouveau
+ * worktree » coché par défaut (nom facultatif). Indique si le coordinateur tourne (son nom de
+ * messagerie sera donné à l'exécutant) et propose sinon de l'ouvrir d'abord.
+ */
+export function ExecutorDialog(props: {
+  hub: Hub;
+  /** Projets proposés : connus, non archivés, avec un dossier. */
+  projects: { key: string; name: string; path: string }[];
+  defaultProjectKey: string | null;
+  coordinator: { id: string; title: string };
+  validateWorktree: (name: string) => string | null;
+  onOpenCoordinator: () => void;
+  onSubmit: (r: ExecutorRequest) => void;
+  onClose: () => void;
+}) {
+  const [projectKey, setProjectKey] = useState(
+    () => props.projects.find((p) => p.key === props.defaultProjectKey)?.key ?? props.projects[0]?.key ?? "",
+  );
+  const [task, setTask] = useState("");
+  const [inWorktree, setInWorktree] = useState(true);
+  const [worktree, setWorktree] = useState("");
+  // Dépôt git ? (null : vérification en cours ; un worktree n'est possible que dans un dépôt git)
+  const [isGit, setIsGit] = useState<boolean | null>(null);
+  // Nom de messagerie du coordinateur : undefined = lecture en cours, null = il ne tourne pas.
+  const [name, setName] = useState<string | null | undefined>(undefined);
+  const path = props.projects.find((p) => p.key === projectKey)?.path ?? null;
+  const coordinatorId = props.coordinator.id;
+
+  useEffect(() => {
+    setIsGit(null);
+    if (!path) return;
+    let cancelled = false;
+    api
+      .isGitRepo(path)
+      .then((g) => !cancelled && setIsGit(g))
+      .catch(() => !cancelled && setIsGit(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () =>
+      messagesApi
+        .messagingName(coordinatorId)
+        .then((n) => !cancelled && setName(n))
+        .catch(() => !cancelled && setName(null));
+    pull();
+    const timer = setInterval(pull, COORDINATOR_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [coordinatorId]);
+
+  const worktreeOk = isGit !== false;
+  const useWorktree = inWorktree && worktreeOk;
+  const error = useWorktree ? props.validateWorktree(worktree) : null;
+  const valid = !!path && task.trim().length > 0 && !error;
+  const submit = () => {
+    if (valid) props.onSubmit({ projectKey, task: task.trim(), worktree: useWorktree ? worktree.trim() : null });
+  };
+
+  return (
+    <Modal title={`+ Exécutant dans « ${props.hub.name} »`} onClose={props.onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="executor-coordinator">
+          <span>
+            Coordinateur : <strong>{props.coordinator.title}</strong>
+            {name && (
+              <>
+                {" "}
+                (nom de messagerie <code>{name}</code>)
+              </>
+            )}
+          </span>
+          {name === null && (
+            <div className="executor-warning">
+              <span>
+                Il ne tourne pas : l'exécutant ne connaîtra que le nom de sa conversation, pas son nom de messagerie (qui change à chaque lancement). Ouvrez-le
+                d'abord pour que l'exécutant puisse lui rendre compte.
+              </span>
+              <button type="button" className="btn small" onClick={props.onOpenCoordinator}>
+                Ouvrir le coordinateur
+              </button>
+            </div>
+          )}
+        </div>
+        <label className="field">
+          <span>Projet</span>
+          <select value={projectKey} onChange={(e) => setProjectKey(e.target.value)}>
+            {props.projects.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Tâche</span>
+          <textarea
+            value={task}
+            rows={6}
+            placeholder="Ce que l'exécutant doit faire (envoyé comme premier message)"
+            onChange={(e) => setTask(e.target.value)}
+            onKeyDown={(e) => {
+              // Ctrl+Entrée (⌘+Entrée) : valider.
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            autoFocus
+          />
+          <small>Suivie de la consigne de rendre compte au coordinateur avec l'outil SendMessage.</small>
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={useWorktree} disabled={!worktreeOk} onChange={(e) => setInWorktree(e.target.checked)} />
+          Dans un nouveau worktree
+        </label>
+        {!worktreeOk && <small className="executor-hint">Le dossier de ce projet n'est pas un dépôt git : l'exécutant démarrera dans le dossier du projet.</small>}
+        {useWorktree && (
+          <label className="field executor-worktree">
+            <span>Nom du worktree (facultatif)</span>
+            <input value={worktree} placeholder="ex. correction-connexion" onChange={(e) => setWorktree(e.target.value)} spellCheck={false} />
+            <small>
+              {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
+            </small>
+          </label>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={props.onClose}>
+            Annuler
+          </button>
+          <button type="submit" className="btn primary" disabled={!valid}>
+            Lancer l'exécutant
           </button>
         </div>
       </form>

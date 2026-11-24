@@ -42,6 +42,8 @@ export const messagesApi = {
   hubMessages: (hubId: string) => invoke<HubMessage[]>("hub_messages", { hubId }),
   /** Noms de messagerie connus. */
   messagingDirectory: () => invoke<NameUse[]>("messaging_directory"),
+  /** Nom de messagerie actuel d'une conversation, null si elle ne tourne pas. */
+  messagingName: (sessionId: string) => invoke<string | null>("messaging_name", { sessionId }),
 };
 
 /**

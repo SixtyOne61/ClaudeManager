@@ -27,14 +27,14 @@ import { NewProjectDialog, TextPrompt, WorktreeOfferDialog } from "./components/
 import { newId, projectName, worktreePath } from "./util";
 import { HUB_TAB_PREFIX, TerminalStack, TerminalTabBar, hubTabId, type OpenTerminal } from "./components/TerminalTabs";
 import { HubView } from "./components/HubView";
-import { ConversationLinksContext } from "./messages";
+import { ConversationLinksContext, messagesApi } from "./messages";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree, worktreeNameError } from "./pty";
 import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
 import { RULE_WORKTREE, dismissSuggestion, isRuleEnabled } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
-import { HubDialog, type HubActions, type HubChoice } from "./components/Hubs";
-import { activeHubs, defaultRole } from "./hubs";
+import { ExecutorDialog, HubDialog, type ExecutorRequest, type HubActions, type HubChoice } from "./components/Hubs";
+import { activeHubs, coordinatorOf, defaultRole, executorBlocker, executorFirstMessage } from "./hubs";
 import {
   endHandoff,
   handoffBlocker,
@@ -60,6 +60,7 @@ type DialogState =
   | { kind: "newHub" }
   | { kind: "renameHub"; hub: Hub }
   | { kind: "addToHub"; session: SessionInfo }
+  | { kind: "addExecutor"; hubId: string }
   | { kind: "worktreeOffer"; projectKey: string; path: string; sectionId: string | null; count: number }
   | null;
 
@@ -99,6 +100,8 @@ export default function App() {
   const [pending, setPending] = useState<SessionInfo[]>([]);
   /** Section où ranger une nouvelle conversation, une fois `claude` démarré. */
   const placeIn = useRef(new Map<string, { projectKey: string; sectionId: string | null }>());
+  /** Hub où ranger un nouvel exécutant (« + Exécutant »), une fois `claude` démarré. */
+  const joinHub = useRef(new Map<string, string>());
   /** Moment où l'app a fermé son propre terminal pour une conversation (voir ticket 09). */
   const releasedAt = useRef(new Map<string, number>());
   /** Conversations en cours d'ouverture (vérification « ouverte ailleurs » en attente). */
@@ -410,6 +413,13 @@ export default function App() {
    * lancement, pour que le backend garde sa place (terminal ouvert) même sans fichier.
    */
   const terminalStarted = (t: OpenTerminal) => {
+    // Nouvel exécutant : rangé dans son hub une fois son terminal ouvert (sans fichier, il
+    // serait sinon retiré du hub au scan suivant).
+    const hubId = joinHub.current.get(t.sessionId);
+    if (hubId) {
+      joinHub.current.delete(t.sessionId);
+      api.hubSetMember(hubId, t.sessionId, "executant").then(setConfig).catch(showError);
+    }
     const place = placeIn.current.get(t.sessionId);
     if (!place) return;
     placeIn.current.delete(t.sessionId);
@@ -423,6 +433,7 @@ export default function App() {
     setScan(fresh);
     if (fresh.projects.some((p) => p.sessions.some((s) => s.id === id))) return;
     placeIn.current.delete(id);
+    joinHub.current.delete(id);
     setPending((ps) => ps.filter((s) => s.id !== id));
     updateConfigRef.current((c) => putConversationInSection(c, "", null, id));
   };
@@ -884,6 +895,40 @@ export default function App() {
     if (ok) hubCall(() => api.hubDelete(hub.id));
   };
 
+  /** Projets proposés pour un exécutant : connus, non archivés, avec un dossier existant. */
+  const executorProjects = () =>
+    [...projects.values()]
+      .filter((p) => p.path && p.exists && !config.projects[p.key]?.archived && (!p.isTemp || config.showTempProjects))
+      .map((p) => ({ key: p.key, name: projectName(p, config), path: p.path! }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+  /** Projet du coordinateur (celui où il est affiché, ou celui de son archive). */
+  const projectOfConversation = (id: string): string | null =>
+    findSession(id)?.p.key ?? config.archives.find((a) => a.sessionId === id)?.projectKey ?? null;
+
+  /**
+   * « + Exécutant » validé : nouvelle conversation dans le projet choisi (dans un nouveau
+   * worktree si demandé, sans la fenêtre « troisième conversation » : le choix vient d'être
+   * fait), rangée dans le hub comme exécutant une fois lancée, avec pour premier message la
+   * tâche et la consigne de rendre compte au coordinateur (ADR 0002 : l'app tape ce texte
+   * comme l'utilisateur l'aurait fait).
+   */
+  const startExecutor = async (hubId: string, r: ExecutorRequest) => {
+    const hub = config.hubs?.find((h) => h.id === hubId);
+    const coordinator = hub ? coordinatorOf(hub) : null;
+    const p = projects.get(r.projectKey);
+    if (!hub || !coordinator || !p?.path) return;
+    // Nom de messagerie relu au dernier moment : il change à chaque lancement du coordinateur.
+    const messagingName = await messagesApi.messagingName(coordinator.conversationId).catch(() => null);
+    const text = executorFirstMessage(r.task, hub.name, { messagingName, title: conversationTitle(coordinator.conversationId) ?? "coordinateur" });
+    const firstLine = r.task.split(/\r?\n/)[0].trim();
+    const title = firstLine.length > 60 ? firstLine.slice(0, 59) + "…" : firstLine;
+    const id = startNewConversation(p.key, p.path, null, r.worktree ?? undefined, { title: title || NEW_CONVERSATION_TITLE });
+    if (!id) return;
+    joinHub.current.set(id, hub.id);
+    if (!(await sendWhenReady(id, text))) toast("L'exécutant n'a pas démarré : sa tâche n'a pas été envoyée.", true);
+  };
+
   /** Ouvre la « Vue Hub » dans un onglet (ou bascule sur son onglet). */
   const openHub = (hubId: string) => {
     setHubTabs((tabs) => (tabs.includes(hubId) ? tabs : [...tabs, hubId]));
@@ -905,6 +950,11 @@ export default function App() {
     onDelete: deleteHub,
     onSetRole: (hub, id, role) => hubCall(() => api.hubSetMember(hub.id, id, role)),
     onRemoveMember: (hub, id) => hubCall(() => api.hubRemoveMember(hub.id, id)),
+    onAddExecutor: (hub) => {
+      const blocked = executorBlocker(hub);
+      if (blocked) toast(blocked, true);
+      else setDialog({ kind: "addExecutor", hubId: hub.id });
+    },
   };
 
   // ---- Recherche globale ------------------------------------------------------------------
@@ -1002,6 +1052,7 @@ export default function App() {
           projects={projects}
           titleOf={conversationTitle}
           onOpenConversation={openConversationById}
+          onAddExecutor={() => hubActions.onAddExecutor?.(shownHub)}
         />
       ) : activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
@@ -1171,6 +1222,27 @@ export default function App() {
           }}
         />
       )}
+      {dialog?.kind === "addExecutor" &&
+        (() => {
+          const hub = config.hubs?.find((h) => h.id === dialog.hubId);
+          const coordinator = hub ? coordinatorOf(hub) : null;
+          if (!hub || !coordinator) return null;
+          return (
+            <ExecutorDialog
+              hub={hub}
+              projects={executorProjects()}
+              defaultProjectKey={projectOfConversation(coordinator.conversationId)}
+              coordinator={{ id: coordinator.conversationId, title: conversationTitle(coordinator.conversationId) ?? "Conversation introuvable" }}
+              validateWorktree={worktreeNameError}
+              onOpenCoordinator={() => openConversationById(coordinator.conversationId)}
+              onClose={() => setDialog(null)}
+              onSubmit={(r) => {
+                setDialog(null);
+                startExecutor(hub.id, r);
+              }}
+            />
+          );
+        })()}
       {dialog?.kind === "settings" && <SettingsDialog config={config} onChange={updateConfig} onClose={() => setDialog(null)} />}
 
       <div className="toasts">

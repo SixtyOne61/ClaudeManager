@@ -663,6 +663,14 @@ fn messaging_directory(state: State<AppState>) -> Vec<messages::NameUse> {
     messaging_directory_inner(&state)
 }
 
+/// Nom de messagerie actuel d'une conversation, si elle tourne en ce moment (lu dans
+/// `~/.claude/sessions/`, voir ADR 0002) : « + Exécutant » le donne à l'exécutant pour qu'il
+/// rende compte à son coordinateur. `None` : elle ne tourne pas (ou format inattendu).
+#[tauri::command(async)]
+fn messaging_name(state: State<AppState>, session_id: String) -> Option<String> {
+    hubs::messaging_names(&claude_dir(&state).join("sessions")).remove(&session_id)
+}
+
 fn messaging_directory_inner(state: &AppState) -> Vec<messages::NameUse> {
     state.scanner.remember_names(&messages::running_names(&claude_dir(state).join("sessions")))
 }
@@ -822,6 +830,7 @@ pub fn run() {
             hub_restore,
             hub_messages,
             messaging_directory,
+            messaging_name,
             attachments::save_pasted_image,
             attachment_preview,
             open_attachment,
