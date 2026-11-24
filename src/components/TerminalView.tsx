@@ -17,8 +17,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
-import { errorMessage } from "../api";
+import { FolderOpen, MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import { api, errorMessage } from "../api";
 import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "../pty";
 import { getActivity, isAwaitingPermission, subscribeActivity, type Activity } from "../activity";
 import { editableMessage, messageKey, sendEditedMessage, sendInterrupt, sendMessage, useConversation, type EditableMessage } from "../conversation";
@@ -330,6 +330,13 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
             <SquareTerminal size={13} /> Voir le terminal
           </button>
         )}
+        <button
+          className="btn small"
+          onClick={() => api.openFolder(cwd).catch(() => {})}
+          title={`Ouvrir le dossier dans l'explorateur : ${cwd}`}
+        >
+          <FolderOpen size={13} /> Ouvrir le dossier
+        </button>
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}
       </div>
       <div className={"conv-stage" + (formVisible ? " collapsed" : "")}>
