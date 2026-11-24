@@ -1,5 +1,5 @@
-// Barre latérale : catégories (réordonnables), projets (déplaçables entre catégories),
-// section « Non classés », accès aux archives et aux réglages. Icône 💡 sur une conversation
+// Barre latérale : hubs (en tête, voir src/hubs.ts), catégories (réordonnables), projets
+// (déplaçables entre catégories), section « Non classés », accès aux archives et aux réglages. Icône 💡 sur une conversation
 // qui a une suggestion, et sur son projet et sa catégorie (voir src/suggestions.ts).
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -51,6 +51,7 @@ import { ActivityCounts, ActivityDot } from "./Activity";
 import { countActivities, useActivities, type ActivityCount } from "../activity";
 import { hasSuggestion, useSuggestions } from "../suggestions";
 import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
+import { HUB_DROP_PREFIX, HubLinkIcon, HubsBlock, type HubActions } from "./Hubs";
 
 /** Info-bulle de l'icône 💡 d'un projet ou d'une catégorie. */
 const GROUP_SUGGESTION_HINT = "Une conversation a une suggestion";
@@ -91,6 +92,12 @@ interface Props {
   onNewConversation: (project: ProjectInfo, sectionId: string | null) => void;
   /** Ouvre les réglages. */
   onSettings?: () => void;
+  /** « + Hub » : crée un hub. */
+  onAddHub: () => void;
+  /** Actions sur les hubs (bloc en tête de la barre latérale). */
+  hubActions: HubActions;
+  /** Conversation déposée sur un hub (glisser-déposer depuis la liste des conversations). */
+  onDropOnHub: (hubId: string, sessionId: string) => void;
 }
 
 /** Vue de la barre latérale : liste des projets, ou conversations du projet courant. */
@@ -256,6 +263,19 @@ export function Sidebar(props: Props) {
   const draggedCategory = dragId?.startsWith("c:") ? config.categories.find((c) => "c:" + c.id === dragId) : undefined;
   const selectedKey = props.selection?.kind === "project" && !props.searchActive ? props.selection.key : null;
 
+  // Hubs : en tête des deux vues (zones de dépôt pour les conversations de la vue « Conversations »).
+  const hubsBlock = (
+    <HubsBlock
+      config={config}
+      projects={projects}
+      activities={activities}
+      activeSessionId={props.activeSessionId ?? null}
+      collapsed={collapsed}
+      onToggle={toggleCollapsed}
+      actions={props.hubActions}
+    />
+  );
+
   const row = (p: ProjectInfo, container: string) => (
     <ProjectRow
       key={p.key}
@@ -358,6 +378,8 @@ export function Sidebar(props: Props) {
           onOpen={props.onOpenConversation}
           onConfigChange={props.onConfigChange}
           onNew={props.onNewConversation}
+          hubs={hubsBlock}
+          onDropOnHub={props.onDropOnHub}
         />
       )}
       {!reduced && view === "projects" && (
@@ -366,10 +388,14 @@ export function Sidebar(props: Props) {
         <button className="btn small" onClick={props.onAddCategory}>
           <Plus size={14} /> Catégorie
         </button>
+        <button className="btn small" onClick={props.onAddHub} title="Regrouper des conversations qui travaillent ensemble, même de projets différents">
+          <Plus size={14} /> Hub
+        </button>
       </div>
 
       <div className="sidebar-scroll">
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
+          {hubsBlock}
           <SortableContext items={config.categories.map((c) => "c:" + c.id)} strategy={verticalListSortingStrategy}>
             {config.categories.map((cat) => {
               const list = categoryProjects(cat);
@@ -487,6 +513,10 @@ function ConversationsPanel(props: {
   /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
   onNew: (project: ProjectInfo, sectionId: string | null) => void;
   onConfigChange: (change: (c: Config) => Config) => void;
+  /** Bloc des hubs, affiché en tête (zones de dépôt `hub:<id>`). */
+  hubs: React.ReactNode;
+  /** Conversation déposée sur un hub. */
+  onDropOnHub: (hubId: string, sessionId: string) => void;
 }) {
   const { project, config } = props;
   const [dialog, setDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
@@ -519,7 +549,7 @@ function ConversationsPanel(props: {
       return closestCenter({ ...args, droppableContainers: secs });
     }
     const hits = pointerWithin(args);
-    for (const prefix of ["zone:", "s:"]) {
+    for (const prefix of [HUB_DROP_PREFIX, "zone:", "s:"]) {
       const hit = hits.filter((h) => String(h.id).startsWith(prefix));
       if (hit.length) return hit;
     }
@@ -533,6 +563,10 @@ function ConversationsPanel(props: {
     const o = String(over.id);
     if (a.startsWith("s:")) {
       if (o.startsWith("s:")) change((c) => moveSection(c, project.key, a.slice(2), o.slice(2)));
+      return;
+    }
+    if (o.startsWith(HUB_DROP_PREFIX)) {
+      if (a.startsWith("v:")) props.onDropOnHub(o.slice(HUB_DROP_PREFIX.length), a.slice(2));
       return;
     }
     const target = o.startsWith("zone:") ? o.slice(5) : o.startsWith("s:") ? o.slice(2) : null;
@@ -552,6 +586,7 @@ function ConversationsPanel(props: {
     <ConversationRow
       key={s.id}
       session={s}
+      config={config}
       color={config.conversations[s.id]?.color}
       selected={props.activeSessionId === s.id}
       activity={props.activities.get(s.id)}
@@ -583,8 +618,9 @@ function ConversationsPanel(props: {
         </button>
       </div>
       <div className="sidebar-scroll">
-        {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
+          {props.hubs}
+          {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
           {hasSections ? (
             <Zone id={NONE} className="category unsectioned">
               <div className="category-header static">
@@ -666,6 +702,7 @@ function ConversationsPanel(props: {
 /** Conversation de la liste (glissable vers une section). */
 function ConversationRow(props: {
   session: SessionInfo;
+  config: Config;
   color?: string | null;
   selected: boolean;
   activity?: import("../activity").Activity;
@@ -685,6 +722,7 @@ function ConversationRow(props: {
     >
       <ActivityDot activity={props.activity} />
       <span className="project-name">{s.title}</span>
+      <HubLinkIcon config={props.config} sessionId={s.id} />
       <ConversationSuggestionIcon sessionId={s.id} />
       <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
     </div>

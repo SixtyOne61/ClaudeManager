@@ -1,7 +1,9 @@
-// Vue « Archives » : conversations archivées, à restaurer ou mettre à la Corbeille.
+// Vue « Archives » : projets et hubs archivés, conversations archivées, à restaurer ou mettre
+// à la Corbeille.
 
 import { ArchiveRestore, ArrowLeft, ArrowRight, FolderArchive, Trash2 } from "lucide-react";
-import type { ArchiveEntry, Config } from "../api";
+import type { ArchiveEntry, Config, Hub } from "../api";
+import { archivedHubs } from "../hubs";
 import { colorStyle, formatDate } from "../util";
 import { conversationColor } from "../sections";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
@@ -13,6 +15,8 @@ interface Props {
   onTrash: (a: ArchiveEntry) => void;
   /** Restaure un projet archivé et les conversations archivées avec lui. */
   onRestoreProject: (key: string, name: string) => void;
+  /** Restaure un hub archivé et les conversations archivées avec lui. */
+  onRestoreHub: (hub: Hub) => void;
   /** Archive ouverte depuis la recherche globale : mise en évidence. */
   focus?: SearchFocus | null;
   /** Parente et suite d'une conversation (liens de hand off). */
@@ -23,7 +27,7 @@ interface Props {
 
 const lastSegment = (path: string | null | undefined) => path?.split(/[\\/]/).filter(Boolean).pop();
 
-export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, focus, lineageOf, onOpenConversation }: Props) {
+export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onRestoreHub, focus, lineageOf, onOpenConversation }: Props) {
   useScrollToFocus(focus);
   const archives = [...config.archives].sort((a, b) => b.archivedAt - a.archivedAt);
   const projectLabel = (a: ArchiveEntry) =>
@@ -39,6 +43,7 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, foc
       name: x.prefs.displayName || lastSegment(x.prefs.path) || x.key,
       count: x.archived.sessionIds.filter((id) => archivedIds.has(id)).length,
     }));
+  const hubs = archivedHubs(config);
 
   return (
     <main className="main">
@@ -83,9 +88,38 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, foc
                 </div>
               </div>
             ))}
-            <h3 className="archives-heading">Conversations archivées</h3>
           </>
         )}
+        {hubs.length > 0 && (
+          <>
+            <h3 className="archives-heading">Hubs archivés</h3>
+            {hubs.map((h) => {
+              const count = h.archived!.sessionIds.filter((id) => archivedIds.has(id)).length;
+              return (
+                <div key={h.id} className={"session-row" + (h.color ? " colored" : "")} style={colorStyle(h.color)}>
+                  <div className="session-main">
+                    <div className="session-title">🔗 {h.name}</div>
+                    <div className="session-meta">
+                      <span>archivé le {formatDate(new Date(h.archived!.archivedAt).toISOString())}</span>
+                      <span className="dot">·</span>
+                      <span>{count > 0 ? `${count} conversation${count > 1 ? "s" : ""}` : "aucune conversation"}</span>
+                    </div>
+                  </div>
+                  <div className="session-actions">
+                    <button
+                      className="btn small primary"
+                      onClick={() => onRestoreHub(h)}
+                      title="Remet le hub dans la barre latérale, avec les conversations archivées avec lui"
+                    >
+                      <ArchiveRestore size={13} /> Restaurer le hub
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+        {(projects.length > 0 || hubs.length > 0) && <h3 className="archives-heading">Conversations archivées</h3>}
         {archives.length === 0 && <div className="empty">Aucune conversation archivée.</div>}
         {archives.map((a) => {
           const lineage = lineageOf?.(a.sessionId);

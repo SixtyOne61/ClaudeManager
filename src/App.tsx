@@ -11,6 +11,7 @@ import {
   type ArchiveEntry,
   type Category,
   type Config,
+  type Hub,
   type ProjectInfo,
   type ScanResult,
   type SessionInfo,
@@ -30,6 +31,8 @@ import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
 import { RULE_WORKTREE, dismissSuggestion, isRuleEnabled } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
+import { HubDialog, type HubActions, type HubChoice } from "./components/Hubs";
+import { defaultRole } from "./hubs";
 import {
   endHandoff,
   handoffBlocker,
@@ -52,6 +55,9 @@ type DialogState =
   | { kind: "renameProject"; project: ProjectInfo }
   | { kind: "newProject" }
   | { kind: "settings" }
+  | { kind: "newHub" }
+  | { kind: "renameHub"; hub: Hub }
+  | { kind: "addToHub"; session: SessionInfo }
   | { kind: "worktreeOffer"; projectKey: string; path: string; sectionId: string | null; count: number }
   | null;
 
@@ -747,6 +753,132 @@ export default function App() {
     }
   };
 
+  // ---- Hubs (voir src/hubs.ts) ------------------------------------------------------------
+
+  /** Modification des hubs par le backend (règles garanties côté Rust). */
+  const hubCall = async (run: () => Promise<Config>) => {
+    try {
+      setConfig(await run());
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  const createHub = async (name: string) => {
+    try {
+      setConfig((await api.hubCreate(name, null)).config);
+      toast(`Hub « ${name} » créé : ajoutez-y des conversations (glisser-déposer, ou « Ajouter à un hub… »)`);
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  /** « Ajouter à un hub… » validé : hub existant, ou nouveau hub créé d'abord. */
+  const addToHub = async (sessionId: string, choice: HubChoice) => {
+    try {
+      let hubId: string;
+      if ("newHubName" in choice) {
+        const created = await api.hubCreate(choice.newHubName, null);
+        setConfig(created.config);
+        hubId = created.hubId;
+      } else hubId = choice.hubId;
+      setConfig(await api.hubSetMember(hubId, sessionId, choice.role));
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  /** Conversation déposée sur un hub : exécutant s'il a un coordinateur, sinon pair. */
+  const dropOnHub = (hubId: string, sessionId: string) => {
+    const hub = config.hubs?.find((h) => h.id === hubId);
+    if (!hub || hub.members.some((m) => m.conversationId === sessionId)) return;
+    hubCall(() => api.hubSetMember(hubId, sessionId, defaultRole(hub)));
+  };
+
+  /**
+   * Archive un hub : ses conversations partent dans les archives (comme pour un projet), puis
+   * le hub est masqué de la barre latérale. S'il reste une conversation (ignorée ou en échec),
+   * le hub n'est pas archivé. Les membres déjà archivés seuls restent dans les archives à la
+   * restauration du hub.
+   */
+  const archiveHub = async (hub: Hub) => {
+    const sessions = hub.members.flatMap((m) => {
+      const found = findSession(m.conversationId);
+      return found && !found.s.provisional ? [found.s] : [];
+    });
+    if (terminals.some((t) => sessions.some((s) => s.id === t.sessionId))) {
+      toast(`Fermez d'abord les onglets ouverts des conversations du hub « ${hub.name} ».`, true);
+      return;
+    }
+    const n = sessions.length;
+    const ok = await ask(
+      `Archiver le hub « ${hub.name} » ?\n\n` +
+        (n > 0 ? `Ses ${n} conversation${n > 1 ? "s seront archivées" : " sera archivée"} avec lui. ` : "") +
+        "Le hub disparaît de la barre latérale et se restaure depuis les Archives, avec ses conversations.",
+      { title: "Archiver le hub", kind: "warning", okLabel: "Archiver le hub", cancelLabel: "Annuler" },
+    );
+    if (!ok) return;
+    let ids: string[] = [];
+    if (n > 0) {
+      const r = await bulkSessionAction(sessions, "archive", true);
+      if (!r) return;
+      if (r.remaining > 0) {
+        toast(
+          `Le hub « ${hub.name} » n'a pas été archivé : ${r.remaining} conversation${r.remaining > 1 ? "s sont restées" : " est restée"} en place. ` +
+            "Celles déjà archivées se restaurent depuis les Archives.",
+          true,
+        );
+        return;
+      }
+      ids = r.done.map((s) => s.id);
+    }
+    try {
+      setConfig(await api.hubMarkArchived(hub.id, ids));
+      toast(`Hub « ${hub.name} » archivé`);
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  const restoreHub = async (hub: Hub) => {
+    try {
+      const r = await api.hubRestore(hub.id);
+      setConfig(r.config);
+      toast(`Hub « ${hub.name} » restauré` + (r.restored ? ` (${r.restored} conversation${r.restored > 1 ? "s" : ""})` : ""));
+      if (r.errors.length > 0) {
+        toast(
+          `${r.errors.length} conversation${r.errors.length > 1 ? "s sont restées" : " est restée"} dans les archives :\n` +
+            r.errors.slice(0, 5).join("\n") +
+            (r.errors.length > 5 ? `\n… et ${r.errors.length - 5} autre(s)` : ""),
+          true,
+        );
+      }
+    } catch (e) {
+      showError(e);
+    }
+    await refresh();
+  };
+
+  const deleteHub = async (hub: Hub) => {
+    const ok = await ask(`Supprimer le hub « ${hub.name} » ?\nSes conversations restent dans leur projet, seul le regroupement disparaît.`, {
+      title: "Supprimer le hub",
+      kind: "warning",
+      okLabel: "Supprimer",
+      cancelLabel: "Annuler",
+    });
+    if (ok) hubCall(() => api.hubDelete(hub.id));
+  };
+
+  const hubActions: HubActions = {
+    onOpenConversation: openConversationById,
+    onRename: (hub) => setDialog({ kind: "renameHub", hub }),
+    onColor: (hub, color) => hubCall(() => api.hubUpdate(hub.id, hub.name, color)),
+    onArchive: archiveHub,
+    onDelete: deleteHub,
+    onSetRole: (hub, id, role) => hubCall(() => api.hubSetMember(hub.id, id, role)),
+    onRemoveMember: (hub, id) => hubCall(() => api.hubRemoveMember(hub.id, id)),
+  };
+
   // ---- Recherche globale ------------------------------------------------------------------
 
   /** Ouvre une conversation trouvée : son projet (ou les archives) avec la conversation repérée. */
@@ -805,6 +937,9 @@ export default function App() {
         onAddProject={() => setDialog({ kind: "newProject" })}
         onToggleTemp={(show) => updateConfig((c) => ({ ...c, showTempProjects: show }))}
         onSettings={() => setDialog({ kind: "settings" })}
+        onAddHub={() => setDialog({ kind: "newHub" })}
+        hubActions={hubActions}
+        onDropOnHub={dropOnHub}
       />
 
       <div className="main-column">
@@ -843,6 +978,7 @@ export default function App() {
           onRestore={restoreArchive}
           onTrash={trashArchive}
           onRestoreProject={restoreProject}
+          onRestoreHub={restoreHub}
           focus={searchFocus?.archived ? searchFocus : null}
           lineageOf={lineageOf}
           onOpenConversation={openConversationById}
@@ -858,6 +994,7 @@ export default function App() {
           onArchive={archiveSession}
           onTrash={trashSession}
           onHandoff={(s) => startHandoff(s.id)}
+          onAddToHub={(s) => setDialog({ kind: "addToHub", session: s })}
           onArchiveMany={(list) => bulkSessionAction(list, "archive").then((r) => r !== null)}
           onTrashMany={(list) => bulkSessionAction(list, "trash").then((r) => r !== null)}
           onArchiveProject={() => archiveProject(selectedProject)}
@@ -950,6 +1087,46 @@ export default function App() {
             setDialog(null);
             if (dontAskAgain) setProjectPref(dialog.projectKey, { noWorktreeOffer: true });
             startNewConversation(dialog.projectKey, dialog.path, dialog.sectionId, worktree ?? undefined);
+          }}
+        />
+      )}
+      {dialog?.kind === "newHub" && (
+        <TextPrompt
+          title="Nouveau hub"
+          label="Nom"
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            setDialog(null);
+            createHub(name);
+          }}
+        />
+      )}
+      {dialog?.kind === "renameHub" && (
+        <TextPrompt
+          title="Renommer le hub"
+          label="Nom"
+          initial={dialog.hub.name}
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            setDialog(null);
+            hubCall(() => api.hubUpdate(dialog.hub.id, name, dialog.hub.color));
+          }}
+        />
+      )}
+      {dialog?.kind === "addToHub" && (
+        <HubDialog
+          config={config}
+          sessionId={dialog.session.id}
+          title={dialog.session.title}
+          titleOf={(id) => conversationTitle(id) ?? "conversation introuvable"}
+          onClose={() => setDialog(null)}
+          onSubmit={(choice) => {
+            setDialog(null);
+            addToHub(dialog.session.id, choice);
+          }}
+          onRemove={(hub) => {
+            setDialog(null);
+            hubCall(() => api.hubRemoveMember(hub.id, dialog.session.id));
           }}
         />
       )}

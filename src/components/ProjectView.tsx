@@ -37,6 +37,7 @@ import {
   GitBranch,
   GitBranchPlus,
   Handshake,
+  Link2,
   Trash2,
   TriangleAlert,
   X,
@@ -63,6 +64,8 @@ import { worktreeNameError } from "../pty";
 import { ActivityDot } from "./Activity";
 import { useActivities, type Activity } from "../activity";
 import { handoffBlocker, useHandoffState } from "../handoff";
+import { hubHint, hubOf } from "../hubs";
+import { HubLinkIcon } from "./Hubs";
 
 /** Zone « Sans section » (pas une vraie section). */
 const NONE = "none";
@@ -85,6 +88,8 @@ interface Props {
   onTrash: (s: SessionInfo) => void;
   /** Hand off d'une conversation (voir src/handoff.ts). */
   onHandoff: (s: SessionInfo) => void;
+  /** « Ajouter à un hub… » : choix du hub et du rôle (voir src/hubs.ts). */
+  onAddToHub: (s: SessionInfo) => void;
   /**
    * Archive / met à la Corbeille plusieurs conversations du projet (sélection multiple).
    * Renvoie `false` si l'utilisateur a annulé (la sélection est alors gardée).
@@ -381,6 +386,8 @@ export function ProjectView(props: Props) {
       onTrash={() => props.onTrash(s)}
       onColor={(c) => change((cfg) => setConversationColor(cfg, s.id, c))}
       onHandoff={() => props.onHandoff(s)}
+      config={config}
+      onAddToHub={() => props.onAddToHub(s)}
     />
   );
 
@@ -790,6 +797,9 @@ function SessionRow(props: {
   onColor: (c: string | null) => void;
   /** Hand off (disponible quand la conversation est « à toi »). */
   onHandoff: () => void;
+  config: Config;
+  /** « Ajouter à un hub… ». */
+  onAddToHub: () => void;
 }) {
   const { session: s, canLaunch } = props;
   const handoffReason = handoffBlocker(props.activity, useHandoffState(s.id));
@@ -835,6 +845,7 @@ function SessionRow(props: {
       <div className="session-main">
         <div className="session-title" title={s.firstPrompt ?? s.title}>
           {s.title}
+          <HubLinkIcon config={props.config} sessionId={s.id} />
         </div>
         {s.provisional ? (
           <div className="session-meta">
@@ -892,6 +903,9 @@ function SessionRow(props: {
         >
           <Handshake size={15} />
         </button>
+        <button className="icon-btn" title={hubButtonTitle(props.config, s.id)} onClick={props.onAddToHub}>
+          <Link2 size={15} />
+        </button>
         <button className="icon-btn" title="Archiver" onClick={props.onArchive}>
           <Archive size={15} />
         </button>
@@ -905,3 +919,8 @@ function SessionRow(props: {
   );
 }
 
+/** Info-bulle du bouton « Ajouter à un hub… » (hub et rôle actuels, le cas échéant). */
+function hubButtonTitle(config: Config, sessionId: string): string {
+  const found = hubOf(config, sessionId);
+  return found ? `Ajouter à un hub…\n${hubHint(found.hub, found.role)} : changer de hub ou de rôle, ou l'en retirer` : "Ajouter à un hub…";
+}

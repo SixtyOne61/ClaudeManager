@@ -7,14 +7,18 @@
 //! 2. à la fin du tour, [`read_summary`] lit la dernière réponse de l'agent dans le `.jsonl`
 //!    (aucun fichier écrit, donc aucune permission demandée) ;
 //! 3. la suite est créée dans le même dossier, avec [`first_message`] comme premier message ;
-//! 4. [`apply`] met à jour l'organisation (section, couleur, lien parente → suite) et la
-//!    parente est archivée (`handoff_finish` dans lib.rs).
+//! 4. [`apply`] met à jour l'organisation (section, couleur, lien parente → suite, place dans
+//!    le hub) et la parente est archivée (`handoff_finish` dans lib.rs).
+//!
+//! Parente membre d'un hub : la suite y prend sa place et son rôle, et son premier message
+//! liste les autres membres avec la consigne de les prévenir de son nouveau nom de messagerie.
 //!
 //! Le lien est gardé dans `config.json` sous `handoffLinks` (identifiant de la parente →
 //! [`HandoffLink`]) ; [`successor_of`] et [`parent_of`] le lisent dans les deux sens.
 
 use crate::config::{Config, HandoffLink};
 use crate::conversation::{read_chunk, Entry};
+use crate::hubs::{role_label, HandoffContext};
 use serde::Serialize;
 use std::path::Path;
 
@@ -59,27 +63,60 @@ pub fn last_reply(entries: &[Entry], prompt: &str) -> Option<String> {
     (!reply.is_empty()).then(|| reply.to_string())
 }
 
-/// Premier message de la suite : une phrase qui la présente, puis le résumé de passation.
-pub fn first_message(parent_title: &str, summary: &str) -> String {
+/// Premier message de la suite : une phrase qui la présente, puis le résumé de passation et,
+/// si la parente était dans un hub, la liste des autres membres avec la consigne de les
+/// prévenir de son nouveau nom de messagerie.
+pub fn first_message(parent_title: &str, summary: &str, hub: Option<&HandoffContext>) -> String {
     let parent = parent_title.trim();
     let intro = if parent.is_empty() {
         "Cette conversation prend la suite d'une conversation précédente dont le contexte était trop rempli.".to_string()
     } else {
         format!("Cette conversation prend la suite de « {parent} », dont le contexte était trop rempli.")
     };
-    format!("{intro} Voici le résumé de passation qu'elle a rédigé pour toi :\n\n{}", summary.trim())
+    let mut out = format!("{intro} Voici le résumé de passation qu'elle a rédigé pour toi :\n\n{}", summary.trim());
+    if let Some(hub) = hub {
+        out.push_str(&hub_section(hub));
+    }
+    out
+}
+
+/// Partie « hub » du premier message de la suite.
+fn hub_section(hub: &HandoffContext) -> String {
+    let mut out = format!(
+        "\n\n---\n\nTu fais partie du hub « {} » de Claude Manager, avec le rôle de {} (repris de la conversation précédente).",
+        hub.hub_name,
+        role_label(hub.role)
+    );
+    if hub.members.is_empty() {
+        out.push_str(" Il n'a pas d'autre membre pour l'instant.");
+        return out;
+    }
+    out.push_str(" Ses autres membres :\n");
+    for m in &hub.members {
+        let name = match &m.messaging_name {
+            Some(n) => format!("nom de messagerie actuel : `{n}`"),
+            None => "pas lancée en ce moment".to_string(),
+        };
+        out.push_str(&format!("\n- « {} » ({}) — {name}", m.title, role_label(m.role)));
+    }
+    out.push_str(
+        "\n\nTon nom de messagerie a changé avec cette nouvelle conversation : préviens dès maintenant chacun de ces membres de ton nouveau nom avec l'outil SendMessage, pour qu'ils continuent à t'écrire.",
+    );
+    out
 }
 
 /// Lit dans le `.jsonl` de la parente sa réponse à la consigne (voir [`last_reply`]) et
 /// prépare le premier message de la suite. `None` : fichier illisible ou réponse vide.
-pub fn read_summary(transcript: &Path, prompt: &str, parent_title: &str) -> Option<Summary> {
+/// `hub` : hub de la parente, le cas échéant (voir [`first_message`]).
+pub fn read_summary(transcript: &Path, prompt: &str, parent_title: &str, hub: Option<&HandoffContext>) -> Option<Summary> {
     let chunk = read_chunk(transcript, 0, 0);
     let summary = last_reply(&chunk.entries, prompt)?;
-    Some(Summary { first_message: first_message(parent_title, &summary), summary })
+    Some(Summary { first_message: first_message(parent_title, &summary, hub), summary })
 }
 
 /// Organisation après un hand off : la suite prend la section de la parente (juste après
-/// elle) et sa couleur, et le lien parente → suite est enregistré. La parente reste dans sa
+/// elle), sa couleur et sa place dans son hub (même rôle), et le lien parente → suite est
+/// enregistré. La parente reste dans sa
 /// section : archivée, elle y retrouvera sa place à la restauration.
 pub fn apply(cfg: &mut Config, parent: &str, successor: &str, at: u64) {
     for prefs in cfg.projects.values_mut() {
@@ -99,6 +136,7 @@ pub fn apply(cfg: &mut Config, parent: &str, successor: &str, at: u64) {
     if let Some(color) = cfg.conversations.get(parent).and_then(|p| p.color.clone()) {
         cfg.conversations.entry(successor.to_string()).or_default().color = Some(color);
     }
+    crate::hubs::replace_member(cfg, parent, successor);
     cfg.handoff_links.insert(parent.to_string(), HandoffLink { successor_id: successor.to_string(), at });
 }
 
@@ -185,13 +223,40 @@ mod tests {
         let path = tmp.path().join("s.jsonl");
         let lines = [user(PROMPT), assistant("## Objectif\nX")];
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
-        let s = read_summary(&path, PROMPT, "Menu mobile").unwrap();
+        let s = read_summary(&path, PROMPT, "Menu mobile", None).unwrap();
         assert_eq!(s.summary, "## Objectif\nX");
         assert!(s.first_message.starts_with("Cette conversation prend la suite de « Menu mobile »"));
         assert!(s.first_message.ends_with("\n\n## Objectif\nX"));
-        assert_eq!(read_summary(&tmp.path().join("absent.jsonl"), PROMPT, "X"), None);
+        assert_eq!(read_summary(&tmp.path().join("absent.jsonl"), PROMPT, "X", None), None);
         // Sans titre de parente.
-        assert!(first_message("  ", "R").starts_with("Cette conversation prend la suite d'une conversation précédente"));
+        assert!(first_message("  ", "R", None).starts_with("Cette conversation prend la suite d'une conversation précédente"));
+    }
+
+    #[test]
+    fn first_message_lists_hub_members() {
+        use crate::config::HubRole;
+        use crate::hubs::MemberBrief;
+        let hub = HandoffContext {
+            hub_name: "Refonte".into(),
+            role: HubRole::Coordinateur,
+            members: vec![
+                MemberBrief { title: "Menu".into(), role: HubRole::Executant, messaging_name: Some("site-ab".into()) },
+                MemberBrief { title: "Formulaire".into(), role: HubRole::Executant, messaging_name: None },
+            ],
+        };
+        let m = first_message("Coordination", "## Objectif\nX", Some(&hub));
+        assert!(m.starts_with("Cette conversation prend la suite de « Coordination »"));
+        assert!(m.contains("## Objectif\nX\n\n---\n\nTu fais partie du hub « Refonte »"));
+        assert!(m.contains("avec le rôle de coordinateur"));
+        assert!(m.contains("- « Menu » (exécutant) — nom de messagerie actuel : `site-ab`"));
+        assert!(m.contains("- « Formulaire » (exécutant) — pas lancée en ce moment"));
+        assert!(m.contains("SendMessage"));
+        // Seul dans son hub : pas de consigne.
+        let alone = HandoffContext { members: Vec::new(), ..hub };
+        let m = first_message("C", "R", Some(&alone));
+        assert!(m.contains("Il n'a pas d'autre membre") && !m.contains("SendMessage"));
+        // Hors hub : message inchangé.
+        assert!(!first_message("C", "R", None).contains("hub"));
     }
 
     fn config_with_section() -> Config {

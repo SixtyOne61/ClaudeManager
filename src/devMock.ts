@@ -4,7 +4,7 @@
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Config, OpenConversation, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
+import type { Config, Hub, HubRole, OpenConversation, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 import type { ChunkMeta, ConversationEntry, DiffLine } from "./conversation";
 import type { SlashEntry } from "./slashCommands";
 import type { ContextInfo, Suggestion } from "./suggestions";
@@ -92,7 +92,51 @@ let config: Config = {
   conversations: { [site.sessions[1].id]: { color: "#dc2626" }, [site.sessions[2].id]: { color: "#fde68a" } },
   archives: [],
   showTempProjects: false,
+  // Hub fictif : deux conversations de « SiteVitrine » et une de « JeuDeCartes ».
+  hubs: [
+    {
+      id: "hub-demo",
+      name: "Refonte du site",
+      color: "#0891b2",
+      members: [
+        { conversationId: site.sessions[0].id, role: "coordinateur" },
+        { conversationId: site.sessions[1].id, role: "executant" },
+        { conversationId: jeu.sessions[1].id, role: "executant" },
+      ],
+      createdAt: now - 86_400_000,
+      archived: null,
+    },
+  ],
 };
+
+/** Modifie un hub (mêmes règles que hubs.rs) ; erreur s'il n'existe plus. */
+function changeHub(id: string, f: (h: Hub) => Hub): Config {
+  if (!config.hubs?.some((h) => h.id === id)) throw "Ce hub n'existe plus.";
+  config = { ...config, hubs: config.hubs.map((h) => (h.id === id ? f(h) : h)) };
+  return config;
+}
+
+/** Range une conversation dans un hub (elle quitte les autres ; un seul coordinateur). */
+function setHubMember(hubId: string, conversationId: string, role: HubRole): Config {
+  changeHub(hubId, (h) => h);
+  config = {
+    ...config,
+    hubs: (config.hubs ?? []).map((h) => {
+      if (h.id !== hubId) return { ...h, members: h.members.filter((m) => m.conversationId !== conversationId) };
+      const members = h.members.map((m) => (role === "coordinateur" && m.role === "coordinateur" ? { ...m, role: "executant" as HubRole } : m));
+      const i = members.findIndex((m) => m.conversationId === conversationId);
+      if (i >= 0) members[i] = { conversationId, role };
+      else members.push({ conversationId, role });
+      return { ...h, members };
+    }),
+  };
+  return config;
+}
+
+/** Une conversation supprimée quitte son hub. */
+function dropFromHubs(id: string) {
+  config = { ...config, hubs: (config.hubs ?? []).map((h) => ({ ...h, members: h.members.filter((m) => m.conversationId !== id) })) };
+}
 
 /** Recherche globale fictive : chaque conversation « contient » la requête dans un message. */
 function mockSearchAll(query: string): SearchResult {
@@ -614,7 +658,7 @@ export function installDevMock() {
         return n >= 2 && fakeGitRepos().includes(dir) ? n : null;
       }
       case "save_config":
-        config = { ...(a.cfg as Config), archives: config.archives, handoffLinks: config.handoffLinks };
+        config = { ...(a.cfg as Config), archives: config.archives, handoffLinks: config.handoffLinks, hubs: config.hubs };
         emitSuggestions();
         return config;
       case "search_sessions":
@@ -636,6 +680,7 @@ export function installDevMock() {
           throw "SESSION_ACTIVE: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal.";
         p.sessions = p.sessions.filter((x) => x !== s);
         scan = { ...scan };
+        dropFromHubs(s.id);
         return null;
       }
       case "archive_session": {
@@ -712,6 +757,12 @@ export function installDevMock() {
           projects,
           conversations: color ? { ...config.conversations, [successor]: { ...config.conversations[successor], color } } : config.conversations,
           handoffLinks: { ...config.handoffLinks, [parent]: { successorId: successor, at: Date.now() } },
+          // La suite prend la place et le rôle de la parente dans son hub.
+          hubs: (config.hubs ?? []).map((h) =>
+            h.members.some((m) => m.conversationId === parent)
+              ? { ...h, members: h.members.filter((m) => m.conversationId !== successor).map((m) => (m.conversationId === parent ? { ...m, conversationId: successor } : m)) }
+              : h,
+          ),
         };
         emitSuggestions();
         setTimeout(() => emit("sessions-changed", null), 300);
@@ -719,7 +770,48 @@ export function installDevMock() {
       }
       case "trash_archive":
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
+        dropFromHubs(String(a.sessionId));
         return config;
+      case "hub_create": {
+        const name = String(a.name ?? "").trim();
+        if (!name) throw "Le nom du hub est vide.";
+        const hub: Hub = { id: `hub-${Date.now().toString(16)}`, name, color: (a.color as string | null) ?? null, members: [], createdAt: Date.now(), archived: null };
+        config = { ...config, hubs: [...(config.hubs ?? []), hub] };
+        return { config, hubId: hub.id };
+      }
+      case "hub_update":
+        return changeHub(String(a.hubId), (h) => ({ ...h, name: String(a.name).trim() || h.name, color: (a.color as string | null) ?? null }));
+      case "hub_delete":
+        changeHub(String(a.hubId), (h) => h);
+        config = { ...config, hubs: (config.hubs ?? []).filter((h) => h.id !== a.hubId) };
+        return config;
+      case "hub_set_member":
+        return setHubMember(String(a.hubId), String(a.conversationId), a.role as HubRole);
+      case "hub_remove_member":
+        return changeHub(String(a.hubId), (h) => ({ ...h, members: h.members.filter((m) => m.conversationId !== a.conversationId) }));
+      case "hub_mark_archived":
+        return changeHub(String(a.hubId), (h) => ({ ...h, archived: { archivedAt: Date.now(), sessionIds: a.sessionIds as string[] } }));
+      case "hub_restore": {
+        // Même règle que lib.rs : les conversations archivées avec le hub reviennent, puis le hub.
+        const hub = config.hubs?.find((h) => h.id === a.hubId);
+        const ids = hub?.archived?.sessionIds ?? [];
+        let restored = 0;
+        for (const id of ids) {
+          const s = archived.get(id);
+          // Projet affiché au moment de l'archivage (une conversation de worktree a une autre clé de stockage).
+          const key = config.archives.find((x) => x.sessionId === id)?.projectKey;
+          const p = s && scan.projects.find((x) => x.key === key);
+          if (s && p) {
+            p.sessions = [...p.sessions, s].sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? ""));
+            archived.delete(id);
+            restored++;
+          }
+        }
+        scan = { ...scan };
+        config = { ...config, archives: config.archives.filter((x) => !ids.includes(x.sessionId)) };
+        changeHub(String(a.hubId), (h) => ({ ...h, archived: null }));
+        return { config, restored, errors: [] };
+      }
       case "mark_project_archived":
         config = {
           ...config,

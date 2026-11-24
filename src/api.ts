@@ -150,6 +150,40 @@ export interface HandoffFinish {
   archiveError: string | null;
 }
 
+/** Rôle d'une conversation dans un hub (voir GLOSSARY.md, « Hubs », et src/hubs.ts). */
+export type HubRole = "coordinateur" | "executant" | "pair";
+
+/** Une conversation rangée dans un hub. */
+export interface HubMember {
+  conversationId: string;
+  role: HubRole;
+}
+
+/** Archivage d'un hub : conversations archivées avec lui, restaurées avec lui. */
+export interface HubArchive {
+  archivedAt: number;
+  sessionIds: string[];
+}
+
+/** Regroupement de conversations, éventuellement de projets différents (géré par le backend, voir hubs.rs). */
+export interface Hub {
+  id: string;
+  name: string;
+  color: string | null;
+  /** Dans l'ordre d'ajout ; au plus un coordinateur ; une conversation est dans un hub au plus. */
+  members: HubMember[];
+  /** Création (ms depuis 1970). */
+  createdAt: number;
+  /** Hub archivé : masqué de la barre latérale, ses conversations sont dans les archives. */
+  archived: HubArchive | null;
+}
+
+/** Hub créé : configuration à jour et identifiant du nouveau hub. */
+export interface HubCreated {
+  config: Config;
+  hubId: string;
+}
+
 export interface ArchiveEntry {
   sessionId: string;
   projectKey: string;
@@ -178,6 +212,8 @@ export interface Config {
   handoffLinks?: Record<string, HandoffLink>;
   /** Consigne du résumé de passation choisie dans les réglages (absente : texte par défaut). */
   handoffPrompt?: string | null;
+  /** Hubs, dans l'ordre d'affichage (absent dans un vieux fichier). Gérés par le backend : commandes `hub*`. */
+  hubs?: Hub[];
 }
 
 /** Extrait d'un message découpé autour du mot trouvé. */
@@ -289,6 +325,24 @@ export const api = {
    */
   handoffFinish: (projectKey: string, parentId: string, successorId: string) =>
     invoke<HandoffFinish>("handoff_finish", { projectKey, parentId, successorId }),
+  // Hubs (voir src-tauri/src/hubs.rs) : gérés par le backend, `saveConfig` les ignore.
+  /** Crée un hub vide, placé en dernier. */
+  hubCreate: (name: string, color: string | null) => invoke<HubCreated>("hub_create", { name, color }),
+  /** Renomme un hub et change sa couleur. */
+  hubUpdate: (hubId: string, name: string, color: string | null) => invoke<Config>("hub_update", { hubId, name, color }),
+  /** Supprime le regroupement seulement (les conversations ne sont pas touchées). */
+  hubDelete: (hubId: string) => invoke<Config>("hub_delete", { hubId }),
+  /**
+   * Range une conversation dans un hub avec ce rôle (ou change son rôle). Elle quitte son
+   * ancien hub ; un nouveau coordinateur rétrograde l'ancien en exécutant.
+   */
+  hubSetMember: (hubId: string, conversationId: string, role: HubRole) =>
+    invoke<Config>("hub_set_member", { hubId, conversationId, role }),
+  hubRemoveMember: (hubId: string, conversationId: string) => invoke<Config>("hub_remove_member", { hubId, conversationId }),
+  /** Marque un hub comme archivé, une fois ses conversations archivées. */
+  hubMarkArchived: (hubId: string, sessionIds: string[]) => invoke<Config>("hub_mark_archived", { hubId, sessionIds }),
+  /** Restaure un hub archivé et les conversations archivées avec lui. */
+  hubRestore: (hubId: string) => invoke<RestoreProjectResult>("hub_restore", { hubId }),
   /** Dernières limites d'utilisation connues (null : aucune encore). */
   usageLimits: () => invoke<UsageLimits | null>("usage_limits"),
 };

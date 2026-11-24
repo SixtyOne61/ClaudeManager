@@ -3,7 +3,7 @@
 //! Claude Code reste la source de vérité pour les projets et conversations ; ce fichier
 //! ne contient que l'organisation personnelle : catégories, couleurs, noms d'affichage,
 //! sections, préférences par conversation, projets créés depuis l'appli, liste des archives,
-//! réglages des suggestions et liens des hand off (parente → suite).
+//! réglages des suggestions, liens des hand off (parente → suite) et hubs.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -22,7 +22,9 @@ use std::path::{Path, PathBuf};
 /// - 4 : hand off — liens parente → suite (`Config::handoff_links`) et consigne du résumé de
 ///   passation (`Config::handoff_prompt`). Champs nouveaux avec valeur par défaut : rien à
 ///   convertir.
-pub const CONFIG_VERSION: u32 = 4;
+/// - 5 : hubs (`Config::hubs`, voir hubs.rs). Champ nouveau avec valeur par défaut : rien à
+///   convertir.
+pub const CONFIG_VERSION: u32 = 5;
 
 /// Une catégorie, avec la liste ordonnée des projets qu'elle contient.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -132,6 +134,53 @@ pub struct HandoffLink {
     pub at: u64,
 }
 
+/// Rôle d'une conversation dans un hub (voir GLOSSARY.md, « Hubs »).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HubRole {
+    /// Répartit le travail et reçoit les comptes rendus ; au plus un par hub.
+    Coordinateur,
+    /// Réalise une tâche confiée par le coordinateur.
+    Executant,
+    /// Membre d'un hub sans hiérarchie.
+    #[default]
+    Pair,
+}
+
+/// Une conversation rangée dans un hub.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HubMember {
+    pub conversation_id: String,
+    pub role: HubRole,
+}
+
+/// Archivage d'un hub : ses conversations archivées avec lui, restaurées avec lui.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HubArchive {
+    /// Date d'archivage (ms depuis l'époque Unix).
+    pub archived_at: u64,
+    pub session_ids: Vec<String>,
+}
+
+/// Un hub : regroupement de conversations, éventuellement de projets différents, qui
+/// travaillent ensemble. Géré uniquement par le backend (voir hubs.rs).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Hub {
+    pub id: String,
+    pub name: String,
+    /// Couleur de fond (`#rrggbb`), ou `None` pour la couleur par défaut.
+    pub color: Option<String>,
+    /// Membres, dans l'ordre d'ajout. Une conversation est dans un hub au plus.
+    pub members: Vec<HubMember>,
+    /// Date de création (ms depuis l'époque Unix).
+    pub created_at: u64,
+    /// Hub archivé : masqué de la barre latérale, ses conversations sont dans les archives.
+    pub archived: Option<HubArchive>,
+}
+
 /// Une conversation archivée, avec tout ce qu'il faut pour la restaurer.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -173,6 +222,9 @@ pub struct Config {
     /// Consigne du résumé de passation choisie dans les réglages (`None` : texte par défaut,
     /// défini côté interface dans `src/handoff.ts`).
     pub handoff_prompt: Option<String>,
+    /// Hubs, dans l'ordre d'affichage. Gérés uniquement par le backend (voir hubs.rs) ; un
+    /// membre est gardé tant que sa conversation existe (sur le disque ou dans les archives).
+    pub hubs: Vec<Hub>,
 }
 
 impl Default for Config {
@@ -187,6 +239,7 @@ impl Default for Config {
             suggestions: SuggestionSettings::default(),
             handoff_links: HashMap::new(),
             handoff_prompt: None,
+            hubs: Vec::new(),
         }
     }
 }
@@ -237,7 +290,7 @@ pub fn load(path: &Path) -> Config {
 }
 
 /// Met une configuration lue sur disque au format courant.
-/// 1 → 2 → 3 → 4 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
+/// 1 → 2 → 3 → 4 → 5 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
 pub fn migrate(mut cfg: Config) -> Config {
     if cfg.version < CONFIG_VERSION {
         cfg.version = CONFIG_VERSION;
@@ -250,7 +303,8 @@ pub fn migrate(mut cfg: Config) -> Config {
 /// les conversations archivées sont conservées (elles retrouvent ainsi leur section et
 /// leur couleur à la restauration). Une conversation présente dans plusieurs sections
 /// n'est gardée que dans la première. Un lien de hand off est gardé tant que la parente ou
-/// la suite existe. Renvoie `true` si quelque chose a changé.
+/// la suite existe. Une conversation qui n'existe plus quitte son hub. Renvoie `true` si
+/// quelque chose a changé.
 pub fn prune_conversations(cfg: &mut Config, existing: &HashSet<String>) -> bool {
     let archived: HashSet<String> = cfg.archives.iter().map(|a| a.session_id.clone()).collect();
     let keep = |id: &str| existing.contains(id) || archived.contains(id);
@@ -272,7 +326,8 @@ pub fn prune_conversations(cfg: &mut Config, existing: &HashSet<String>) -> bool
     changed |= cfg.conversations.len() != before;
     let before = cfg.handoff_links.len();
     cfg.handoff_links.retain(|parent, link| keep(parent) || keep(&link.successor_id));
-    changed || cfg.handoff_links.len() != before
+    changed |= cfg.handoff_links.len() != before;
+    crate::hubs::prune(cfg, keep) || changed
 }
 
 /// Clé du projet archivé auquel appartient une conversation archivée avec lui.

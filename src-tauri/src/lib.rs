@@ -2,7 +2,7 @@
 //!
 //! Commandes exposées à l'interface (voir `src/api.ts` côté front) :
 //! lecture des projets/sessions, configuration, lancement de Claude, archives, Corbeille,
-//! hand off.
+//! hand off, hubs.
 //! Un observateur de fichiers émet l'évènement `sessions-changed` quand une conversation
 //! apparaît, change ou disparaît.
 
@@ -14,6 +14,7 @@ mod config;
 mod context;
 mod conversation;
 mod handoff;
+mod hubs;
 mod limits;
 mod project_settings;
 mod pty;
@@ -30,7 +31,7 @@ use config::{AppPaths, ArchiveEntry, Config};
 use notify::{RecursiveMode, Watcher};
 use scanner::{ProjectInfo, Scanner};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -233,8 +234,8 @@ fn get_config(state: State<AppState>) -> Config {
     state.config.lock().unwrap().clone()
 }
 
-/// Enregistre la configuration envoyée par l'interface. La liste des archives et les liens des
-/// hand off sont gérés par le backend : ceux envoyés par l'interface sont ignorés. Les
+/// Enregistre la configuration envoyée par l'interface. La liste des archives, les liens des
+/// hand off et les hubs sont gérés par le backend : ceux envoyés par l'interface sont ignorés. Les
 /// suggestions sont recalculées (réglages, « Ignorer »).
 #[tauri::command]
 fn save_config(app: AppHandle, state: State<AppState>, mut cfg: Config) -> Result<Config, String> {
@@ -242,6 +243,7 @@ fn save_config(app: AppHandle, state: State<AppState>, mut cfg: Config) -> Resul
         let mut current = state.config.lock().unwrap();
         cfg.archives = current.archives.clone();
         cfg.handoff_links = current.handoff_links.clone();
+        cfg.hubs = current.hubs.clone();
         cfg.version = config::CONFIG_VERSION;
         state.save_config(&cfg)?;
         *current = cfg.clone();
@@ -376,8 +378,9 @@ fn restore_archive(state: State<AppState>, session_id: String) -> Result<Config,
         .ok_or("Archive introuvable dans la configuration.")?;
     actions::restore(&entry)?;
     cfg.archives.retain(|a| a.session_id != session_id);
-    // Conversation d'un projet archivé, restaurée seule : le projet revient avec elle.
+    // Conversation d'un projet ou d'un hub archivé, restaurée seule : il revient avec elle.
     config::detach_from_archived_project(&mut cfg, &session_id, true);
+    hubs::detach_from_archived_hub(&mut cfg, &session_id, true);
     state.save_config(&cfg)?;
     Ok(cfg.clone())
 }
@@ -457,6 +460,7 @@ fn trash_archive(state: State<AppState>, session_id: String) -> Result<Config, S
     }
     cfg.archives.retain(|a| a.session_id != session_id);
     config::detach_from_archived_project(&mut cfg, &session_id, false);
+    hubs::detach_from_archived_hub(&mut cfg, &session_id, false);
     state.save_config(&cfg)?;
     Ok(cfg.clone())
 }
@@ -466,7 +470,8 @@ fn trash_archive(state: State<AppState>, session_id: String) -> Result<Config, S
 // ---------------------------------------------------------------------------
 
 /// Hand off, étape 2 : réponse de la parente à la consigne du résumé de passation, lue dans
-/// son `.jsonl`, et premier message de la suite. `None` : réponse vide ou introuvable.
+/// son `.jsonl`, et premier message de la suite (avec les autres membres de son hub, le cas
+/// échéant). `None` : réponse vide ou introuvable.
 #[tauri::command(async)]
 fn handoff_summary(
     state: State<AppState>,
@@ -477,7 +482,25 @@ fn handoff_summary(
 ) -> Result<Option<handoff::Summary>, String> {
     actions::validate_session_id(&session_id)?;
     let Some(path) = conversation::locate(state.scanner.root(), &session_id, cwd.as_deref()) else { return Ok(None) };
-    Ok(handoff::read_summary(&path, &prompt, &parent_title))
+    let cfg = state.config.lock().unwrap().clone();
+    let hub = hubs::hub_of(&cfg, &session_id).and_then(|_| {
+        let titles: HashMap<String, String> = state
+            .scanner
+            .scan()
+            .into_iter()
+            .flat_map(|p| p.sessions.into_iter().map(|s| (s.id, s.title)))
+            .chain(cfg.archives.iter().map(|a| (a.session_id.clone(), a.title.clone())))
+            .collect();
+        let names = hubs::messaging_names(&claude_dir(&state).join("sessions"));
+        hubs::handoff_context(&cfg, &session_id, |id| titles.get(id).cloned(), &names)
+    });
+    Ok(handoff::read_summary(&path, &prompt, &parent_title, hub.as_ref()))
+}
+
+/// Dossier de Claude Code (`~/.claude` ou `$CLAUDE_CONFIG_DIR`).
+fn claude_dir(state: &AppState) -> &Path {
+    let root = state.scanner.root();
+    root.parent().unwrap_or(root)
 }
 
 #[derive(Serialize)]
@@ -518,6 +541,95 @@ fn handoff_finish(app: AppHandle, state: State<AppState>, project_key: String, p
     };
     emit_suggestions(&app);
     Ok(HandoffFinish { config, archive_error })
+}
+
+// ---------------------------------------------------------------------------
+// Hubs (voir hubs.rs et src/hubs.ts)
+// ---------------------------------------------------------------------------
+
+/// Applique une modification des hubs, enregistre et renvoie la configuration.
+fn change_hubs(state: &AppState, change: impl FnOnce(&mut Config) -> Result<(), String>) -> Result<Config, String> {
+    let mut cfg = state.config.lock().unwrap();
+    let mut next = cfg.clone();
+    change(&mut next)?;
+    state.save_config(&next)?;
+    *cfg = next;
+    Ok(cfg.clone())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HubCreated {
+    config: Config,
+    hub_id: String,
+}
+
+/// Crée un hub vide (placé en dernier).
+#[tauri::command]
+fn hub_create(state: State<AppState>, name: String, color: Option<String>) -> Result<HubCreated, String> {
+    let mut hub_id = String::new();
+    let config = change_hubs(&state, |cfg| {
+        hub_id = hubs::create(cfg, &name, color, actions::now_ms())?;
+        Ok(())
+    })?;
+    Ok(HubCreated { config, hub_id })
+}
+
+/// Renomme un hub et change sa couleur (`color` : `None` = couleur par défaut).
+#[tauri::command]
+fn hub_update(state: State<AppState>, hub_id: String, name: String, color: Option<String>) -> Result<Config, String> {
+    change_hubs(&state, |cfg| hubs::update(cfg, &hub_id, &name, color))
+}
+
+/// Supprime un hub : seulement le regroupement, ses conversations ne sont pas touchées.
+#[tauri::command]
+fn hub_delete(state: State<AppState>, hub_id: String) -> Result<Config, String> {
+    change_hubs(&state, |cfg| hubs::delete(cfg, &hub_id))
+}
+
+/// Range une conversation dans un hub avec ce rôle (ou change son rôle) ; elle quitte son
+/// ancien hub, et un nouveau coordinateur rétrograde l'ancien en exécutant.
+#[tauri::command]
+fn hub_set_member(state: State<AppState>, hub_id: String, conversation_id: String, role: config::HubRole) -> Result<Config, String> {
+    actions::validate_session_id(&conversation_id)?;
+    change_hubs(&state, |cfg| hubs::set_member(cfg, &hub_id, &conversation_id, role))
+}
+
+/// Retire une conversation d'un hub.
+#[tauri::command]
+fn hub_remove_member(state: State<AppState>, hub_id: String, conversation_id: String) -> Result<Config, String> {
+    change_hubs(&state, |cfg| hubs::remove_member(cfg, &hub_id, &conversation_id))
+}
+
+/// Marque un hub comme archivé, une fois ses conversations archivées par l'interface (une à
+/// une, avec la confirmation habituelle). `session_ids` : restaurées avec lui.
+#[tauri::command]
+fn hub_mark_archived(state: State<AppState>, hub_id: String, session_ids: Vec<String>) -> Result<Config, String> {
+    change_hubs(&state, |cfg| hubs::mark_archived(cfg, &hub_id, session_ids, actions::now_ms()))
+}
+
+/// Restaure un hub archivé : remet en place les conversations archivées avec lui (celles qui ne
+/// peuvent pas l'être restent dans les archives, signalées dans `errors`) et le fait revenir.
+#[tauri::command(async)]
+fn hub_restore(state: State<AppState>, hub_id: String) -> Result<RestoreProjectResult, String> {
+    let mut cfg = state.config.lock().unwrap();
+    let ids = hubs::archived_ids(&cfg, &hub_id)?;
+    let (mut restored, mut errors) = (0, Vec::new());
+    for id in ids {
+        let Some(entry) = cfg.archives.iter().find(|a| a.session_id == id).cloned() else { continue };
+        match actions::restore(&entry) {
+            Ok(()) => {
+                cfg.archives.retain(|a| a.session_id != id);
+                // Archivée avec son projet : le projet revient avec elle.
+                config::detach_from_archived_project(&mut cfg, &id, true);
+                restored += 1;
+            }
+            Err(e) => errors.push(format!("« {} » : {e}", entry.title)),
+        }
+    }
+    hubs::unarchive(&mut cfg, &hub_id)?;
+    state.save_config(&cfg)?;
+    Ok(RestoreProjectResult { config: cfg.clone(), restored, errors })
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +776,13 @@ pub fn run() {
             check_open_elsewhere,
             handoff_summary,
             handoff_finish,
+            hub_create,
+            hub_update,
+            hub_delete,
+            hub_set_member,
+            hub_remove_member,
+            hub_mark_archived,
+            hub_restore,
             attachments::save_pasted_image,
             attachment_preview,
             open_attachment,
