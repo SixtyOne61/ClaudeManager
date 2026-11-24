@@ -101,11 +101,63 @@ pub fn is_git_repo(path: &str) -> bool {
     !path.trim().is_empty() && Path::new(path.trim()).join(".git").exists()
 }
 
+/// Terminal intégré ouvert, tel que l'interface le connaît (règle « worktree » des suggestions).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OpenConversation {
+    /// Dossier du terminal.
+    pub cwd: String,
+    /// La conversation tourne dans un worktree (existant, ou nouveau : son terminal est alors
+    /// lancé dans le dossier du projet avec `claude --worktree`).
+    pub in_worktree: bool,
+    /// `claude` tourne dans le terminal.
+    pub running: bool,
+}
+
+/// Nombre de conversations déjà ouvertes à partir duquel on propose un worktree pour la
+/// suivante (« troisième conversation dans le même dossier »).
+pub const WORKTREE_OFFER_MIN: usize = 2;
+
+/// Deux dossiers sont-ils le même ? Comparés sous leur forme normalisée (voir
+/// [`crate::pty::normalize_dir`]) ; casse ignorée sous Windows.
+fn same_dir(a: &str, b: &str) -> bool {
+    let (a, b) = (crate::pty::normalize_dir(a), crate::pty::normalize_dir(b));
+    if cfg!(windows) { a.to_lowercase() == b.to_lowercase() } else { a == b }
+}
+
+/// Conversations dont le terminal intégré est ouvert (avec `claude` lancé) et qui tournent
+/// exactement dans `dir` : celles d'un worktree ne comptent pas.
+pub fn conversations_in_dir(dir: &str, open: &[OpenConversation]) -> usize {
+    if dir.trim().is_empty() {
+        return 0;
+    }
+    open.iter()
+        .filter(|c| c.running && !c.in_worktree && split_worktree_path(&c.cwd).is_none() && same_dir(&c.cwd, dir))
+        .count()
+}
+
+/// Proposer de démarrer une nouvelle conversation dans un worktree ? `Some(n)` (nombre de
+/// conversations qui tournent déjà dans le dossier) si le dossier est un dépôt git et que
+/// `n` atteint [`WORKTREE_OFFER_MIN`].
+pub fn worktree_offer(dir: &str, open: &[OpenConversation], is_git: impl FnOnce(&str) -> bool) -> Option<usize> {
+    let n = conversations_in_dir(dir, open);
+    (n >= WORKTREE_OFFER_MIN && is_git(dir)).then_some(n)
+}
+
 pub mod commands {
+    use super::OpenConversation;
+
     /// Propose-t-on « Dans un nouveau worktree » pour ce projet ?
     #[tauri::command]
     pub fn is_git_repo(path: String) -> bool {
         super::is_git_repo(&path)
+    }
+
+    /// Création d'une conversation dans `path` : faut-il proposer un worktree ? Voir
+    /// [`super::worktree_offer`].
+    #[tauri::command]
+    pub fn worktree_offer(path: String, open: Vec<OpenConversation>) -> Option<usize> {
+        super::worktree_offer(&path, &open, super::is_git_repo)
     }
 }
 
@@ -222,6 +274,34 @@ mod tests {
         std::fs::write(wt.join(".git"), "gitdir: ailleurs\n").unwrap();
         assert!(is_git_repo(&wt.to_string_lossy()));
         assert!(!is_git_repo(&tmp.path().join("absent").to_string_lossy()));
+    }
+
+    #[test]
+    fn counts_conversations_in_dir() {
+        let dir = r"C:\Work\Foo";
+        let conv = |cwd: &str, in_worktree: bool, running: bool| OpenConversation { cwd: cwd.into(), in_worktree, running };
+        assert_eq!(conversations_in_dir(dir, &[]), 0);
+        let open = [
+            conv(r"C:\Work\Foo", false, true),
+            // Même dossier écrit autrement : séparateurs, casse, séparateur final.
+            conv(if cfg!(windows) { "c:/work/foo/" } else { r"C:\Work\Foo/" }, false, true),
+            // Terminal fermé (`claude` arrêté) : ne compte pas.
+            conv(r"C:\Work\Foo", false, false),
+            // Worktree existant (dossier du worktree) ou nouveau (dossier du projet) : ne comptent pas.
+            conv(r"C:\Work\Foo\.claude\worktrees\bar", false, true),
+            conv(r"C:\Work\Foo", true, true),
+            // Autre dossier, sous-dossier.
+            conv(r"C:\Work\Baz", false, true),
+            conv(r"C:\Work\Foo\src", false, true),
+        ];
+        assert_eq!(conversations_in_dir(dir, &open), 2);
+        assert_eq!(conversations_in_dir("", &open), 0);
+
+        // Proposé à partir de deux conversations, et seulement dans un dépôt git.
+        assert_eq!(worktree_offer(dir, &open, |_| true), Some(2));
+        assert_eq!(worktree_offer(dir, &open, |_| false), None);
+        assert_eq!(worktree_offer(dir, &open[..1], |_| true), None);
+        assert_eq!(worktree_offer(dir, &open[2..], |_| true), None);
     }
 
     #[test]

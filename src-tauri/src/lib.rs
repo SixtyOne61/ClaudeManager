@@ -680,6 +680,7 @@ pub fn run() {
             limits::usage_limits,
             suggestions_list,
             worktrees::commands::is_git_repo,
+            worktrees::commands::worktree_offer,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

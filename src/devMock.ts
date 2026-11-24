@@ -4,7 +4,7 @@
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
+import type { Config, OpenConversation, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 import type { ChunkMeta, ConversationEntry, DiffLine } from "./conversation";
 import type { SlashEntry } from "./slashCommands";
 import type { ContextInfo, Suggestion } from "./suggestions";
@@ -605,6 +605,14 @@ export function installDevMock() {
         return config;
       case "is_git_repo":
         return fakeGitRepos().includes(String(a.path));
+      case "worktree_offer": {
+        // Même règle que worktrees::worktree_offer (≥ 2 conversations hors worktree, dépôt git).
+        const norm = (d: string) => d.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase();
+        const dir = String(a.path);
+        const open = a.open as OpenConversation[];
+        const n = open.filter((c) => c.running && !c.inWorktree && !/[\\/]\.claude[\\/]worktrees[\\/]/i.test(c.cwd) && norm(c.cwd) === norm(dir)).length;
+        return n >= 2 && fakeGitRepos().includes(dir) ? n : null;
+      }
       case "save_config":
         config = { ...(a.cfg as Config), archives: config.archives, handoffLinks: config.handoffLinks };
         emitSuggestions();

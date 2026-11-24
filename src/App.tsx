@@ -22,13 +22,13 @@ import { Sidebar, type Selection } from "./components/Sidebar";
 import { ProjectView } from "./components/ProjectView";
 import { ArchivesView } from "./components/ArchivesView";
 import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
-import { NewProjectDialog, TextPrompt } from "./components/Dialogs";
+import { NewProjectDialog, TextPrompt, WorktreeOfferDialog } from "./components/Dialogs";
 import { newId, projectName, worktreePath } from "./util";
 import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
-import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
+import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree, worktreeNameError } from "./pty";
 import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
-import { dismissSuggestion } from "./suggestions";
+import { RULE_WORKTREE, dismissSuggestion, isRuleEnabled } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
 import {
   endHandoff,
@@ -52,6 +52,7 @@ type DialogState =
   | { kind: "renameProject"; project: ProjectInfo }
   | { kind: "newProject" }
   | { kind: "settings" }
+  | { kind: "worktreeOffer"; projectKey: string; path: string; sectionId: string | null; count: number }
   | null;
 
 export default function App() {
@@ -356,6 +357,31 @@ export default function App() {
     setTerminals((ts) => [...ts, { sessionId: id, cwd: path, title, isNew: true }]);
     setActiveTerminal(id);
     return id;
+  };
+
+  /**
+   * Nouvelle conversation demandée par l'utilisateur (barre latérale, vue du projet, nouveau
+   * projet). Règle « worktree » des suggestions : si deux conversations ou plus tournent déjà
+   * dans le dossier du projet (hors worktree) et que c'est un dépôt git, une fenêtre propose
+   * de la démarrer dans un worktree. Pas de fenêtre si l'utilisateur a déjà choisi un nouveau
+   * worktree, si la règle est coupée ou si le projet a « Ne plus demander ». Le hand off
+   * appelle directement `startNewConversation` : sa suite remplace la parente.
+   */
+  const newConversation = async (projectKey: string, path: string | null, sectionId: string | null, worktree?: string) => {
+    if (!path) return;
+    if (worktree === undefined && config && isRuleEnabled(config, RULE_WORKTREE) && !config.projects[projectKey]?.noWorktreeOffer) {
+      const open = terminals.map((t) => ({
+        cwd: t.cwd,
+        inWorktree: !!findSession(t.sessionId)?.s.worktree,
+        running: isTerminalRunning(t.sessionId),
+      }));
+      const count = await api.worktreeOffer(path, open).catch(() => null);
+      if (count !== null) {
+        setDialog({ kind: "worktreeOffer", projectKey, path, sectionId, count });
+        return;
+      }
+    }
+    startNewConversation(projectKey, path, sectionId, worktree);
   };
 
   /**
@@ -765,7 +791,7 @@ export default function App() {
         currentProject={currentProject}
         activeSessionId={activeTerminal}
         onConfigChange={updateConfig}
-        onNewConversation={(p, sectionId) => startNewConversation(p.key, p.path, sectionId)}
+        onNewConversation={(p, sectionId) => newConversation(p.key, p.path, sectionId)}
         onOpenConversation={(s, p) => openInTerminal(s, p.path)}
         onSearch={() => {
           setActiveTerminal(null);
@@ -827,7 +853,7 @@ export default function App() {
           config={config}
           terminal={scan.terminal}
           onLaunch={(id, path) => launch(path ?? selectedProject.path, id)}
-          onNew={(sectionId, worktree) => startNewConversation(selectedProject.key, selectedProject.path, sectionId, worktree)}
+          onNew={(sectionId, worktree) => newConversation(selectedProject.key, selectedProject.path, sectionId, worktree)}
           onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
@@ -907,7 +933,7 @@ export default function App() {
               setConfig(await api.saveConfig(next));
               await refresh();
               setSelection({ kind: "project", key });
-              if (r.startConversation) startNewConversation(key, r.path, null);
+              if (r.startConversation) newConversation(key, r.path, null);
             } catch (e) {
               showError(e);
             }
@@ -915,6 +941,18 @@ export default function App() {
         />
       )}
 
+      {dialog?.kind === "worktreeOffer" && (
+        <WorktreeOfferDialog
+          count={dialog.count}
+          validate={worktreeNameError}
+          onClose={() => setDialog(null)}
+          onSubmit={(worktree, dontAskAgain) => {
+            setDialog(null);
+            if (dontAskAgain) setProjectPref(dialog.projectKey, { noWorktreeOffer: true });
+            startNewConversation(dialog.projectKey, dialog.path, dialog.sectionId, worktree ?? undefined);
+          }}
+        />
+      )}
       {dialog?.kind === "settings" && <SettingsDialog config={config} onChange={updateConfig} onClose={() => setDialog(null)} />}
 
       <div className="toasts">

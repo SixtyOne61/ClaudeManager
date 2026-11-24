@@ -50,6 +50,10 @@ pub struct ProjectPrefs {
     pub sections: Vec<Section>,
     /// Projet archivé : masqué de la barre latérale, ses conversations sont dans les archives.
     pub archived: Option<ProjectArchive>,
+    /// « Ne plus demander pour ce projet » : pas de fenêtre proposant un worktree à la
+    /// création d'une conversation (règle « worktree » des suggestions).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_worktree_offer: bool,
 }
 
 /// Archivage d'un projet entier (propre à Claude Manager : le dossier n'est pas touché).

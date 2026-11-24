@@ -14,7 +14,8 @@
 // - setRuleEnabled / setContextThreshold   modification des réglages
 //
 // Ajouter une règle : la détection dans suggestions.rs (`RULES`), puis sa présentation ici
-// dans SUGGESTION_RULES.
+// dans SUGGESTION_RULES. Une règle sans bandeau (fenêtre au moment d'une action, comme le
+// worktree à la troisième conversation) peut n'y déclarer que son libellé de réglage.
 
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -79,6 +80,9 @@ export interface SuggestionRuleUi {
   action?: { id: string; label: string };
 }
 
+/** Règle « Troisième conversation dans le même dossier » (fenêtre à la création, sans bandeau). */
+export const RULE_WORKTREE = "worktree";
+
 /** Identifiant de l'action « Hand off » (règle « Contexte rempli »). */
 export const ACTION_HAND_OFF = "handoff";
 
@@ -90,6 +94,12 @@ export const SUGGESTION_RULES: Record<string, SuggestionRuleUi> = {
     text: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off repartirait d'un contexte propre`,
     hint: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off est suggéré`,
     action: { id: ACTION_HAND_OFF, label: "Hand off" },
+  },
+  // Sans bandeau : fenêtre à la création d'une conversation (App.tsx, `newConversation`).
+  [RULE_WORKTREE]: {
+    label: "Troisième conversation dans le même dossier",
+    description:
+      "Proposer de démarrer une nouvelle conversation dans un worktree quand deux conversations ou plus tournent déjà dans le dossier du projet (dépôt git).",
   },
 };
 

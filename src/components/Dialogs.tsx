@@ -99,6 +99,57 @@ export function WorktreePrompt(props: {
   );
 }
 
+/**
+ * Règle « worktree » des suggestions : une nouvelle conversation est créée alors que `count`
+ * conversations tournent déjà dans le dossier du projet. `onSubmit(worktree, dontAskAgain)` :
+ * `worktree` = nom du worktree (vide = nom choisi par Claude Code), ou null pour « Ici quand
+ * même ». Échap ou clic à côté : rien n'est créé.
+ */
+export function WorktreeOfferDialog(props: {
+  count: number;
+  validate: (name: string) => string | null;
+  onSubmit: (worktree: string | null, dontAskAgain: boolean) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [dontAsk, setDontAsk] = useState(false);
+  const error = props.validate(value);
+  const count = props.count === 2 ? "Deux" : String(props.count);
+  return (
+    <Modal title="Démarrer dans un worktree ?" onClose={props.onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!error) props.onSubmit(value.trim(), dontAsk);
+        }}
+      >
+        <p className="modal-text">
+          {count} conversations tournent déjà dans ce dossier. Démarrer celle-ci dans un worktree pour éviter qu'elles se marchent dessus ?
+        </p>
+        <label className="field">
+          <span>Nom du worktree (facultatif)</span>
+          <input value={value} placeholder="ex. correction-connexion" onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
+          <small>
+            {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
+          </small>
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
+          Ne plus demander pour ce projet
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={() => props.onSubmit(null, dontAsk)}>
+            Ici quand même
+          </button>
+          <button type="submit" className="btn primary" disabled={!!error}>
+            Dans un worktree
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export interface NewProjectResult {
   path: string;
   categoryId: string | null;

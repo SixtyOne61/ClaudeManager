@@ -69,6 +69,17 @@ export interface ProjectPrefs {
   sections?: Section[];
   /** Projet archivé : masqué de la barre latérale, ses conversations sont dans les archives. */
   archived?: ProjectArchive | null;
+  /** « Ne plus demander pour ce projet » : pas de fenêtre proposant un worktree (règle « worktree »). */
+  noWorktreeOffer?: boolean;
+}
+
+/** Terminal intégré ouvert, pour la règle « worktree » (voir worktrees.rs, `OpenConversation`). */
+export interface OpenConversation {
+  cwd: string;
+  /** La conversation tourne dans un worktree (existant ou nouveau). */
+  inWorktree: boolean;
+  /** `claude` tourne dans le terminal. */
+  running: boolean;
 }
 
 /** Archivage d'un projet entier (le dossier n'est pas touché). */
@@ -244,6 +255,11 @@ export const api = {
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
   /** Le dossier est-il la racine d'un dépôt git (option « Dans un nouveau worktree ») ? */
   isGitRepo: (path: string) => invoke<boolean>("is_git_repo", { path }),
+  /**
+   * Création d'une conversation dans `path` : nombre de conversations qui y tournent déjà si
+   * l'app doit proposer un worktree (dépôt git, au moins deux hors worktree), sinon null.
+   */
+  worktreeOffer: (path: string, open: OpenConversation[]) => invoke<number | null>("worktree_offer", { path, open }),
   archiveSession: (projectKey: string, sessionId: string, force: boolean) =>
     invoke<Config>("archive_session", { projectKey, sessionId, force }),
   restoreArchive: (sessionId: string) => invoke<Config>("restore_archive", { sessionId }),
