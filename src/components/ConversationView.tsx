@@ -1,7 +1,8 @@
 // Interface de conversation dessinée par l'app par-dessus le terminal intégré (ticket 05) :
 // messages de l'utilisateur (bulles à droite), réponses de Claude (texte Markdown à gauche,
 // sous une étiquette « Claude ») et ses actions, regroupées en lignes compactes
-// (`ConversationActions`). La zone de saisie est `ConversationInput`.
+// (`ConversationActions`). Les messages entre conversations ont leur propre bulle (« Message
+// de … » reçu, « Message à … » envoyé, voir src/messages.ts). La zone de saisie est `ConversationInput`.
 // Les liens `http(s)` des réponses s'ouvrent dans le navigateur ; les blocs de commande
 // (`bash`, `powershell`, `cmd`…) ont un bouton ▶ pour les exécuter (`CodeRunner`).
 
@@ -11,8 +12,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { baseName, composeMessage, isImagePath, splitAttachments } from "../attachments";
-import { File as FileIcon, Image as ImageIcon, Paperclip, Pencil, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
-import { groupEntries, messageKey, type ClaudeItem, type ConversationData, type ConversationEntry, type EditableMessage } from "../conversation";
+import { ChevronDown, ChevronRight, File as FileIcon, Image as ImageIcon, Inbox, Paperclip, Pencil, Send, SendHorizontal, Sparkle, Square, TriangleAlert, X } from "lucide-react";
+import {
+  groupEntries,
+  messageKey,
+  type ClaudeItem,
+  type ConversationData,
+  type ConversationEntry,
+  type EditableMessage,
+  type MessageEntry,
+  type ToolResultEntry,
+} from "../conversation";
+import { ConversationLinksContext, resolvePeer, useMessagingDirectory } from "../messages";
 import { renderMarkdown } from "../markdown";
 import { GrillAnswers, grillHtml, isGrillAnswer } from "./Grill";
 import { ActionGroup } from "./ConversationActions";
@@ -120,6 +131,8 @@ export function ConversationView({ data, focus, hidden, cwd = null, sessionId = 
                   {b.entry.text}
                 </div>
               );
+            case "message":
+              return <CrossMessage key={b.key} entry={b.entry} />;
             case "claude":
               return <ClaudeTurn key={b.key} items={b.items} />;
           }
@@ -247,10 +260,60 @@ function ClaudeTurn({ items }: { items: ClaudeItem[] }) {
       {items.map((it) =>
         it.kind === "text" ? (
           <AssistantText key={it.key} line={it.entry.line} uuid={it.entry.uuid} text={it.entry.text} />
+        ) : it.kind === "message" ? (
+          <CrossMessage key={it.key} entry={it.entry} result={it.result} />
         ) : (
           <ActionGroup key={it.key} actions={it.actions} />
         ),
       )}
+    </div>
+  );
+}
+
+/** Au-delà, un message qui a un résumé est replié (le résumé reste visible). */
+const MESSAGE_FOLD_CHARS = 400;
+
+/**
+ * Message entre conversations : bulle distincte « Message de … » (reçu, à gauche) ou
+ * « Message à … » (envoyé par Claude, dans son tour). Le nom de l'autre conversation est
+ * cliquable quand elle est connue ; sinon son nom de messagerie brut est affiché.
+ */
+function CrossMessage({ entry, result }: { entry: MessageEntry; result?: ToolResultEntry }) {
+  const links = useContext(ConversationLinksContext);
+  const self = useContext(SessionContext);
+  const names = useMessagingDirectory();
+  const html = useMemo(() => renderMarkdown(entry.text), [entry.text]);
+  const [open, setOpen] = useState(!entry.summary || entry.text.length <= MESSAGE_FOLD_CHARS);
+  const peerId = resolvePeer(names, entry.peer, entry.timestamp);
+  const id = peerId && peerId !== self ? peerId : null;
+  const title = id && links ? links.titleOf(id) : null;
+  const label = title ?? (entry.sent ? entry.peer : (entry.peerName ?? entry.peer));
+  return (
+    <div className={"conv-message " + (entry.sent ? "sent" : "received")} data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
+      <div className="conv-message-head">
+        {entry.sent ? <Send size={12} /> : <Inbox size={12} />}
+        <span>{entry.sent ? "Message à" : "Message de"}</span>
+        {id && title && links ? (
+          <button className="link-btn" onClick={() => links.open(id)} title={`Ouvrir la conversation « ${title} »`}>
+            <em>{label}</em>
+          </button>
+        ) : (
+          <em title={entry.peer}>{label}</em>
+        )}
+        {result?.isError && (
+          <span className="conv-message-error" title={result.text}>
+            non remis
+          </span>
+        )}
+      </div>
+      {entry.summary && (
+        <button className="conv-message-summary" onClick={() => setOpen((o) => !o)} title={open ? "Replier le message" : "Lire le message complet"}>
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {entry.summary}
+        </button>
+      )}
+      {open && <div className="conv-message-text markdown" dangerouslySetInnerHTML={{ __html: html }} />}
+      {open && entry.truncated && <div className="conv-message-more">Message tronqué : la suite est visible dans le terminal.</div>}
     </div>
   );
 }

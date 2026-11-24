@@ -16,6 +16,7 @@ mod conversation;
 mod handoff;
 mod hubs;
 mod limits;
+mod messages;
 mod project_settings;
 mod pty;
 mod run;
@@ -632,6 +633,40 @@ fn hub_restore(state: State<AppState>, hub_id: String) -> Result<RestoreProjectR
     Ok(RestoreProjectResult { config: cfg.clone(), restored, errors })
 }
 
+/// Fil des messages entre conversations d'un hub (voir messages.rs) : lu dans les `.jsonl` de
+/// ses membres seulement (relus seulement s'ils ont changé). Hub inconnu ou format
+/// inattendu : fil vide. Les noms appris en appariant envois et réceptions sont gardés.
+#[tauri::command(async)]
+fn hub_messages(state: State<AppState>, store: State<messages::MessageStore>, hub_id: String) -> Vec<messages::HubMessage> {
+    let cfg = state.config.lock().unwrap().clone();
+    let Some(hub) = hubs::find(&cfg, &hub_id) else { return Vec::new() };
+    let members: Vec<(String, std::sync::Arc<Vec<messages::CrossMessage>>)> = hub
+        .members
+        .iter()
+        .filter(|m| actions::validate_session_id(&m.conversation_id).is_ok())
+        .filter_map(|m| {
+            let archived = cfg.archives.iter().find(|a| a.session_id == m.conversation_id).map(|a| PathBuf::from(&a.archived_file));
+            let path = archived.or_else(|| conversation::locate(state.scanner.root(), &m.conversation_id, None))?;
+            Some((m.conversation_id.clone(), store.read(&path)))
+        })
+        .collect();
+    let names = messaging_directory_inner(&state);
+    let (thread, learned) = messages::hub_thread(&members, &names);
+    state.scanner.remember_names(&learned);
+    thread
+}
+
+/// Noms de messagerie connus (en cours, et déjà vus), pour relier un message à sa conversation
+/// (voir `messages::resolve` et src/messages.ts).
+#[tauri::command(async)]
+fn messaging_directory(state: State<AppState>) -> Vec<messages::NameUse> {
+    messaging_directory_inner(&state)
+}
+
+fn messaging_directory_inner(state: &AppState) -> Vec<messages::NameUse> {
+    state.scanner.remember_names(&messages::running_names(&claude_dir(state).join("sessions")))
+}
+
 // ---------------------------------------------------------------------------
 // Détection automatique des changements
 // ---------------------------------------------------------------------------
@@ -738,6 +773,8 @@ pub fn run() {
         // Terminaux intégrés (voir pty.rs).
         .manage(pty::PtyManager::default())
         .manage(commands_list::ListingCache::default())
+        // Messages entre conversations déjà lus, par fichier (voir messages.rs).
+        .manage(messages::MessageStore::default())
         // Dernier remplissage du contexte de chaque conversation (voir context.rs).
         .manage(context::ContextStore::load(&app_dir))
         .on_window_event(pty::on_window_event)
@@ -783,6 +820,8 @@ pub fn run() {
             hub_remove_member,
             hub_mark_archived,
             hub_restore,
+            hub_messages,
+            messaging_directory,
             attachments::save_pasted_image,
             attachment_preview,
             open_attachment,

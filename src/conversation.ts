@@ -34,7 +34,24 @@ export type ConversationEntry =
       diffTruncated: boolean;
     }
   | { kind: "toolResult"; line: number; toolUseId: string; text: string; isError: boolean; truncated: boolean }
-  | { kind: "notice"; line: number; uuid: string | null; text: string };
+  | { kind: "notice"; line: number; uuid: string | null; text: string }
+  | {
+      /** Message entre conversations (voir src/messages.ts) : envoyé (`SendMessage`) ou reçu. */
+      kind: "message";
+      line: number;
+      uuid: string | null;
+      /** Identifiant de l'appel `SendMessage` (envoi), repris par son résultat. */
+      id: string | null;
+      sent: boolean;
+      /** Destinataire (envoi) ou expéditeur (réception) : nom de messagerie ou `local_<uuid>`. */
+      peer: string;
+      /** Nom affiché de l'expéditeur (réception). */
+      peerName: string | null;
+      summary: string | null;
+      text: string;
+      truncated: boolean;
+      timestamp: string | null;
+    };
 
 /** Consommation de jetons d'une réponse de l'agent (`message.usage`). */
 export interface Usage {
@@ -193,6 +210,7 @@ export function useConversation(sessionId: string, cwd: string | null): Conversa
 
 export type ToolEntry = Extract<ConversationEntry, { kind: "tool" }>;
 export type ToolResultEntry = Extract<ConversationEntry, { kind: "toolResult" }>;
+export type MessageEntry = Extract<ConversationEntry, { kind: "message" }>;
 
 /** Une action de l'agent avec son résultat (absent tant que l'outil tourne). */
 export interface Action {
@@ -203,11 +221,17 @@ export interface Action {
 /** Élément d'un tour de Claude : un texte, ou les actions consécutives entre deux textes. */
 export type ClaudeItem =
   | { kind: "text"; key: string; entry: Extract<ConversationEntry, { kind: "assistant" }> }
-  | { kind: "actions"; key: string; actions: Action[] };
+  | { kind: "actions"; key: string; actions: Action[] }
+  /** Message envoyé à une autre conversation, avec le résultat de l'envoi. */
+  | { kind: "message"; key: string; entry: MessageEntry; result: ToolResultEntry | undefined };
 
-/** Bloc affiché : message de l'utilisateur, notice, ou tour de Claude (textes et actions). */
+/**
+ * Bloc affiché : message de l'utilisateur, notice, message reçu d'une autre conversation, ou
+ * tour de Claude (textes, actions et messages envoyés).
+ */
 export type ConversationBlock =
   | { kind: "user"; key: string; entry: Extract<ConversationEntry, { kind: "user" }> }
+  | { kind: "message"; key: string; entry: MessageEntry }
   | { kind: "notice"; key: string; entry: Extract<ConversationEntry, { kind: "notice" }> }
   | { kind: "claude"; key: string; items: ClaudeItem[] };
 
@@ -229,6 +253,15 @@ export function groupEntries(entries: ConversationEntry[]): ConversationBlock[] 
       case "notice":
         turn = null;
         blocks.push(e.kind === "user" ? { kind: "user", key, entry: e } : { kind: "notice", key, entry: e });
+        break;
+      case "message":
+        if (!e.sent) {
+          turn = null;
+          blocks.push({ kind: "message", key, entry: e });
+          break;
+        }
+        if (!turn) blocks.push((turn = { kind: "claude", key, items: [] }));
+        turn.items.push({ kind: "message", key, entry: e, result: e.id ? results.get(e.id) : undefined });
         break;
       case "assistant":
       case "tool": {
@@ -283,6 +316,10 @@ export function editableMessage(entries: ConversationEntry[]): EditableMessage |
         if (FILE_TOOLS.has(e.name)) fileChanges++;
         break;
       case "toolResult":
+        break;
+      case "message":
+        if (!e.sent) return null; // message reçu d'une autre conversation : nouveau tour
+        actions++;
         break;
       case "user":
         return e.command ? null : { line: e.line, uuid: e.uuid, text: e.text, actions, fileChanges };

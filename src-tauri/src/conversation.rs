@@ -81,6 +81,25 @@ pub enum Entry {
     },
     /// Remarque discrète : interruption, sortie d'une commande `/…`, conversation compactée.
     Notice { line: u32, uuid: Option<String>, text: String },
+    /// Message entre conversations (voir messages.rs) : envoyé par l'agent (`SendMessage`) ou
+    /// reçu d'une autre conversation (`<cross-session-message>`), au lieu d'un appel d'outil
+    /// ou d'un message de l'utilisateur.
+    Message {
+        line: u32,
+        uuid: Option<String>,
+        /// Identifiant de l'appel `SendMessage` (envoi), repris par son résultat.
+        id: Option<String>,
+        sent: bool,
+        /// Destinataire (envoi) ou expéditeur (réception) : nom de messagerie ou `local_<uuid>`.
+        peer: String,
+        /// Nom affiché de l'expéditeur (réception, `from-name`).
+        peer_name: Option<String>,
+        summary: Option<String>,
+        text: String,
+        /// Tronqué ([`MAX_TEXT_CHARS`]).
+        truncated: bool,
+        timestamp: Option<String>,
+    },
 }
 
 /// Morceau de conversation lu à partir d'une position.
@@ -304,9 +323,30 @@ pub fn parse_line_meta(text: &str, line: u32, out: &mut Vec<Entry>, meta: &mut M
     }
     read_meta(&v, line, meta);
     let uuid = str_at(&v, "uuid").map(str::to_string);
+    let timestamp = str_at(&v, "timestamp").map(str::to_string);
     let Some(content) = v.pointer("/message/content") else { return };
     match str_at(&v, "type") {
         Some("user") => {
+            // Message reçu d'une autre conversation (écrit comme message technique `isMeta`).
+            let received = crate::messages::received_in(&v);
+            if !received.is_empty() {
+                for r in received {
+                    let (text, truncated) = truncate(&r.text);
+                    out.push(Entry::Message {
+                        line,
+                        uuid: uuid.clone(),
+                        id: None,
+                        sent: false,
+                        peer: r.from,
+                        peer_name: r.from_name,
+                        summary: None,
+                        text,
+                        truncated,
+                        timestamp: timestamp.clone(),
+                    });
+                }
+                return;
+            }
             if flag("isCompactSummary") {
                 out.push(Entry::Notice { line, uuid, text: "Conversation compactée".into() });
                 return;
@@ -316,7 +356,7 @@ pub fn parse_line_meta(text: &str, line: u32, out: &mut Vec<Entry>, meta: &mut M
             }
             parse_user(content, line, uuid, out);
         }
-        Some("assistant") => parse_assistant(content, line, uuid, out),
+        Some("assistant") => parse_assistant(content, line, uuid, timestamp, out),
         _ => {}
     }
 }
@@ -468,7 +508,7 @@ fn unwrap_tag(text: &str, tag: &str) -> String {
     out
 }
 
-fn parse_assistant(content: &Value, line: u32, uuid: Option<String>, out: &mut Vec<Entry>) {
+fn parse_assistant(content: &Value, line: u32, uuid: Option<String>, timestamp: Option<String>, out: &mut Vec<Entry>) {
     let blocks: Vec<Value> = match content {
         Value::String(s) => vec![serde_json::json!({ "type": "text", "text": s })],
         Value::Array(b) => b.clone(),
@@ -483,6 +523,22 @@ fn parse_assistant(content: &Value, line: u32, uuid: Option<String>, out: &mut V
                 }
             }
             Some("tool_use") => {
+                if let Some(sent) = crate::messages::sent_in_block(b) {
+                    let (text, truncated) = truncate(&sent.text);
+                    out.push(Entry::Message {
+                        line,
+                        uuid: uuid.clone(),
+                        id: str_at(b, "id").map(str::to_string),
+                        sent: true,
+                        peer: sent.to,
+                        peer_name: None,
+                        summary: sent.summary,
+                        text,
+                        truncated,
+                        timestamp: timestamp.clone(),
+                    });
+                    continue;
+                }
                 let name = str_at(b, "name").unwrap_or("?").to_string();
                 let input = b.get("input").cloned().unwrap_or(Value::Null);
                 out.push(tool_entry(line, uuid.clone(), str_at(b, "id").unwrap_or_default(), name, &input));
@@ -717,6 +773,33 @@ Bonjour
     }
 
     #[test]
+    fn cross_conversation_messages_are_not_user_messages_nor_tools() {
+        let sent = r#"{"type":"assistant","timestamp":"2026-11-10T08:00:00.000Z","message":{"content":[{"type":"text","text":"Je préviens."},{"type":"tool_use","id":"toolu_9","name":"SendMessage","input":{"to":"projet-ab","summary":"Fini","message":"Ticket fait"}}]},"uuid":"a"}"#;
+        let received = r#"{"type":"user","isMeta":true,"timestamp":"2026-11-10T08:00:01.000Z","message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from=\"local_2329\" from-name=\"Matt Pocock skills setup\">\nTicket fait\n</cross-session-message>\n\nThis came from another Claude session."},"uuid":"r"}"#;
+        let agent = r#"{"type":"user","isMeta":true,"message":{"content":"<agent-message from=\"a34d\">\nRapport\n</agent-message>"},"uuid":"g"}"#;
+        let e = parse(&[sent, received, agent]);
+        assert_eq!(e.len(), 3);
+        assert!(matches!(&e[0], Entry::Assistant { .. }));
+        assert_eq!(
+            e[1],
+            Entry::Message {
+                line: 0,
+                uuid: Some("a".into()),
+                id: Some("toolu_9".into()),
+                sent: true,
+                peer: "projet-ab".into(),
+                peer_name: None,
+                summary: Some("Fini".into()),
+                text: "Ticket fait".into(),
+                truncated: false,
+                timestamp: Some("2026-11-10T08:00:00.000Z".into()),
+            }
+        );
+        let Entry::Message { sent, peer, peer_name, text, line, .. } = &e[2] else { panic!("{:?}", e[2]) };
+        assert_eq!((*sent, peer.as_str(), peer_name.as_deref(), text.as_str(), *line), (false, "local_2329", Some("Matt Pocock skills setup"), "Ticket fait", 1));
+    }
+
+    #[test]
     fn ignores_unknown_technical_and_broken_lines() {
         let mut lines = OTHER.to_vec();
         lines.extend([r#"{"type":"user","message":{"content":"#, "pas du json", "", r#"{"type":"nouveau-type","user":"x"}"#]);
@@ -878,7 +961,7 @@ Bonjour
             let t = std::time::Instant::now();
             let c = read_chunk(p, 0, 0);
             let kinds = c.entries.iter().fold(std::collections::BTreeMap::new(), |mut m, e| {
-                let k = match e { Entry::User { .. } => "user", Entry::Assistant { .. } => "assistant", Entry::Tool { .. } => "tool", Entry::ToolResult { .. } => "result", Entry::Notice { .. } => "notice" };
+                let k = match e { Entry::User { .. } => "user", Entry::Assistant { .. } => "assistant", Entry::Tool { .. } => "tool", Entry::ToolResult { .. } => "result", Entry::Notice { .. } => "notice", Entry::Message { .. } => "message" };
                 *m.entry(k).or_insert(0) += 1;
                 m
             });

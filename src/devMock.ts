@@ -7,6 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import type { Config, Hub, HubRole, OpenConversation, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 import type { ChunkMeta, ConversationEntry, DiffLine } from "./conversation";
 import type { SlashEntry } from "./slashCommands";
+import type { HubMessage, NameUse } from "./messages";
 import type { ContextInfo, Suggestion } from "./suggestions";
 
 const now = Date.now();
@@ -257,9 +258,73 @@ function demoTranscript(): ConversationEntry[] {
   ];
 }
 
+// ---- Faux messages entre conversations du hub fictif (voir src/messages.ts) ---------------
+// Le coordinateur confie le formulaire à un exécutant, qui rend compte ; une conversation hors
+// du hub (Claude Desktop, nom brut « local_… ») écrit aussi au coordinateur.
+
+const DEMO_COORD = site.sessions[0].id;
+const DEMO_EXEC = site.sessions[1].id;
+const DEMO_TASK = [
+  "Peux-tu prendre le **formulaire de contact** ?",
+  "",
+  "- validation côté client ;",
+  "- message de confirmation après l'envoi.",
+  "",
+  "Rends-moi compte avec SendMessage quand c'est fait.",
+].join("\n");
+const DEMO_REPORT = "Formulaire terminé : validation des champs, message de confirmation, tests à jour (`npm test` passe).";
+const DEMO_OUTSIDE = "J'ai relevé deux contrastes insuffisants sur la page d'accueil (boutons secondaires).";
+
+/** Noms de messagerie du faux backend. */
+const fakeNames: NameUse[] = [
+  { name: "sitevitrine-c0", sessionId: DEMO_COORD, since: now - 86_400_000 },
+  { name: "sitevitrine-e1", sessionId: DEMO_EXEC, since: now - 86_400_000 },
+];
+
+/** Messages ajoutés aux transcriptions des membres du hub fictif. */
+function demoMessages(id: string): ConversationEntry[] {
+  const m = (line: number, sent: boolean, peer: string, text: string, hoursAgo: number, summary: string | null = null, peerName: string | null = null): ConversationEntry => ({
+    kind: "message",
+    line,
+    uuid: `msg${line}`,
+    id: sent ? `tm${line}` : null,
+    sent,
+    peer,
+    peerName,
+    summary,
+    text,
+    truncated: false,
+    timestamp: iso(hoursAgo),
+  });
+  if (id === DEMO_COORD)
+    return [
+      m(15, true, "sitevitrine-e1", DEMO_TASK, 5, "Ticket : formulaire de contact"),
+      m(16, false, "sitevitrine-e1", DEMO_REPORT, 2, null, "sitevitrine-e1"),
+      m(17, false, "local_5b2e9a7c-0000-4000-8000-000000000000", DEMO_OUTSIDE, 1, null, "Revue d'accessibilité"),
+    ];
+  if (id === DEMO_EXEC)
+    return [m(15, false, "sitevitrine-c0", DEMO_TASK, 5, null, "sitevitrine-c0"), m(16, true, "sitevitrine-c0", DEMO_REPORT, 2, "Formulaire terminé")];
+  return [];
+}
+
+/** Fil du hub fictif (même résultat que `messages::hub_thread`). */
+function fakeHubMessages(hubId: string): HubMessage[] {
+  const hub = config.hubs?.find((h) => h.id === hubId);
+  const members = new Set(hub?.members.map((m) => m.conversationId) ?? []);
+  const peer = (id: string, name: string) => ({ conversationId: members.has(id) ? id : null, name });
+  const list: HubMessage[] = [];
+  if (members.has(DEMO_COORD) || members.has(DEMO_EXEC)) {
+    list.push({ from: peer(DEMO_COORD, "sitevitrine-c0"), to: peer(DEMO_EXEC, "sitevitrine-e1"), summary: "Ticket : formulaire de contact", text: DEMO_TASK, timestamp: iso(5) });
+    list.push({ from: peer(DEMO_EXEC, "sitevitrine-e1"), to: peer(DEMO_COORD, "sitevitrine-c0"), summary: "Formulaire terminé", text: DEMO_REPORT, timestamp: iso(2) });
+  }
+  if (members.has(DEMO_COORD))
+    list.push({ from: { conversationId: null, name: "Revue d'accessibilité" }, to: peer(DEMO_COORD, "sitevitrine-c0"), summary: null, text: DEMO_OUTSIDE, timestamp: iso(1) });
+  return list;
+}
+
 function fakeTranscript(id: string): ConversationEntry[] | null {
   let t = transcripts.get(id);
-  if (!t && scan.projects.some((p) => p.sessions.some((s) => s.id === id))) transcripts.set(id, (t = demoTranscript()));
+  if (!t && scan.projects.some((p) => p.sessions.some((s) => s.id === id))) transcripts.set(id, (t = [...demoTranscript(), ...demoMessages(id)]));
   return t ?? null;
 }
 
@@ -638,6 +703,8 @@ export function installDevMock() {
     if (cmd === "usage_limits") return usageLimits;
     if (cmd === "suggestions_list") return fakeSuggestions();
     if (cmd === "conversation_read") return fakeConversationRead(a);
+    if (cmd === "hub_messages") return fakeHubMessages(String(a.hubId));
+    if (cmd === "messaging_directory") return fakeNames;
     if (cmd === "list_slash_commands") return fakeSlashCommands();
     if (cmd === "run_integrated") return fakeRun(a);
     if (cmd === "plugin:opener|open_url") return void window.open(String(a.url), "_blank");

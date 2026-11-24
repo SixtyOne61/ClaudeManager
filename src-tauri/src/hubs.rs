@@ -180,22 +180,7 @@ pub fn role_label(role: HubRole) -> &'static str {
 /// `~/.claude/sessions/<pid>.json` (voir ADR 0002). Format non documenté : un fichier
 /// illisible ou un dossier absent est simplement ignoré.
 pub fn messaging_names(sessions_dir: &Path) -> HashMap<String, String> {
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Running {
-        session_id: Option<String>,
-        name: Option<String>,
-    }
-    let mut out = HashMap::new();
-    let Ok(dir) = std::fs::read_dir(sessions_dir) else { return out };
-    for path in dir.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")) {
-        let Some(r) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Running>(&t).ok()) else { continue };
-        let name = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
-        if let (Some(id), Some(name)) = (r.session_id.filter(|s| !s.is_empty()), name) {
-            out.insert(id, name.to_string());
-        }
-    }
-    out
+    crate::messages::running_names(sessions_dir).into_iter().map(|n| (n.session_id, n.name)).collect()
 }
 
 /// Un autre membre du hub, tel que présenté à la suite d'un hand off.

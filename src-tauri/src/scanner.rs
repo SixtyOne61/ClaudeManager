@@ -2,8 +2,10 @@
 //!
 //! Un cache (en mémoire + fichier `cache.json` dans le dossier de l'appli) mémorise
 //! le résumé de chaque `.jsonl` avec sa date de modification et sa taille :
-//! seuls les fichiers nouveaux ou modifiés sont relus.
+//! seuls les fichiers nouveaux ou modifiés sont relus. Il garde aussi les noms de messagerie
+//! déjà vus (voir messages.rs), qui changent à chaque lancement de Claude Code.
 
+use crate::messages::{merge_names, NameUse};
 use crate::sessions::{encode_project_path, file_stamp, read_session, SessionInfo};
 use crate::worktrees;
 use serde::{Deserialize, Serialize};
@@ -44,24 +46,27 @@ struct CacheEntry {
 struct CacheFile {
     version: u32,
     entries: HashMap<String, CacheEntry>,
+    /// Noms de messagerie déjà vus (absent d'un ancien cache).
+    #[serde(default)]
+    names: Vec<NameUse>,
 }
 
 pub struct Scanner {
     root: PathBuf,
     cache_path: PathBuf,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    names: Mutex<Vec<NameUse>>,
 }
 
 impl Scanner {
     /// `root` : dossier `projects` de Claude Code. `cache_path` : fichier cache de l'appli.
     pub fn new(root: PathBuf, cache_path: PathBuf) -> Self {
-        let cache = fs::read_to_string(&cache_path)
+        let file = fs::read_to_string(&cache_path)
             .ok()
             .and_then(|t| serde_json::from_str::<CacheFile>(&t).ok())
             .filter(|c| c.version == CACHE_VERSION)
-            .map(|c| c.entries)
             .unwrap_or_default();
-        Self { root, cache_path, cache: Mutex::new(cache) }
+        Self { root, cache_path, cache: Mutex::new(file.entries), names: Mutex::new(file.names) }
     }
 
     pub fn root(&self) -> &Path {
@@ -177,8 +182,23 @@ impl Scanner {
         results.into_inner().unwrap()
     }
 
+    /// Ajoute des noms de messagerie à ceux déjà vus (gardés dans le cache) et les renvoie tous.
+    pub fn remember_names(&self, fresh: &[NameUse]) -> Vec<NameUse> {
+        let (changed, all) = {
+            let mut names = self.names.lock().unwrap();
+            (merge_names(&mut names, fresh), names.clone())
+        };
+        if changed {
+            // Verrous pris l'un après l'autre (scan : cache puis noms) : pas d'interblocage.
+            let cache = self.cache.lock().unwrap();
+            self.save_cache(&cache);
+        }
+        all
+    }
+
     fn save_cache(&self, cache: &HashMap<String, CacheEntry>) {
-        let file = CacheFile { version: CACHE_VERSION, entries: cache.clone() };
+        let names = self.names.lock().unwrap().clone();
+        let file = CacheFile { version: CACHE_VERSION, entries: cache.clone(), names };
         if let Ok(text) = serde_json::to_string(&file) {
             // Le cache n'est qu'une optimisation : une erreur d'écriture est sans conséquence.
             let _ = crate::config::write_atomic(&self.cache_path, text.as_bytes());
@@ -236,6 +256,21 @@ fn group_worktrees(by_key: HashMap<String, Vec<SessionInfo>>) -> HashMap<String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembers_messaging_names_in_the_cache_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache.json");
+        let scanner = Scanner::new(dir.path().join("projects"), cache.clone());
+        let n = |name: &str, id: &str, since| NameUse { name: name.into(), session_id: id.into(), since };
+        assert_eq!(scanner.remember_names(&[n("projet-bf", "s1", 10)]), vec![n("projet-bf", "s1", 10)]);
+        // Relu au démarrage suivant, et complété.
+        let again = Scanner::new(dir.path().join("projects"), cache.clone());
+        assert_eq!(again.remember_names(&[n("local_x", "s2", 0)]), vec![n("projet-bf", "s1", 10), n("local_x", "s2", 0)]);
+        // Un ancien cache sans noms reste lisible.
+        fs::write(&cache, format!(r#"{{"version":{CACHE_VERSION},"entries":{{}}}}"#)).unwrap();
+        assert!(Scanner::new(dir.path().join("projects"), cache).remember_names(&[]).is_empty());
+    }
 
     /// Parcourt les vraies données de la machine : `cargo test real_scan -- --ignored --nocapture`.
     #[test]
