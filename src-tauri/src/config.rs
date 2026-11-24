@@ -2,7 +2,8 @@
 //!
 //! Claude Code reste la source de vérité pour les projets et conversations ; ce fichier
 //! ne contient que l'organisation personnelle : catégories, couleurs, noms d'affichage,
-//! sections, préférences par conversation, projets créés depuis l'appli et liste des archives.
+//! sections, préférences par conversation, projets créés depuis l'appli, liste des archives
+//! et réglages des suggestions.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -15,7 +16,10 @@ use std::path::{Path, PathBuf};
 /// - 2 : sections dans les projets (`ProjectPrefs::sections`) et préférences par
 ///   conversation (`Config::conversations`). Champs nouveaux avec valeur par défaut :
 ///   un fichier en version 1 se lit tel quel, sans perte.
-pub const CONFIG_VERSION: u32 = 2;
+/// - 3 : réglages des suggestions (`Config::suggestions`) et suggestions ignorées par
+///   conversation (`ConversationPrefs::dismissed_suggestions`). Champs nouveaux avec valeur
+///   par défaut : rien à convertir.
+pub const CONFIG_VERSION: u32 = 3;
 
 /// Une catégorie, avec la liste ordonnée des projets qu'elle contient.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -75,6 +79,40 @@ pub struct Section {
 pub struct ConversationPrefs {
     /// Couleur de fond (`#rrggbb`), ou `None` pour la couleur par défaut.
     pub color: Option<String>,
+    /// Suggestions ignorées, par clé de suggestion (voir suggestions.rs).
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub dismissed_suggestions: HashMap<String, Dismissal>,
+}
+
+/// « Ignorer » sur une suggestion : elle reste masquée tant que son palier ne dépasse pas
+/// `level` (et, pour une règle qui a un début, tant que la situation n'a pas recommencé
+/// après `at`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Dismissal {
+    /// Palier ignoré.
+    pub level: u32,
+    /// Moment du clic (ms depuis l'époque Unix).
+    pub at: u64,
+}
+
+/// Seuil par défaut de la règle « Contexte rempli », en pourcentage.
+pub const DEFAULT_CONTEXT_THRESHOLD: u32 = 60;
+
+/// Réglages des suggestions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SuggestionSettings {
+    /// Règles coupées (identifiants de règle).
+    pub disabled: Vec<String>,
+    /// Seuil de la règle « Contexte rempli », en pourcentage.
+    pub context_threshold: u32,
+}
+
+impl Default for SuggestionSettings {
+    fn default() -> Self {
+        Self { disabled: Vec::new(), context_threshold: DEFAULT_CONTEXT_THRESHOLD }
+    }
 }
 
 /// Une conversation archivée, avec tout ce qu'il faut pour la restaurer.
@@ -110,6 +148,8 @@ pub struct Config {
     /// Gérée uniquement par le backend (archiver / restaurer).
     pub archives: Vec<ArchiveEntry>,
     pub show_temp_projects: bool,
+    /// Réglages des suggestions (voir suggestions.rs).
+    pub suggestions: SuggestionSettings,
 }
 
 impl Default for Config {
@@ -121,6 +161,7 @@ impl Default for Config {
             conversations: HashMap::new(),
             archives: Vec::new(),
             show_temp_projects: false,
+            suggestions: SuggestionSettings::default(),
         }
     }
 }
@@ -171,7 +212,7 @@ pub fn load(path: &Path) -> Config {
 }
 
 /// Met une configuration lue sur disque au format courant.
-/// 1 → 2 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
+/// 1 → 2 → 3 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
 pub fn migrate(mut cfg: Config) -> Config {
     if cfg.version < CONFIG_VERSION {
         cfg.version = CONFIG_VERSION;
@@ -301,7 +342,10 @@ mod tests {
         save(&p, &cfg).unwrap();
         let again = load(&p);
         assert_eq!(serde_json::to_value(&again).unwrap(), serde_json::to_value(&cfg).unwrap());
-        assert!(fs::read_to_string(&p).unwrap().contains("\"version\": 2"));
+        assert!(fs::read_to_string(&p).unwrap().contains(&format!("\"version\": {CONFIG_VERSION}")));
+        // Réglages des suggestions absents : valeurs par défaut.
+        assert_eq!(cfg.suggestions, SuggestionSettings::default());
+        assert_eq!(cfg.suggestions.context_threshold, 60);
     }
 
     #[test]
@@ -316,7 +360,7 @@ mod tests {
             conversation_ids: vec!["a".into(), "b".into()],
             collapsed: true,
         });
-        cfg.conversations.insert("a".into(), ConversationPrefs { color: Some("#dc2626".into()) });
+        cfg.conversations.insert("a".into(), ConversationPrefs { color: Some("#dc2626".into()), ..Default::default() });
         save(&p, &cfg).unwrap();
         let text = fs::read_to_string(&p).unwrap();
         assert!(text.contains("\"conversationIds\"") && text.contains("\"conversations\""));
@@ -338,9 +382,9 @@ mod tests {
         // Doublon dans une deuxième section : gardé seulement dans la première.
         prefs.sections.push(Section { id: "s2".into(), conversation_ids: vec!["vivante".into()], ..Default::default() });
         cfg.archives.push(ArchiveEntry { session_id: "archivee".into(), ..Default::default() });
-        cfg.conversations.insert("vivante".into(), ConversationPrefs { color: Some("#000000".into()) });
-        cfg.conversations.insert("archivee".into(), ConversationPrefs { color: Some("#ffffff".into()) });
-        cfg.conversations.insert("disparue".into(), ConversationPrefs { color: Some("#123456".into()) });
+        cfg.conversations.insert("vivante".into(), ConversationPrefs { color: Some("#000000".into()), ..Default::default() });
+        cfg.conversations.insert("archivee".into(), ConversationPrefs { color: Some("#ffffff".into()), ..Default::default() });
+        cfg.conversations.insert("disparue".into(), ConversationPrefs { color: Some("#123456".into()), ..Default::default() });
         cfg.conversations.insert("sans-pref".into(), ConversationPrefs::default());
 
         let existing: HashSet<String> = ["vivante".to_string(), "sans-pref".to_string()].into();
@@ -354,6 +398,31 @@ mod tests {
 
         // Rien à retirer la deuxième fois.
         assert!(!prune_conversations(&mut cfg, &existing));
+    }
+
+    #[test]
+    fn suggestion_settings_and_dismissals_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.json");
+        let mut cfg = Config {
+            suggestions: SuggestionSettings { disabled: vec!["context".into()], context_threshold: 70 },
+            ..Default::default()
+        };
+        cfg.conversations.entry("a".into()).or_default().dismissed_suggestions.insert("context".into(), Dismissal { level: 80, at: 5 });
+        cfg.conversations.insert("b".into(), ConversationPrefs { color: Some("#000000".into()), ..Default::default() });
+        save(&p, &cfg).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        assert!(text.contains("\"contextThreshold\": 70") && text.contains("\"dismissedSuggestions\""));
+        // Aucune suggestion ignorée : le champ n'est pas écrit.
+        assert_eq!(text.matches("dismissedSuggestions").count(), 1);
+        let back = load(&p);
+        assert_eq!(back.suggestions, cfg.suggestions);
+        assert_eq!(back.conversations["a"].dismissed_suggestions["context"], Dismissal { level: 80, at: 5 });
+        // Une conversation qui n'a qu'une suggestion ignorée garde ses préférences.
+        let mut back = back;
+        let existing: HashSet<String> = ["a".to_string(), "b".to_string()].into();
+        assert!(!prune_conversations(&mut back, &existing));
+        assert!(back.conversations.contains_key("a"));
     }
 
     #[test]

@@ -27,6 +27,8 @@ import { ConversationFooter } from "./ConversationFooter";
 import { GrillBackBar, GrillForm, useGrillMode } from "./Grill";
 import { pendingRound } from "../grill";
 import type { SearchFocus } from "./GlobalSearch";
+import { SuggestionBanners, type SuggestionActionHandler } from "./Suggestions";
+import type { Suggestion } from "../suggestions";
 
 interface Props {
   sessionId: string;
@@ -39,6 +41,10 @@ interface Props {
   onStarted?: () => void;
   /** Résultat de la recherche globale à montrer dans la conversation. */
   focus?: SearchFocus | null;
+  /** « Ignorer » sur une suggestion de cette conversation. */
+  onDismissSuggestion?: (s: Suggestion) => void;
+  /** Gestionnaires des actions des suggestions (voir SuggestionBanners). */
+  suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
 }
 
 type RunState = { kind: "starting" } | { kind: "running" } | { kind: "exited"; code: number | null } | { kind: "error"; message: string };
@@ -80,7 +86,17 @@ function isBusy(a: Activity | null): boolean {
   return a?.state === "running" || isAwaitingPermission(a);
 }
 
-export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted, focus }: Props) {
+export function TerminalView({
+  sessionId,
+  cwd,
+  isNew,
+  active,
+  onClose,
+  onStarted,
+  focus,
+  onDismissSuggestion,
+  suggestionActions,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -339,6 +355,7 @@ export function TerminalView({ sessionId, cwd, isNew, active, onClose, onStarted
         </button>
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}
       </div>
+      {onDismissSuggestion && <SuggestionBanners sessionId={sessionId} onDismiss={onDismissSuggestion} actions={suggestionActions} />}
       <div className={"conv-stage" + (formVisible ? " collapsed" : "")}>
         <div className="terminal-host" ref={hostRef} />
         <ConversationView

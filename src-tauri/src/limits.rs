@@ -20,6 +20,8 @@
 //!   d'espaces dans le chemin, la commande est le seul nom de l'exécutable, et l'app
 //!   ajoute son dossier en tête du `PATH` de `claude` ([`path_with_exe_dir`]).
 //! - L'app surveille le fichier ([`start_watcher`]) et émet [`EVT_LIMITS`].
+//! - La même entrée donne aussi le remplissage du contexte de la conversation
+//!   (`context_window.used_percentage`, avec `session_id`), enregistré par context.rs.
 //!
 //! Les réglages de l'utilisateur sont seulement lus, jamais modifiés. Pas de réseau.
 
@@ -275,8 +277,13 @@ pub fn run_statusline() {
     }
     // Un éventuel BOM (entrée passée par PowerShell) rendrait le JSON illisible.
     let parsed: Option<Value> = serde_json::from_str(input.trim_start_matches('\u{feff}')).ok();
+    let app_dir = AppPaths::detect().app_dir;
     if let Some(u) = parsed.as_ref().and_then(parse_update) {
-        let _ = write_update(&limits_file(&AppPaths::detect().app_dir), u, crate::activity::now_ms());
+        let _ = write_update(&limits_file(&app_dir), u, crate::activity::now_ms());
+    }
+    // Remplissage du contexte de la conversation (voir context.rs).
+    if let Some(v) = parsed.as_ref() {
+        crate::context::record_from_statusline(&app_dir, v);
     }
     let cwd = parsed
         .as_ref()

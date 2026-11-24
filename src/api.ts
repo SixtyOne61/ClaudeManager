@@ -99,6 +99,24 @@ export interface Section {
 /** Préférences d'une conversation, conservées à l'archivage. */
 export interface ConversationPrefs {
   color?: string | null;
+  /** Suggestions ignorées, par clé de suggestion (voir src/suggestions.ts). */
+  dismissedSuggestions?: Record<string, Dismissal>;
+}
+
+/** « Ignorer » sur une suggestion : masquée jusqu'à un palier plus élevé (voir suggestions.rs). */
+export interface Dismissal {
+  /** Palier ignoré. */
+  level: number;
+  /** Moment du clic (ms depuis 1970). */
+  at: number;
+}
+
+/** Réglages des suggestions. */
+export interface SuggestionSettings {
+  /** Règles coupées (identifiants de règle). */
+  disabled: string[];
+  /** Seuil de la règle « Contexte rempli », en pourcentage. */
+  contextThreshold: number;
 }
 
 export interface ArchiveEntry {
@@ -123,6 +141,8 @@ export interface Config {
   conversations: Record<string, ConversationPrefs>;
   archives: ArchiveEntry[];
   showTempProjects: boolean;
+  /** Réglages des suggestions (absent dans un vieux fichier). */
+  suggestions?: SuggestionSettings;
 }
 
 /** Extrait d'un message découpé autour du mot trouvé. */

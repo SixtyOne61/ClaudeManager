@@ -27,6 +27,8 @@ import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/T
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree } from "./pty";
 import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
+import { dismissSuggestion } from "./suggestions";
+import { SettingsDialog } from "./components/Settings";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
 const NEW_CONVERSATION_TITLE = "Nouvelle conversation";
@@ -37,6 +39,7 @@ type DialogState =
   | { kind: "renameCategory"; category: Category }
   | { kind: "renameProject"; project: ProjectInfo }
   | { kind: "newProject" }
+  | { kind: "settings" }
   | null;
 
 export default function App() {
@@ -663,6 +666,7 @@ export default function App() {
         onDeleteCategory={deleteCategory}
         onAddProject={() => setDialog({ kind: "newProject" })}
         onToggleTemp={(show) => updateConfig((c) => ({ ...c, showTempProjects: show }))}
+        onSettings={() => setDialog({ kind: "settings" })}
       />
 
       <div className="main-column">
@@ -674,7 +678,14 @@ export default function App() {
         }
         setActiveTerminal(id);
       }} onClose={closeTerminal} />
-      <TerminalStack terminals={terminals} active={activeTerminal} onClose={closeTerminal} onStarted={terminalStarted} focus={searchFocus} />
+      <TerminalStack
+        terminals={terminals}
+        active={activeTerminal}
+        onClose={closeTerminal}
+        onStarted={terminalStarted}
+        focus={searchFocus}
+        onDismissSuggestion={(s) => updateConfig((c) => dismissSuggestion(c, s))}
+      />
       {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
           config={config}
@@ -785,6 +796,8 @@ export default function App() {
           }}
         />
       )}
+
+      {dialog?.kind === "settings" && <SettingsDialog config={config} onChange={updateConfig} onClose={() => setDialog(null)} />}
 
       <div className="toasts">
         {toasts.map((t) => (

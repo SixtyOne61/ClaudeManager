@@ -7,6 +7,7 @@ import { emit } from "@tauri-apps/api/event";
 import type { Config, ProjectInfo, ScanResult, SearchResult, SessionHits, SessionInfo } from "./api";
 import type { ChunkMeta, ConversationEntry, DiffLine } from "./conversation";
 import type { SlashEntry } from "./slashCommands";
+import type { ContextInfo, Suggestion } from "./suggestions";
 
 const now = Date.now();
 const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3600_000).toISOString();
@@ -367,8 +368,41 @@ function bumpUsage() {
   setTimeout(() => emit("usage-limits", usageLimits), 0);
 }
 
+// Contexte de chaque conversation (ligne d'état) : « Refonte de la page d'accueil » est déjà
+// remplie à 72 % (suggestion de hand off) ; chaque message envoyé ajoute 9 points.
+const contexts = new Map<string, ContextInfo>([
+  [site.sessions[0].id, { sessionId: site.sessions[0].id, usedPercentage: 72, at: now, since: now - 3600_000 }],
+  [jeu.sessions[1].id, { sessionId: jeu.sessions[1].id, usedPercentage: 35, at: now, since: now - 3600_000 }],
+]);
+
+/** Même règle que suggestions.rs (seuil réglable, paliers 80 et 90, « Ignorer » jusqu'au palier suivant). */
+function fakeSuggestions() {
+  const archivedIds = new Set(config.archives.map((a) => a.sessionId));
+  const threshold = Math.min(95, Math.max(10, config.suggestions?.contextThreshold ?? 60));
+  const enabled = !(config.suggestions?.disabled ?? []).includes("context");
+  const suggestions: Suggestion[] = [];
+  for (const c of enabled ? contexts.values() : []) {
+    const level = [threshold, ...[80, 90].filter((t) => t > threshold)].filter((t) => c.usedPercentage >= t).pop();
+    if (level === undefined || archivedIds.has(c.sessionId)) continue;
+    const d = config.conversations[c.sessionId]?.dismissedSuggestions?.context;
+    if (d && d.level >= level && d.at >= c.since) continue;
+    suggestions.push({ rule: "context", sessionId: c.sessionId, key: "context", level, since: c.since, data: { percent: Math.round(c.usedPercentage) } });
+  }
+  return { contexts: [...contexts.values()], suggestions };
+}
+
+const emitSuggestions = () => setTimeout(() => emit("suggestions", fakeSuggestions()), 0);
+
+function bumpContext(key: string) {
+  const prev = contexts.get(key);
+  const pct = Math.min(100, (prev?.usedPercentage ?? 5) + 9);
+  contexts.set(key, { sessionId: key, usedPercentage: pct, at: Date.now(), since: prev?.since ?? Date.now() });
+  emitSuggestions();
+}
+
 function fakeTurn(key: string, line: string) {
   bumpUsage();
+  bumpContext(key);
   clearTimeout(activityTimers.get(key));
   setActivity(key, { state: "running", kind: "prompt" });
   activityTimers.set(
@@ -531,6 +565,7 @@ export function installDevMock() {
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
     if (cmd === "activity_list") return [...activities.values()];
     if (cmd === "usage_limits") return usageLimits;
+    if (cmd === "suggestions_list") return fakeSuggestions();
     if (cmd === "conversation_read") return fakeConversationRead(a);
     if (cmd === "list_slash_commands") return fakeSlashCommands();
     if (cmd === "run_integrated") return fakeRun(a);
@@ -545,6 +580,7 @@ export function installDevMock() {
         return fakeGitRepos().includes(String(a.path));
       case "save_config":
         config = { ...(a.cfg as Config), archives: config.archives };
+        emitSuggestions();
         return config;
       case "search_sessions":
         return [];

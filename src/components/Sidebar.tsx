@@ -1,5 +1,6 @@
 // Barre latérale : catégories (réordonnables), projets (déplaçables entre catégories),
-// section « Non classés », accès aux archives.
+// section « Non classés », accès aux archives et aux réglages. Icône 💡 sur une conversation
+// qui a une suggestion, et sur son projet et sa catégorie (voir src/suggestions.ts).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +35,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -47,6 +49,11 @@ import { UpdateButton } from "./UpdateButton";
 import { UsageLimits } from "./UsageLimits";
 import { ActivityCounts, ActivityDot } from "./Activity";
 import { countActivities, useActivities, type ActivityCount } from "../activity";
+import { hasSuggestion, useSuggestions } from "../suggestions";
+import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
+
+/** Info-bulle de l'icône 💡 d'un projet ou d'une catégorie. */
+const GROUP_SUGGESTION_HINT = "Une conversation a une suggestion";
 
 /** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
 const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((s) => s.id));
@@ -82,6 +89,8 @@ interface Props {
   onConfigChange: (change: (c: Config) => Config) => void;
   /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
   onNewConversation: (project: ProjectInfo, sectionId: string | null) => void;
+  /** Ouvre les réglages. */
+  onSettings?: () => void;
 }
 
 /** Vue de la barre latérale : liste des projets, ou conversations du projet courant. */
@@ -136,6 +145,8 @@ export function Sidebar(props: Props) {
   };
   // État des conversations : compteurs « en cours » et « action requise ».
   const activities = useActivities();
+  // Suggestions : icône 💡 sur les projets et catégories concernés.
+  const suggestions = useSuggestions();
 
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -254,6 +265,7 @@ export function Sidebar(props: Props) {
       color={config.projects[p.key]?.color}
       selected={selectedKey === p.key}
       activity={countActivities(activities, sessionIds([p]))}
+      suggested={hasSuggestion(suggestions, sessionIds([p]))}
       onClick={() => props.onSelect({ kind: "project", key: p.key })}
     />
   );
@@ -304,6 +316,11 @@ export function Sidebar(props: Props) {
                 >
                   <Archive size={15} /> Archives <span className="count">{config.archives.length}</span>
                 </button>
+                {props.onSettings && (
+                  <button className="nav-item" onClick={props.onSettings}>
+                    <Settings size={15} /> Réglages
+                  </button>
+                )}
                 {view === "projects" && (hiddenTemp > 0 || config.showTempProjects) && (
                   <label className="checkbox small" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={config.showTempProjects} onChange={(e) => props.onToggleTemp(e.target.checked)} />
@@ -362,6 +379,7 @@ export function Sidebar(props: Props) {
                   category={cat}
                   count={list.length}
                   activity={countActivities(activities, sessionIds(list))}
+                  suggested={hasSuggestion(suggestions, sessionIds(list))}
                   collapsed={collapsed.has(cat.id)}
                   onToggle={() => toggleCollapsed(cat.id)}
                   onRename={() => props.onRenameCategory(cat)}
@@ -381,6 +399,7 @@ export function Sidebar(props: Props) {
           <Zone id={NONE} className="category uncategorized">
             <div className="category-header static">
               <span className="category-name">Non classés</span>
+              {hasSuggestion(suggestions, sessionIds(uncategorized)) && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
               <ActivityCounts {...countActivities(activities, sessionIds(uncategorized))} />
               <span className="count">{uncategorized.length}</span>
             </div>
@@ -666,6 +685,7 @@ function ConversationRow(props: {
     >
       <ActivityDot activity={props.activity} />
       <span className="project-name">{s.title}</span>
+      <ConversationSuggestionIcon sessionId={s.id} />
       <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
     </div>
   );
@@ -746,6 +766,8 @@ function CategoryBlock(props: {
   count: number;
   /** Conversations en cours / en attente de réponse dans la catégorie. */
   activity: ActivityCount;
+  /** Une conversation de la catégorie a une suggestion. */
+  suggested: boolean;
   collapsed: boolean;
   onToggle: () => void;
   onRename: () => void;
@@ -774,6 +796,7 @@ function CategoryBlock(props: {
         <span className="category-name" onDoubleClick={props.onRename}>
           {cat.name}
         </span>
+        {props.suggested && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
         <ActivityCounts {...props.activity} />
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
@@ -802,6 +825,8 @@ function ProjectRow(props: {
   selected: boolean;
   /** Conversations en cours / en attente de réponse dans le projet. */
   activity: ActivityCount;
+  /** Une conversation du projet a une suggestion. */
+  suggested: boolean;
   onClick: () => void;
 }) {
   const { project: p } = props;
@@ -824,6 +849,7 @@ function ProjectRow(props: {
     >
       <span className="project-name">{props.name}</span>
       {!p.exists && <TriangleAlert size={13} className="warn" aria-label="Dossier introuvable" />}
+      {props.suggested && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
       <ActivityCounts {...props.activity} />
       <span className="project-meta">
         {p.sessions.length > 0 ? `${p.sessions.length} · ${relativeDate(p.lastActivity)}` : "vide"}

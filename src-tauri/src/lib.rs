@@ -10,6 +10,7 @@ mod actions;
 mod attachments;
 mod commands_list;
 mod config;
+mod context;
 mod conversation;
 mod limits;
 mod project_settings;
@@ -19,6 +20,7 @@ mod scanner;
 mod search;
 mod sessions;
 mod shell_env;
+mod suggestions;
 mod worktrees;
 
 use actions::{SessionFiles, Terminal};
@@ -31,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// État partagé entre les commandes.
 struct AppState {
@@ -230,15 +232,41 @@ fn get_config(state: State<AppState>) -> Config {
 }
 
 /// Enregistre la configuration envoyée par l'interface. La liste des archives est gérée
-/// par le backend : celle envoyée par l'interface est ignorée.
+/// par le backend : celle envoyée par l'interface est ignorée. Les suggestions sont
+/// recalculées (réglages, « Ignorer »).
 #[tauri::command]
-fn save_config(state: State<AppState>, mut cfg: Config) -> Result<Config, String> {
-    let mut current = state.config.lock().unwrap();
-    cfg.archives = current.archives.clone();
-    cfg.version = config::CONFIG_VERSION;
-    state.save_config(&cfg)?;
-    *current = cfg.clone();
+fn save_config(app: AppHandle, state: State<AppState>, mut cfg: Config) -> Result<Config, String> {
+    {
+        let mut current = state.config.lock().unwrap();
+        cfg.archives = current.archives.clone();
+        cfg.version = config::CONFIG_VERSION;
+        state.save_config(&cfg)?;
+        *current = cfg.clone();
+    }
+    emit_suggestions(&app);
     Ok(cfg)
+}
+
+// ---------------------------------------------------------------------------
+// Suggestions
+// ---------------------------------------------------------------------------
+
+/// Contexte de chaque conversation et suggestions à afficher (voir suggestions.rs).
+fn suggestions_snapshot(app: &AppHandle) -> suggestions::Snapshot {
+    let contexts = app.state::<context::ContextStore>().all();
+    let cfg = app.state::<AppState>().config.lock().unwrap().clone();
+    suggestions::snapshot(&suggestions::Inputs { config: &cfg, contexts: &contexts })
+}
+
+/// Recalcule les suggestions et les émet vers l'interface ([`suggestions::EVT_SUGGESTIONS`]).
+fn emit_suggestions(app: &AppHandle) {
+    let _ = app.emit(suggestions::EVT_SUGGESTIONS, suggestions_snapshot(app));
+}
+
+/// Contexte de chaque conversation et suggestions actuelles (au chargement de l'interface).
+#[tauri::command]
+fn suggestions_list(app: AppHandle) -> suggestions::Snapshot {
+    suggestions_snapshot(&app)
 }
 
 /// Enregistre un dossier comme projet (création depuis l'appli). Renvoie sa clé.
@@ -511,6 +539,7 @@ pub fn run() {
     shell_env::import_login_path();
     let paths = AppPaths::detect();
     let _ = std::fs::create_dir_all(&paths.app_dir);
+    let app_dir = paths.app_dir.clone();
     let state = AppState {
         scanner: Scanner::new(paths.claude_projects.clone(), paths.cache_file.clone()),
         config: Mutex::new(config::load(&paths.config_file)),
@@ -528,6 +557,8 @@ pub fn run() {
         // Terminaux intégrés (voir pty.rs).
         .manage(pty::PtyManager::default())
         .manage(commands_list::ListingCache::default())
+        // Dernier remplissage du contexte de chaque conversation (voir context.rs).
+        .manage(context::ContextStore::load(&app_dir))
         .on_window_event(pty::on_window_event)
         .setup(|app| {
             // Restes d'une fermeture brutale (plantage, arrêt forcé).
@@ -539,6 +570,9 @@ pub fn run() {
             activity::start_watcher(app.handle().clone(), &app_dir);
             // Limites d'utilisation écrites par la ligne d'état (voir limits.rs).
             limits::start_watcher(app.handle().clone(), &app_dir);
+            // Contexte de chaque conversation, écrit par la ligne d'état : les suggestions
+            // sont recalculées à chaque changement (voir context.rs et suggestions.rs).
+            context::start_watcher(app.handle().clone(), &app_dir, emit_suggestions);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -573,6 +607,7 @@ pub fn run() {
             run::commands::run_external,
             activity::activity_list,
             limits::usage_limits,
+            suggestions_list,
             worktrees::commands::is_git_repo,
         ])
         .build(tauri::generate_context!())

@@ -7,6 +7,8 @@ import { TerminalView } from "./TerminalView";
 import { ActivityDot } from "./Activity";
 import { useActivities } from "../activity";
 import type { SearchFocus } from "./GlobalSearch";
+import type { SuggestionActionHandler } from "./Suggestions";
+import type { Suggestion } from "../suggestions";
 
 /** Une conversation ouverte dans le terminal intégré. */
 export interface OpenTerminal {
@@ -71,9 +73,13 @@ interface StackProps {
   onStarted?: (t: OpenTerminal) => void;
   /** Résultat de la recherche globale à montrer dans la conversation ouverte concernée. */
   focus?: SearchFocus | null;
+  /** « Ignorer » sur une suggestion (bandeau de l'onglet). */
+  onDismissSuggestion?: (s: Suggestion) => void;
+  /** Gestionnaires des actions des suggestions (voir SuggestionBanners). */
+  suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
 }
 
-export function TerminalStack({ terminals, active, onClose, onStarted, focus }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions }: StackProps) {
   return (
     <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
@@ -86,6 +92,8 @@ export function TerminalStack({ terminals, active, onClose, onStarted, focus }: 
           onClose={() => onClose(t)}
           onStarted={() => onStarted?.(t)}
           focus={focus?.sessionId === t.sessionId ? focus : null}
+          onDismissSuggestion={onDismissSuggestion}
+          suggestionActions={suggestionActions}
         />
       ))}
     </div>
