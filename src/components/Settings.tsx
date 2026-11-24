@@ -66,6 +66,18 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
           close();
         }}
       >
+        <h3 className="settings-heading">Affichage</h3>
+        <div className="settings-rule">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={config.showTempProjects}
+              onChange={(e) => onChange((c) => ({ ...c, showTempProjects: e.target.checked }))}
+            />
+            Afficher les projets temporaires
+          </label>
+          <small className="settings-rule-help">Projets situés dans un dossier temporaire, masqués par défaut dans la barre latérale.</small>
+        </div>
         <h3 className="settings-heading">Suggestions</h3>
         <p className="settings-help">L'app propose une bonne pratique quand elle repère une situation (icône 💡). Elle n'agit jamais d'elle-même.</p>
         {Object.entries(SUGGESTION_RULES).map(([id, rule]) => {

@@ -76,7 +76,6 @@ interface Props {
   onRenameCategory: (cat: Category) => void;
   onDeleteCategory: (cat: Category) => void;
   onAddProject: () => void;
-  onToggleTemp: (show: boolean) => void;
   /** Recherche globale (dans le contenu de toutes les conversations). */
   onSearch?: () => void;
   searchActive?: boolean;
@@ -174,10 +173,6 @@ export function Sidebar(props: Props) {
     return [...projects.values()]
       .filter((p) => !assigned.has(p.key) && !isArchived(p) && (config.showTempProjects || !p.isTemp))
       .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
-  }, [projects, config]);
-  const hiddenTemp = useMemo(() => {
-    const assigned = new Set(config.categories.flatMap((c) => c.projectKeys));
-    return [...projects.values()].filter((p) => p.isTemp && !assigned.has(p.key) && !isArchived(p)).length;
   }, [projects, config]);
 
   /**
@@ -340,12 +335,6 @@ export function Sidebar(props: Props) {
                   <button className="nav-item" onClick={props.onSettings}>
                     <Settings size={15} /> Réglages
                   </button>
-                )}
-                {view === "projects" && (hiddenTemp > 0 || config.showTempProjects) && (
-                  <label className="checkbox small" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={config.showTempProjects} onChange={(e) => props.onToggleTemp(e.target.checked)} />
-                    Afficher les projets temporaires ({hiddenTemp})
-                  </label>
                 )}
               </MoreMenu>
               <button className="icon-btn" title="Réduire la barre latérale" onClick={() => setReduced(true)}>

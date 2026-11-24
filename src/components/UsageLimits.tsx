@@ -55,8 +55,10 @@ function LimitBar({
   return (
     <div className="limit">
       <div className="limit-text">
-        <span className="limit-label">{label} :</span> {shown} %
-        <span className="limit-reset"> · {expired ? "remis à zéro" : formatReset(w.resetsAt, new Date(nowMs))}</span>
+        <span className="limit-line">
+          <span className="limit-label">{label} :</span> {shown} %
+          <span className="limit-reset"> · {expired ? "remis à zéro" : formatReset(w.resetsAt, new Date(nowMs))}</span>
+        </span>
         {theo !== null && (
           <button
             className="limit-plus"

@@ -1053,7 +1053,6 @@ export default function App() {
         onRenameCategory={(category) => setDialog({ kind: "renameCategory", category })}
         onDeleteCategory={deleteCategory}
         onAddProject={() => setDialog({ kind: "newProject" })}
-        onToggleTemp={(show) => updateConfig((c) => ({ ...c, showTempProjects: show }))}
         onSettings={() => setDialog({ kind: "settings" })}
         onAddHub={() => setDialog({ kind: "newHub" })}
         hubActions={hubActions}
