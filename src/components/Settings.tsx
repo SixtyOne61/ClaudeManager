@@ -1,6 +1,7 @@
 // Réglages de l'app (menu « … » de la barre latérale) : les suggestions (voir
 // src/suggestions.ts) — une case par règle pour la couper, et le seuil de la règle
-// « Contexte rempli ». Chaque changement est enregistré tout de suite dans config.json.
+// « Contexte rempli » — et la consigne du résumé de passation du hand off (voir
+// src/handoff.ts). Chaque changement est enregistré tout de suite dans config.json.
 
 import { useState } from "react";
 import type { Config } from "../api";
@@ -13,6 +14,7 @@ import {
   setRuleEnabled,
   suggestionSettings,
 } from "../suggestions";
+import { DEFAULT_HANDOFF_PROMPT, handoffPrompt, setHandoffPrompt } from "../handoff";
 import { Modal } from "./Dialogs";
 
 export function SettingsDialog(props: { config: Config; onChange: (change: (c: Config) => Config) => void; onClose: () => void }) {
@@ -34,12 +36,25 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
     return clamped !== saved ? (c) => setContextThreshold(c, clamped) : null;
   };
 
+  // Consigne du résumé de passation (hand off), enregistrée quand le champ perd le focus.
+  const savedPrompt = handoffPrompt(config);
+  const [prompt, setPrompt] = useState(savedPrompt);
+  const promptChange = (): Change => {
+    if (!prompt.trim()) {
+      setPrompt(savedPrompt);
+      return null;
+    }
+    return prompt.trim() !== savedPrompt ? (c) => setHandoffPrompt(c, prompt) : null;
+  };
+
   const commit = (change: Change) => change && onChange(change);
   const commitThreshold = () => commit(thresholdChange());
+  const commitPrompt = () => commit(promptChange());
 
-  /** Fermeture : le seuil pas encore enregistré l'est. */
+  /** Fermeture : les champs pas encore enregistrés le sont en une seule fois. */
   const close = () => {
-    commit(thresholdChange());
+    const changes = [thresholdChange(), promptChange()].filter((c): c is (c: Config) => Config => c !== null);
+    if (changes.length) onChange((c) => changes.reduce((acc, f) => f(acc), c));
     props.onClose();
   };
 
@@ -81,6 +96,31 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
             </div>
           );
         })}
+        <h3 className="settings-heading">Hand off</h3>
+        <p className="settings-help">
+          Consigne tapée dans la conversation pour lui faire rédiger son résumé de passation. La réponse devient le premier message de la nouvelle conversation.
+        </p>
+        <textarea
+          className="settings-textarea"
+          rows={5}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onBlur={commitPrompt}
+          aria-label="Consigne du résumé de passation"
+        />
+        <div className="settings-inline-actions">
+          <button
+            type="button"
+            className="btn small ghost"
+            disabled={prompt.trim() === DEFAULT_HANDOFF_PROMPT}
+            onClick={() => {
+              setPrompt(DEFAULT_HANDOFF_PROMPT);
+              onChange((c) => setHandoffPrompt(c, null));
+            }}
+          >
+            Rétablir le texte par défaut
+          </button>
+        </div>
         <div className="modal-actions">
           <button type="submit" className="btn primary">
             Fermer

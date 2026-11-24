@@ -119,6 +119,26 @@ export interface SuggestionSettings {
   contextThreshold: number;
 }
 
+/** Lien d'un hand off, rangé sous l'identifiant de la parente (voir src/handoff.ts). */
+export interface HandoffLink {
+  /** Conversation qui a pris le relais. */
+  successorId: string;
+  /** Moment du hand off (ms depuis 1970). */
+  at: number;
+}
+
+/** Résumé de passation lu dans la parente, et premier message de la suite (voir handoff.rs). */
+export interface HandoffSummary {
+  summary: string;
+  firstMessage: string;
+}
+
+/** Fin d'un hand off : configuration à jour, et erreur si la parente n'a pas pu être archivée. */
+export interface HandoffFinish {
+  config: Config;
+  archiveError: string | null;
+}
+
 export interface ArchiveEntry {
   sessionId: string;
   projectKey: string;
@@ -143,6 +163,10 @@ export interface Config {
   showTempProjects: boolean;
   /** Réglages des suggestions (absent dans un vieux fichier). */
   suggestions?: SuggestionSettings;
+  /** Hand off : suite de chaque parente, par identifiant de la parente. Géré par le backend. */
+  handoffLinks?: Record<string, HandoffLink>;
+  /** Consigne du résumé de passation choisie dans les réglages (absente : texte par défaut). */
+  handoffPrompt?: string | null;
 }
 
 /** Extrait d'un message découpé autour du mot trouvé. */
@@ -237,6 +261,18 @@ export const api = {
    */
   checkOpenElsewhere: (projectKey: string, sessionId: string, releasedAt: number | null) =>
     invoke<void>("check_open_elsewhere", { projectKey, sessionId, releasedAt }),
+  /**
+   * Hand off : réponse de la parente à la consigne du résumé de passation, lue dans son
+   * `.jsonl`, et premier message de la suite (null : réponse vide ou introuvable).
+   */
+  handoffSummary: (sessionId: string, cwd: string | null, prompt: string, parentTitle: string) =>
+    invoke<HandoffSummary | null>("handoff_summary", { sessionId, cwd, prompt, parentTitle }),
+  /**
+   * Hand off, dernière étape : section, couleur et lien pour la suite, archivage de la parente.
+   * `projectKey` : dossier de stockage de la parente.
+   */
+  handoffFinish: (projectKey: string, parentId: string, successorId: string) =>
+    invoke<HandoffFinish>("handoff_finish", { projectKey, parentId, successorId }),
   /** Dernières limites d'utilisation connues (null : aucune encore). */
   usageLimits: () => invoke<UsageLimits | null>("usage_limits"),
 };

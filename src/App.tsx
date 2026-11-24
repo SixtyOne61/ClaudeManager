@@ -16,6 +16,7 @@ import {
   type SessionInfo,
   type SearchHit,
   type SessionHits,
+  type WorktreeInfo,
 } from "./api";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { ProjectView } from "./components/ProjectView";
@@ -29,6 +30,17 @@ import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
 import { dismissSuggestion } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
+import {
+  endHandoff,
+  handoffBlocker,
+  handoffPrompt,
+  isHandoffRunning,
+  parentOf,
+  requestSummary,
+  sendWhenReady,
+  successorOf,
+  type HandoffLineage,
+} from "./handoff";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
 const NEW_CONVERSATION_TITLE = "Nouvelle conversation";
@@ -298,10 +310,19 @@ export default function App() {
    * Nouvelle conversation dans le terminal intégré : `claude --session-id <id>` dans le
    * dossier du projet, avec un identifiant choisi ici. Elle apparaît tout de suite dans la
    * liste (titre provisoire) et sera rangée dans `sectionId` (null = « Sans section »).
+   * `opts.title` : titre provisoire ; `opts.inWorktree` : worktree existant dans lequel elle
+   * tourne (`path` est alors son dossier). Renvoie son identifiant.
    */
-  const startNewConversation = (projectKey: string, path: string | null, sectionId: string | null, worktree?: string) => {
-    if (!path) return;
+  const startNewConversation = (
+    projectKey: string,
+    path: string | null,
+    sectionId: string | null,
+    worktree?: string,
+    opts?: { title?: string; inWorktree?: WorktreeInfo | null },
+  ): string | null => {
+    if (!path) return null;
     const id = newId();
+    const title = opts?.title ?? NEW_CONVERSATION_TITLE;
     const now = new Date();
     // Dans un nouveau worktree (`worktree` défini, vide = nom choisi par Claude Code) :
     // badge « worktree » tout de suite ; le vrai chemin arrive avec le fichier (ticket 08).
@@ -311,7 +332,7 @@ export default function App() {
       id,
       projectKey,
       cwd: path,
-      title: NEW_CONVERSATION_TITLE,
+      title,
       titleSource: "none",
       firstPrompt: null,
       createdAt: now.toISOString(),
@@ -323,7 +344,7 @@ export default function App() {
       provisional: true,
       worktree:
         worktree === undefined
-          ? null
+          ? (opts?.inWorktree ?? null)
           : {
               name: wtName || "(nom automatique)",
               path: worktreePath(path, wtName),
@@ -332,8 +353,9 @@ export default function App() {
     };
     placeIn.current.set(id, { projectKey, sectionId });
     setPending((ps) => [...ps, session]);
-    setTerminals((ts) => [...ts, { sessionId: id, cwd: path, title: NEW_CONVERSATION_TITLE, isNew: true }]);
+    setTerminals((ts) => [...ts, { sessionId: id, cwd: path, title, isNew: true }]);
     setActiveTerminal(id);
+    return id;
   };
 
   /**
@@ -384,6 +406,96 @@ export default function App() {
     const title = [...projects.values()].flatMap((p) => p.sessions).find((s) => s.id === t.sessionId)?.title;
     return title && title !== t.title ? { ...t, title } : t;
   });
+
+  // ---- Hand off (voir src/handoff.ts) ----------------------------------------------------
+
+  /** Conversation et projet affiché qui la contient (null : archivée ou disparue). */
+  const findSession = (id: string): { s: SessionInfo; p: ProjectInfo } | null => {
+    for (const p of projects.values()) {
+      const s = p.sessions.find((x) => x.id === id);
+      if (s) return { s, p };
+    }
+    return null;
+  };
+
+  /**
+   * Hand off de la conversation (clic sur le bouton) : résumé de passation demandé à la
+   * parente, suite créée dans le même dossier avec ce résumé pour premier message, puis la
+   * suite prend la section et la couleur de la parente, qui est archivée. Annulé ou réponse
+   * vide : rien n'est créé ni archivé.
+   */
+  const startHandoff = async (sessionId: string) => {
+    const found = findSession(sessionId);
+    if (!found || isHandoffRunning(sessionId)) return;
+    const blocked = handoffBlocker(getActivity(sessionId), null);
+    if (blocked) {
+      toast(blocked, true);
+      return;
+    }
+    const { s: parent, p } = found;
+    const cwd = terminals.find((t) => t.sessionId === sessionId)?.cwd ?? parent.cwd ?? p.path;
+    if (!cwd) return;
+    const r = await requestSummary(sessionId, cwd, handoffPrompt(config), parent.title);
+    if (r.kind === "cancelled") {
+      toast("Hand off annulé : rien n'a été créé ni archivé.");
+      return;
+    }
+    if (r.kind === "failed") {
+      toast(r.message, true);
+      return;
+    }
+    try {
+      // Même dossier (même worktree le cas échéant), même projet affiché.
+      const successorId = startNewConversation(p.key, cwd, null, undefined, { title: `Suite de ${parent.title}`, inWorktree: parent.worktree });
+      if (!successorId) return;
+      if (!(await sendWhenReady(successorId, r.summary.firstMessage))) {
+        toast(
+          "Hand off interrompu : la nouvelle conversation n'a pas démarré. La conversation d'origine n'est pas archivée ; son résumé de passation y reste visible.",
+          true,
+        );
+        return;
+      }
+      // La parente : terminal arrêté et onglet fermé (son fichier va être déplacé), puis archivée.
+      await killTerminal(sessionId).catch(() => {});
+      releasedAt.current.set(sessionId, Date.now());
+      setTerminals((ts) => ts.filter((x) => x.sessionId !== sessionId));
+      setActiveTerminal((a) => (a === sessionId ? successorId : a));
+      const done = await api.handoffFinish(parent.projectKey, sessionId, successorId);
+      setConfig(done.config);
+      if (done.archiveError) toast(`La suite a pris le relais, mais « ${parent.title} » n'a pas pu être archivée : ${done.archiveError}`, true);
+      else toast(`Hand off : « ${parent.title} » est archivée, sa suite a pris le relais.`);
+      refresh();
+    } catch (e) {
+      showError(e);
+    } finally {
+      endHandoff(sessionId);
+    }
+  };
+
+  /** Titre d'une conversation, dans un projet ou dans les archives. */
+  const conversationTitle = (id: string): string | null =>
+    findSession(id)?.s.title ?? config.archives.find((a) => a.sessionId === id)?.title ?? null;
+
+  /** Parente et suite d'une conversation (liens « ← Suite de … » et « Suite : … → »). */
+  const lineageOf = (id: string): HandoffLineage => {
+    const link = (x: string | null) => (x ? { id: x, title: conversationTitle(x) ?? "conversation introuvable" } : null);
+    return { parent: link(parentOf(config, id)), successor: link(successorOf(config, id)) };
+  };
+
+  /** Ouvre une conversation par son identifiant : son onglet, ou les archives où elle est rangée. */
+  const openConversationById = (id: string) => {
+    const archive = config.archives.find((a) => a.sessionId === id);
+    if (archive) {
+      setSearchOpen(false);
+      setSearchFocus({ projectKey: archive.projectKey, sessionId: id, archived: true, line: null, uuid: null });
+      setSelection({ kind: "archives" });
+      setActiveTerminal(null);
+      return;
+    }
+    const found = findSession(id);
+    if (found) openInTerminal(found.s, found.p.path);
+    else toast("Cette conversation est introuvable (mise à la Corbeille ?).", true);
+  };
 
   // ---- Archives / Corbeille -------------------------------------------------------------
 
@@ -685,6 +797,9 @@ export default function App() {
         onStarted={terminalStarted}
         focus={searchFocus}
         onDismissSuggestion={(s) => updateConfig((c) => dismissSuggestion(c, s))}
+        onHandoff={startHandoff}
+        lineageOf={lineageOf}
+        onOpenConversation={openConversationById}
       />
       {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
@@ -703,6 +818,8 @@ export default function App() {
           onTrash={trashArchive}
           onRestoreProject={restoreProject}
           focus={searchFocus?.archived ? searchFocus : null}
+          lineageOf={lineageOf}
+          onOpenConversation={openConversationById}
         />
       ) : selectedProject ? (
         <ProjectView
@@ -714,6 +831,7 @@ export default function App() {
           onOpen={(s) => openInTerminal(s, selectedProject.path)}
           onArchive={archiveSession}
           onTrash={trashSession}
+          onHandoff={(s) => startHandoff(s.id)}
           onArchiveMany={(list) => bulkSessionAction(list, "archive").then((r) => r !== null)}
           onTrashMany={(list) => bulkSessionAction(list, "trash").then((r) => r !== null)}
           onArchiveProject={() => archiveProject(selectedProject)}

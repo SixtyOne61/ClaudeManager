@@ -9,6 +9,7 @@ import { useActivities } from "../activity";
 import type { SearchFocus } from "./GlobalSearch";
 import type { SuggestionActionHandler } from "./Suggestions";
 import type { Suggestion } from "../suggestions";
+import type { HandoffLineage } from "../handoff";
 
 /** Une conversation ouverte dans le terminal intégré. */
 export interface OpenTerminal {
@@ -77,9 +78,15 @@ interface StackProps {
   onDismissSuggestion?: (s: Suggestion) => void;
   /** Gestionnaires des actions des suggestions (voir SuggestionBanners). */
   suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
+  /** Hand off d'une conversation (bouton de la barre d'outils et du bandeau de suggestion). */
+  onHandoff?: (sessionId: string) => void;
+  /** Parente et suite d'une conversation (liens de hand off). */
+  lineageOf?: (sessionId: string) => HandoffLineage;
+  /** Ouvre une conversation par son identifiant (onglet, ou archives). */
+  onOpenConversation?: (sessionId: string) => void;
 }
 
-export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions, onHandoff, lineageOf, onOpenConversation }: StackProps) {
   return (
     <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
@@ -94,6 +101,9 @@ export function TerminalStack({ terminals, active, onClose, onStarted, focus, on
           focus={focus?.sessionId === t.sessionId ? focus : null}
           onDismissSuggestion={onDismissSuggestion}
           suggestionActions={suggestionActions}
+          onHandoff={onHandoff && (() => onHandoff(t.sessionId))}
+          lineage={lineageOf?.(t.sessionId)}
+          onOpenConversation={onOpenConversation}
         />
       ))}
     </div>

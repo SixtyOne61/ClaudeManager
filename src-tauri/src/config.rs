@@ -2,8 +2,8 @@
 //!
 //! Claude Code reste la source de vérité pour les projets et conversations ; ce fichier
 //! ne contient que l'organisation personnelle : catégories, couleurs, noms d'affichage,
-//! sections, préférences par conversation, projets créés depuis l'appli, liste des archives
-//! et réglages des suggestions.
+//! sections, préférences par conversation, projets créés depuis l'appli, liste des archives,
+//! réglages des suggestions et liens des hand off (parente → suite).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -19,7 +19,10 @@ use std::path::{Path, PathBuf};
 /// - 3 : réglages des suggestions (`Config::suggestions`) et suggestions ignorées par
 ///   conversation (`ConversationPrefs::dismissed_suggestions`). Champs nouveaux avec valeur
 ///   par défaut : rien à convertir.
-pub const CONFIG_VERSION: u32 = 3;
+/// - 4 : hand off — liens parente → suite (`Config::handoff_links`) et consigne du résumé de
+///   passation (`Config::handoff_prompt`). Champs nouveaux avec valeur par défaut : rien à
+///   convertir.
+pub const CONFIG_VERSION: u32 = 4;
 
 /// Une catégorie, avec la liste ordonnée des projets qu'elle contient.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -115,6 +118,16 @@ impl Default for SuggestionSettings {
     }
 }
 
+/// Lien d'un hand off, rangé sous l'identifiant de la parente (voir handoff.rs).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HandoffLink {
+    /// Conversation qui a pris le relais.
+    pub successor_id: String,
+    /// Moment du hand off (ms depuis l'époque Unix).
+    pub at: u64,
+}
+
 /// Une conversation archivée, avec tout ce qu'il faut pour la restaurer.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -150,6 +163,12 @@ pub struct Config {
     pub show_temp_projects: bool,
     /// Réglages des suggestions (voir suggestions.rs).
     pub suggestions: SuggestionSettings,
+    /// Hand off : suite de chaque parente, par identifiant de la parente. Gérée uniquement
+    /// par le backend (voir handoff.rs) ; conservée tant que l'une des deux conversations existe.
+    pub handoff_links: HashMap<String, HandoffLink>,
+    /// Consigne du résumé de passation choisie dans les réglages (`None` : texte par défaut,
+    /// défini côté interface dans `src/handoff.ts`).
+    pub handoff_prompt: Option<String>,
 }
 
 impl Default for Config {
@@ -162,6 +181,8 @@ impl Default for Config {
             archives: Vec::new(),
             show_temp_projects: false,
             suggestions: SuggestionSettings::default(),
+            handoff_links: HashMap::new(),
+            handoff_prompt: None,
         }
     }
 }
@@ -212,7 +233,7 @@ pub fn load(path: &Path) -> Config {
 }
 
 /// Met une configuration lue sur disque au format courant.
-/// 1 → 2 → 3 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
+/// 1 → 2 → 3 → 4 : rien à convertir, les nouveaux champs prennent leur valeur par défaut.
 pub fn migrate(mut cfg: Config) -> Config {
     if cfg.version < CONFIG_VERSION {
         cfg.version = CONFIG_VERSION;
@@ -224,7 +245,8 @@ pub fn migrate(mut cfg: Config) -> Config {
 /// conversation. `existing` : identifiants des conversations présentes sur le disque ;
 /// les conversations archivées sont conservées (elles retrouvent ainsi leur section et
 /// leur couleur à la restauration). Une conversation présente dans plusieurs sections
-/// n'est gardée que dans la première. Renvoie `true` si quelque chose a changé.
+/// n'est gardée que dans la première. Un lien de hand off est gardé tant que la parente ou
+/// la suite existe. Renvoie `true` si quelque chose a changé.
 pub fn prune_conversations(cfg: &mut Config, existing: &HashSet<String>) -> bool {
     let archived: HashSet<String> = cfg.archives.iter().map(|a| a.session_id.clone()).collect();
     let keep = |id: &str| existing.contains(id) || archived.contains(id);
@@ -243,7 +265,10 @@ pub fn prune_conversations(cfg: &mut Config, existing: &HashSet<String>) -> bool
     }
     let before = cfg.conversations.len();
     cfg.conversations.retain(|id, p| keep(id) && *p != ConversationPrefs::default());
-    changed || cfg.conversations.len() != before
+    changed |= cfg.conversations.len() != before;
+    let before = cfg.handoff_links.len();
+    cfg.handoff_links.retain(|parent, link| keep(parent) || keep(&link.successor_id));
+    changed || cfg.handoff_links.len() != before
 }
 
 /// Clé du projet archivé auquel appartient une conversation archivée avec lui.
@@ -423,6 +448,26 @@ mod tests {
         let existing: HashSet<String> = ["a".to_string(), "b".to_string()].into();
         assert!(!prune_conversations(&mut back, &existing));
         assert!(back.conversations.contains_key("a"));
+    }
+
+    #[test]
+    fn handoff_links_and_prompt_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.json");
+        // Fichier en version 3 : pas de lien, consigne par défaut.
+        fs::write(&p, r#"{"version":3,"categories":[]}"#).unwrap();
+        let cfg = load(&p);
+        assert_eq!(cfg.version, CONFIG_VERSION);
+        assert!(cfg.handoff_links.is_empty() && cfg.handoff_prompt.is_none());
+
+        let mut cfg = Config { handoff_prompt: Some("Résume.".into()), ..Default::default() };
+        cfg.handoff_links.insert("parente".into(), HandoffLink { successor_id: "suite".into(), at: 9 });
+        save(&p, &cfg).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        assert!(text.contains("\"handoffLinks\"") && text.contains("\"successorId\": \"suite\"") && text.contains("\"handoffPrompt\": \"Résume.\""));
+        let back = load(&p);
+        assert_eq!(back.handoff_links["parente"], HandoffLink { successor_id: "suite".into(), at: 9 });
+        assert_eq!(back.handoff_prompt.as_deref(), Some("Résume."));
     }
 
     #[test]

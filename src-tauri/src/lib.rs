@@ -1,7 +1,8 @@
 //! Claude Manager : backend Tauri.
 //!
 //! Commandes exposées à l'interface (voir `src/api.ts` côté front) :
-//! lecture des projets/sessions, configuration, lancement de Claude, archives, Corbeille.
+//! lecture des projets/sessions, configuration, lancement de Claude, archives, Corbeille,
+//! hand off.
 //! Un observateur de fichiers émet l'évènement `sessions-changed` quand une conversation
 //! apparaît, change ou disparaît.
 
@@ -12,6 +13,7 @@ mod commands_list;
 mod config;
 mod context;
 mod conversation;
+mod handoff;
 mod limits;
 mod project_settings;
 mod pty;
@@ -231,14 +233,15 @@ fn get_config(state: State<AppState>) -> Config {
     state.config.lock().unwrap().clone()
 }
 
-/// Enregistre la configuration envoyée par l'interface. La liste des archives est gérée
-/// par le backend : celle envoyée par l'interface est ignorée. Les suggestions sont
-/// recalculées (réglages, « Ignorer »).
+/// Enregistre la configuration envoyée par l'interface. La liste des archives et les liens des
+/// hand off sont gérés par le backend : ceux envoyés par l'interface sont ignorés. Les
+/// suggestions sont recalculées (réglages, « Ignorer »).
 #[tauri::command]
 fn save_config(app: AppHandle, state: State<AppState>, mut cfg: Config) -> Result<Config, String> {
     {
         let mut current = state.config.lock().unwrap();
         cfg.archives = current.archives.clone();
+        cfg.handoff_links = current.handoff_links.clone();
         cfg.version = config::CONFIG_VERSION;
         state.save_config(&cfg)?;
         *current = cfg.clone();
@@ -320,6 +323,14 @@ fn open_folder(path: String) -> Result<(), String> {
 /// (erreur préfixée `SESSION_ACTIVE`, que l'interface propose de forcer).
 #[tauri::command(async)]
 fn archive_session(state: State<AppState>, project_key: String, session_id: String, force: bool) -> Result<Config, String> {
+    archive_one(&state, &project_key, &session_id, force)?;
+    let cfg = state.config.lock().unwrap().clone();
+    Ok(cfg)
+}
+
+/// Archive une conversation et l'enregistre dans la configuration (voir [`archive_session`]).
+fn archive_one(state: &AppState, project_key: &str, session_id: &str, force: bool) -> Result<(), String> {
+    let (project_key, session_id) = (project_key.to_string(), session_id.to_string());
     let files = SessionFiles::locate(state.scanner.root(), &project_key, &session_id)?;
     if !force {
         files.check_not_active()?;
@@ -351,8 +362,7 @@ fn archive_session(state: State<AppState>, project_key: String, session_id: Stri
     }
     cfg.archives.retain(|a| a.session_id != session_id);
     cfg.archives.push(entry);
-    state.save_config(&cfg)?;
-    Ok(cfg.clone())
+    state.save_config(&cfg)
 }
 
 #[tauri::command(async)]
@@ -449,6 +459,65 @@ fn trash_archive(state: State<AppState>, session_id: String) -> Result<Config, S
     config::detach_from_archived_project(&mut cfg, &session_id, false);
     state.save_config(&cfg)?;
     Ok(cfg.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Hand off (voir handoff.rs et src/handoff.ts)
+// ---------------------------------------------------------------------------
+
+/// Hand off, étape 2 : réponse de la parente à la consigne du résumé de passation, lue dans
+/// son `.jsonl`, et premier message de la suite. `None` : réponse vide ou introuvable.
+#[tauri::command(async)]
+fn handoff_summary(
+    state: State<AppState>,
+    session_id: String,
+    cwd: Option<String>,
+    prompt: String,
+    parent_title: String,
+) -> Result<Option<handoff::Summary>, String> {
+    actions::validate_session_id(&session_id)?;
+    let Some(path) = conversation::locate(state.scanner.root(), &session_id, cwd.as_deref()) else { return Ok(None) };
+    Ok(handoff::read_summary(&path, &prompt, &parent_title))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HandoffFinish {
+    config: Config,
+    /// La parente n'a pas pu être archivée (la suite est créée et le lien enregistré).
+    archive_error: Option<String>,
+}
+
+/// Hand off, dernière étape (la suite a reçu son premier message) : la suite prend la
+/// section et la couleur de la parente, le lien parente → suite est enregistré, et la
+/// parente est archivée. `project_key` : dossier de stockage de la parente.
+#[tauri::command(async)]
+fn handoff_finish(app: AppHandle, state: State<AppState>, project_key: String, parent_id: String, successor_id: String) -> Result<HandoffFinish, String> {
+    actions::validate_session_id(&parent_id)?;
+    actions::validate_session_id(&successor_id)?;
+    // Le terminal de la parente vient d'être arrêté : son fichier peut rester verrouillé un
+    // court instant. Elle vient d'écrire son résumé : pas de vérification « modifiée il y a peu ».
+    let mut archive_error = None;
+    for attempt in 0..5 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        match archive_one(&state, &project_key, &parent_id, true) {
+            Ok(()) => {
+                archive_error = None;
+                break;
+            }
+            Err(e) => archive_error = Some(e),
+        }
+    }
+    let config = {
+        let mut cfg = state.config.lock().unwrap();
+        handoff::apply(&mut cfg, &parent_id, &successor_id, actions::now_ms());
+        state.save_config(&cfg)?;
+        cfg.clone()
+    };
+    emit_suggestions(&app);
+    Ok(HandoffFinish { config, archive_error })
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +662,8 @@ pub fn run() {
             trash_session,
             trash_archive,
             check_open_elsewhere,
+            handoff_summary,
+            handoff_finish,
             attachments::save_pasted_image,
             attachment_preview,
             open_attachment,

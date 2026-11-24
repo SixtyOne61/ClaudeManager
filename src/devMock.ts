@@ -243,6 +243,25 @@ const DEMO_GRILL = `Avant de toucher au menu, trois points à trancher.
 
 Réponds quand tu veux.`;
 
+/** Réponse fictive à la consigne du résumé de passation. */
+const FAKE_HANDOFF_SUMMARY = [
+  "## Objectif",
+  "Corriger le menu mobile qui ne se ferme pas.",
+  "",
+  "## État actuel",
+  "Le script bascule désormais la classe `open` ; un test reste à mettre à jour.",
+  "",
+  "## Décisions",
+  "- Garder la classe `open` (les tests la vérifient déjà).",
+  "",
+  "## Fichiers touchés",
+  "- `src/menu.js`",
+  "",
+  "## Prochaines étapes",
+  "1. Mettre à jour `menu.test.js`.",
+  "2. Vérifier sur mobile.",
+].join("\n");
+
 /** Message envoyé : ajouté au fichier, puis une réponse fictive arrive en plusieurs fois. */
 function fakeReply(id: string, text: string) {
   const t = fakeTranscript(id) ?? (transcripts.set(id, []), transcripts.get(id)!);
@@ -252,6 +271,14 @@ function fakeReply(id: string, text: string) {
   t.push(text.startsWith("/") ? { kind: "user", line: next(), uuid: `m${next()}`, text, command: true } : { kind: "user", line: next(), uuid: `m${next()}`, text, command: false });
   changed(id);
   if (text.startsWith("/")) return;
+  // Consigne du hand off : le résumé de passation arrive en une réponse (voir handoff.ts).
+  if (/résumé de passation/i.test(text)) {
+    setTimeout(() => {
+      t.push({ kind: "assistant", line: next(), uuid: `m${next()}`, text: FAKE_HANDOFF_SUMMARY });
+      changed(id);
+    }, 1200);
+    return;
+  }
   // « grill » : une série de questions (formulaire de réponse, voir Grill.tsx).
   if (/grill/i.test(text)) {
     setTimeout(() => {
@@ -579,7 +606,7 @@ export function installDevMock() {
       case "is_git_repo":
         return fakeGitRepos().includes(String(a.path));
       case "save_config":
-        config = { ...(a.cfg as Config), archives: config.archives };
+        config = { ...(a.cfg as Config), archives: config.archives, handoffLinks: config.handoffLinks };
         emitSuggestions();
         return config;
       case "search_sessions":
@@ -629,6 +656,58 @@ export function installDevMock() {
         }
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
         return config;
+      }
+      case "handoff_summary": {
+        // Même règle que handoff::last_reply : textes de l'agent après le dernier message de
+        // l'utilisateur (et après sa dernière action).
+        const t = fakeTranscript(String(a.sessionId)) ?? [];
+        const after = t.slice(t.map((e) => e.kind).lastIndexOf("user") + 1);
+        const summary = after
+          .slice(after.map((e) => e.kind).lastIndexOf("tool") + 1)
+          .flatMap((e) => (e.kind === "assistant" ? [e.text] : []))
+          .join("\n\n")
+          .trim();
+        if (!summary) return null;
+        const firstMessage = `Cette conversation prend la suite de « ${a.parentTitle} », dont le contexte était trop rempli. Voici le résumé de passation qu'elle a rédigé pour toi :\n\n${summary}`;
+        return { summary, firstMessage };
+      }
+      case "handoff_finish": {
+        // Même règle que lib.rs : la parente est archivée, la suite prend sa section, sa
+        // couleur et le lien parente → suite.
+        const parent = String(a.parentId);
+        const successor = String(a.successorId);
+        const p = scan.projects.find((x) => x.sessions.some((s) => s.id === parent));
+        const s = p?.sessions.find((x) => x.id === parent);
+        if (p && s) {
+          p.sessions = p.sessions.filter((x) => x !== s);
+          archived.set(s.id, s);
+          scan = { ...scan };
+          const entry = { sessionId: s.id, projectKey: p.key, projectPath: p.path, title: s.title, messageCount: s.messageCount, updatedAt: s.updatedAt, archivedAt: Date.now(), originalFile: "", originalDir: null, archivedFile: "", archivedDir: null };
+          config = { ...config, archives: [...config.archives, entry] };
+        }
+        const projects = Object.fromEntries(
+          Object.entries(config.projects).map(([k, prefs]) => [
+            k,
+            {
+              ...prefs,
+              sections: (prefs.sections ?? []).map((sec) => {
+                const ids = sec.conversationIds.filter((id) => id !== successor);
+                const i = ids.indexOf(parent);
+                return { ...sec, conversationIds: i < 0 ? ids : [...ids.slice(0, i + 1), successor, ...ids.slice(i + 1)] };
+              }),
+            },
+          ]),
+        );
+        const color = config.conversations[parent]?.color;
+        config = {
+          ...config,
+          projects,
+          conversations: color ? { ...config.conversations, [successor]: { ...config.conversations[successor], color } } : config.conversations,
+          handoffLinks: { ...config.handoffLinks, [parent]: { successorId: successor, at: Date.now() } },
+        };
+        emitSuggestions();
+        setTimeout(() => emit("sessions-changed", null), 300);
+        return { config, archiveError: null };
       }
       case "trash_archive":
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };

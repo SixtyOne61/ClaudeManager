@@ -12,12 +12,15 @@
 //   pas de première ligne.
 // Il redescend dès que l'agent reprend son travail. L'app ne répond jamais elle-même à une
 // demande de permission : c'est l'utilisateur qui valide dans le terminal.
+//
+// La barre d'outils porte aussi le bouton Hand off (voir src/handoff.ts) et, après un hand
+// off, les liens « ← Suite de … » (vers la parente) et « Suite : … → » (vers la suite).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { FolderOpen, MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, FolderOpen, Handshake, Loader2, MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "../pty";
 import { getActivity, isAwaitingPermission, subscribeActivity, type Activity } from "../activity";
@@ -28,7 +31,8 @@ import { GrillBackBar, GrillForm, useGrillMode } from "./Grill";
 import { pendingRound } from "../grill";
 import type { SearchFocus } from "./GlobalSearch";
 import { SuggestionBanners, type SuggestionActionHandler } from "./Suggestions";
-import type { Suggestion } from "../suggestions";
+import { ACTION_HAND_OFF, type Suggestion } from "../suggestions";
+import { cancelHandoff, useHandoffBlocker, useHandoffState, type HandoffLineage } from "../handoff";
 
 interface Props {
   sessionId: string;
@@ -45,6 +49,12 @@ interface Props {
   onDismissSuggestion?: (s: Suggestion) => void;
   /** Gestionnaires des actions des suggestions (voir SuggestionBanners). */
   suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
+  /** Hand off de cette conversation (barre d'outils, bandeau « Contexte rempli »). */
+  onHandoff?: () => void;
+  /** Parente et suite de cette conversation : liens « ← Suite de … » et « Suite : … → ». */
+  lineage?: HandoffLineage;
+  /** Ouvre une conversation par son identifiant (onglet, ou archives). */
+  onOpenConversation?: (sessionId: string) => void;
 }
 
 type RunState = { kind: "starting" } | { kind: "running" } | { kind: "exited"; code: number | null } | { kind: "error"; message: string };
@@ -96,8 +106,21 @@ export function TerminalView({
   focus,
   onDismissSuggestion,
   suggestionActions,
+  onHandoff,
+  lineage,
+  onOpenConversation,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+
+  // ---- Hand off (voir src/handoff.ts) ----------------------------------------------------
+  /** Raison pour laquelle Hand off est grisé (null : disponible). */
+  const handoffReason = useHandoffBlocker(sessionId);
+  const handoffPhase = useHandoffState(sessionId);
+  /** Actions des bandeaux de suggestion, avec Hand off pour cette conversation. */
+  const bannerActions = useMemo(
+    () => (onHandoff ? { ...suggestionActions, [ACTION_HAND_OFF]: { run: () => onHandoff(), disabledReason: handoffReason } } : suggestionActions),
+    [suggestionActions, onHandoff, handoffReason],
+  );
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [state, setState] = useState<RunState>({ kind: "starting" });
@@ -353,9 +376,48 @@ export function TerminalView({
         >
           <FolderOpen size={13} /> Ouvrir le dossier
         </button>
+        {onHandoff && (
+          <button
+            className="btn small"
+            disabled={!!handoffReason}
+            onClick={onHandoff}
+            title={handoffReason ?? "Passer le relais à une nouvelle conversation, qui démarre avec un résumé de passation écrit par celle-ci"}
+          >
+            <Handshake size={13} /> Hand off
+          </button>
+        )}
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}
+        {(lineage?.parent || lineage?.successor) && (
+          <span className="conv-lineage">
+            {lineage.parent && (
+              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title="Ouvrir la conversation d'origine de ce hand off">
+                <ArrowLeft size={12} /> Suite de <em>{lineage.parent.title}</em>
+              </button>
+            )}
+            {lineage.successor && (
+              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title="Ouvrir la conversation qui a pris le relais">
+                Suite : <em>{lineage.successor.title}</em> <ArrowRight size={12} />
+              </button>
+            )}
+          </span>
+        )}
       </div>
-      {onDismissSuggestion && <SuggestionBanners sessionId={sessionId} onDismiss={onDismissSuggestion} actions={suggestionActions} />}
+      {handoffPhase && (
+        <div className="banner handoff-banner" role="status">
+          <Loader2 size={14} className="spin" />
+          <span className="handoff-banner-text">
+            {handoffPhase === "summary"
+              ? "Hand off en cours… L'agent rédige le résumé de passation."
+              : "Hand off en cours… Création de la nouvelle conversation."}
+          </span>
+          {handoffPhase === "summary" && (
+            <button className="btn small ghost" onClick={() => cancelHandoff(sessionId)} title="Arrêter le hand off : rien n'est créé ni archivé">
+              <X size={12} /> Annuler
+            </button>
+          )}
+        </div>
+      )}
+      {onDismissSuggestion && <SuggestionBanners sessionId={sessionId} onDismiss={onDismissSuggestion} actions={bannerActions} />}
       <div className={"conv-stage" + (formVisible ? " collapsed" : "")}>
         <div className="terminal-host" ref={hostRef} />
         <ConversationView

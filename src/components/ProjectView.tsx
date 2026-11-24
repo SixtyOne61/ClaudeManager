@@ -36,6 +36,7 @@ import {
   Search,
   GitBranch,
   GitBranchPlus,
+  Handshake,
   Trash2,
   TriangleAlert,
   X,
@@ -61,6 +62,7 @@ import { TextPrompt, WorktreePrompt } from "./Dialogs";
 import { worktreeNameError } from "../pty";
 import { ActivityDot } from "./Activity";
 import { useActivities, type Activity } from "../activity";
+import { handoffBlocker, useHandoffState } from "../handoff";
 
 /** Zone « Sans section » (pas une vraie section). */
 const NONE = "none";
@@ -81,6 +83,8 @@ interface Props {
   onOpen: (s: SessionInfo) => void;
   onArchive: (s: SessionInfo) => void;
   onTrash: (s: SessionInfo) => void;
+  /** Hand off d'une conversation (voir src/handoff.ts). */
+  onHandoff: (s: SessionInfo) => void;
   /**
    * Archive / met à la Corbeille plusieurs conversations du projet (sélection multiple).
    * Renvoie `false` si l'utilisateur a annulé (la sélection est alors gardée).
@@ -376,6 +380,7 @@ export function ProjectView(props: Props) {
       onArchive={() => props.onArchive(s)}
       onTrash={() => props.onTrash(s)}
       onColor={(c) => change((cfg) => setConversationColor(cfg, s.id, c))}
+      onHandoff={() => props.onHandoff(s)}
     />
   );
 
@@ -783,8 +788,11 @@ function SessionRow(props: {
   onArchive: () => void;
   onTrash: () => void;
   onColor: (c: string | null) => void;
+  /** Hand off (disponible quand la conversation est « à toi »). */
+  onHandoff: () => void;
 }) {
   const { session: s, canLaunch } = props;
+  const handoffReason = handoffBlocker(props.activity, useHandoffState(s.id));
   const drag = useDraggable({ id: "v:" + s.id });
   // Les boutons ne doivent pas déclencher le glisser-déposer.
   const stop = (e: React.PointerEvent) => e.stopPropagation();
@@ -876,6 +884,14 @@ function SessionRow(props: {
           <ExternalLink size={15} />
         </button>
         <ColorPicker compact value={props.color} onChange={props.onColor} title="Couleur de la conversation" />
+        <button
+          className="icon-btn"
+          disabled={!!handoffReason}
+          title={handoffReason ? `Hand off\n${handoffReason}` : "Hand off : passer le relais à une nouvelle conversation, avec un résumé de passation"}
+          onClick={props.onHandoff}
+        >
+          <Handshake size={15} />
+        </button>
         <button className="icon-btn" title="Archiver" onClick={props.onArchive}>
           <Archive size={15} />
         </button>
@@ -888,3 +904,4 @@ function SessionRow(props: {
     </div>
   );
 }
+

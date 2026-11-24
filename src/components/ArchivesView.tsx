@@ -1,10 +1,11 @@
 // Vue « Archives » : conversations archivées, à restaurer ou mettre à la Corbeille.
 
-import { ArchiveRestore, FolderArchive, Trash2 } from "lucide-react";
+import { ArchiveRestore, ArrowLeft, ArrowRight, FolderArchive, Trash2 } from "lucide-react";
 import type { ArchiveEntry, Config } from "../api";
 import { colorStyle, formatDate } from "../util";
 import { conversationColor } from "../sections";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
+import type { HandoffLineage } from "../handoff";
 
 interface Props {
   config: Config;
@@ -14,11 +15,15 @@ interface Props {
   onRestoreProject: (key: string, name: string) => void;
   /** Archive ouverte depuis la recherche globale : mise en évidence. */
   focus?: SearchFocus | null;
+  /** Parente et suite d'une conversation (liens de hand off). */
+  lineageOf?: (sessionId: string) => HandoffLineage;
+  /** Ouvre une conversation par son identifiant (onglet, ou archives). */
+  onOpenConversation?: (sessionId: string) => void;
 }
 
 const lastSegment = (path: string | null | undefined) => path?.split(/[\\/]/).filter(Boolean).pop();
 
-export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, focus }: Props) {
+export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, focus, lineageOf, onOpenConversation }: Props) {
   useScrollToFocus(focus);
   const archives = [...config.archives].sort((a, b) => b.archivedAt - a.archivedAt);
   const projectLabel = (a: ArchiveEntry) =>
@@ -82,29 +87,48 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, foc
           </>
         )}
         {archives.length === 0 && <div className="empty">Aucune conversation archivée.</div>}
-        {archives.map((a) => (
-          <div key={a.sessionId} data-session-id={a.sessionId} className={"session-row" + (conversationColor(config, a.sessionId) ? " colored" : "")} style={colorStyle(conversationColor(config, a.sessionId))}>
-            <div className="session-main">
-              <div className="session-title">{a.title}</div>
-              <div className="session-meta">
-                <span className="tag">{projectLabel(a)}</span>
-                <span>archivée le {formatDate(new Date(a.archivedAt).toISOString())}</span>
-                <span className="dot">·</span>
-                <span>dernière activité {formatDate(a.updatedAt)}</span>
-                <span className="dot">·</span>
-                <span>{a.messageCount} messages</span>
+        {archives.map((a) => {
+          const lineage = lineageOf?.(a.sessionId);
+          return (
+            <div key={a.sessionId} data-session-id={a.sessionId} className={"session-row" + (conversationColor(config, a.sessionId) ? " colored" : "")} style={colorStyle(conversationColor(config, a.sessionId))}>
+              <div className="session-main">
+                <div className="session-title">{a.title}</div>
+                <div className="session-meta">
+                  <span className="tag">{projectLabel(a)}</span>
+                  <span>archivée le {formatDate(new Date(a.archivedAt).toISOString())}</span>
+                  <span className="dot">·</span>
+                  <span>dernière activité {formatDate(a.updatedAt)}</span>
+                  <span className="dot">·</span>
+                  <span>{a.messageCount} messages</span>
+                  {lineage?.parent && (
+                    <>
+                      <span className="dot">·</span>
+                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title="Ouvrir la conversation d'origine de ce hand off">
+                        <ArrowLeft size={11} /> Suite de <em>{lineage.parent.title}</em>
+                      </button>
+                    </>
+                  )}
+                  {lineage?.successor && (
+                    <>
+                      <span className="dot">·</span>
+                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title="Ouvrir la conversation qui a pris le relais">
+                        Suite : <em>{lineage.successor.title}</em> <ArrowRight size={11} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="session-actions">
+                <button className="btn small primary" onClick={() => onRestore(a)}>
+                  <ArchiveRestore size={13} /> Restaurer
+                </button>
+                <button className="icon-btn danger" title="Mettre à la Corbeille" onClick={() => onTrash(a)}>
+                  <Trash2 size={15} />
+                </button>
               </div>
             </div>
-            <div className="session-actions">
-              <button className="btn small primary" onClick={() => onRestore(a)}>
-                <ArchiveRestore size={13} /> Restaurer
-              </button>
-              <button className="icon-btn danger" title="Mettre à la Corbeille" onClick={() => onTrash(a)}>
-                <Trash2 size={15} />
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </main>
   );
