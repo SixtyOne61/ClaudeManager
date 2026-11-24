@@ -10,6 +10,7 @@
 // - hasSuggestion(snap, ids)          au moins une suggestion parmi ces conversations
 // - SUGGESTION_RULES                  présentation de chaque règle : texte, action, réglage
 // - dismissSuggestion(cfg, s)         « Ignorer » (jusqu'au palier suivant), à enregistrer
+// - hubSuggestionData(s)              données de la règle « hub » (deux conversations qui ont échangé)
 // - suggestionSettings(cfg)           réglages, avec leurs valeurs par défaut
 // - setRuleEnabled / setContextThreshold   modification des réglages
 //
@@ -67,17 +68,26 @@ export interface SuggestionsSnapshot {
 /** Contexte rempli à N % (donnée `percent` de la règle « context »). */
 const percentOf = (s: Suggestion) => Math.round(Number(s.data.percent ?? s.level));
 
+/** Ce dont un texte de bandeau peut avoir besoin en plus de la suggestion. */
+export interface SuggestionTextContext {
+  /** Titre d'une conversation (projet ou archives), null si inconnue. */
+  titleOf: (id: string) => string | null;
+}
+
 export interface SuggestionRuleUi {
   /** Libellé dans les réglages. */
   label: string;
   /** Explication dans les réglages. */
   description: string;
   /** Texte du bandeau (absent : règle sans bandeau). */
-  text?: (s: Suggestion) => string;
+  text?: (s: Suggestion, ctx: SuggestionTextContext) => string;
   /** Info-bulle de l'icône 💡. */
   hint?: (s: Suggestion) => string;
-  /** Bouton d'action du bandeau ; le gestionnaire est fourni par la vue (voir SuggestionBanners). */
-  action?: { id: string; label: string };
+  /** Bouton d'action du bandeau (libellé fixe ou selon la suggestion) ; le gestionnaire est
+   *  fourni par la vue (voir SuggestionBanners). */
+  action?: { id: string; label: string | ((s: Suggestion) => string) };
+  /** Explication de « Ignorer » (info-bulle). */
+  dismissHint?: string;
 }
 
 /** Règle « Troisième conversation dans le même dossier » (fenêtre à la création, sans bandeau). */
@@ -85,6 +95,45 @@ export const RULE_WORKTREE = "worktree";
 
 /** Identifiant de l'action « Hand off » (règle « Contexte rempli »). */
 export const ACTION_HAND_OFF = "handoff";
+
+/** Règle « Conversations qui ont échangé » : les regrouper dans un hub. */
+export const RULE_HUB = "hub";
+/** Identifiant de l'action « Créer un hub » / « Ajouter au hub » (règle « hub »). */
+export const ACTION_HUB = "hub";
+
+/** Données de la règle « hub » (voir `detect_hub` dans suggestions.rs). */
+export interface HubSuggestionData {
+  /** L'autre conversation. */
+  other: string;
+  /** Expéditeur du premier message (futur coordinateur d'un nouveau hub). */
+  from: string;
+  /** Destinataire du premier message (futur exécutant). */
+  to: string;
+  /** Hub où l'une des deux est déjà (null : en créer un). */
+  hubId: string | null;
+  hubName: string | null;
+  /** Conversation qui rejoindrait ce hub. */
+  joiner: string | null;
+  /** Hub que `joiner` quitterait (une conversation est dans un hub au plus). */
+  leaves: string | null;
+}
+
+export function hubSuggestionData(s: Suggestion): HubSuggestionData {
+  const str = (k: string) => (typeof s.data[k] === "string" ? (s.data[k] as string) : null);
+  return { other: str("other") ?? "", from: str("from") ?? "", to: str("to") ?? "", hubId: str("hubId"), hubName: str("hubName"), joiner: str("joiner"), leaves: str("leaves") };
+}
+
+/** Texte du bandeau de la règle « hub ». */
+function hubText(s: Suggestion, ctx: SuggestionTextContext): string {
+  const d = hubSuggestionData(s);
+  const other = `« ${ctx.titleOf(d.other) ?? "une autre conversation"} »`;
+  const start = `Cette conversation a échangé avec ${other}`;
+  if (!d.hubId) return `${start} : les regrouper dans un hub ?`;
+  const leaves = d.leaves ? ` (elle quittera le hub « ${d.leaves} »)` : "";
+  return d.joiner === s.sessionId
+    ? `${start}, du hub « ${d.hubName} » : rejoindre ce hub ?${leaves}`
+    : `${start} : l'ajouter au hub « ${d.hubName} » ?${leaves}`;
+}
 
 /** Présentation de chaque règle, par identifiant (le même que dans suggestions.rs). */
 export const SUGGESTION_RULES: Record<string, SuggestionRuleUi> = {
@@ -94,6 +143,15 @@ export const SUGGESTION_RULES: Record<string, SuggestionRuleUi> = {
     text: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off repartirait d'un contexte propre`,
     hint: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off est suggéré`,
     action: { id: ACTION_HAND_OFF, label: "Hand off" },
+  },
+  [RULE_HUB]: {
+    label: "Conversations qui ont échangé",
+    description:
+      "Proposer de regrouper dans un hub deux conversations qui se sont envoyé un message (outil SendMessage) sans être dans un même hub.",
+    text: hubText,
+    hint: () => "A échangé avec une autre conversation : un hub est suggéré",
+    action: { id: ACTION_HUB, label: (s) => (!hubSuggestionData(s).hubId ? "Créer un hub" : hubSuggestionData(s).joiner === s.sessionId ? "Rejoindre le hub" : "Ajouter au hub") },
+    dismissHint: "Ne plus proposer de regrouper ces deux conversations",
   },
   // Sans bandeau : fenêtre à la création d'une conversation (App.tsx, `newConversation`).
   [RULE_WORKTREE]: {
@@ -130,16 +188,24 @@ export function setContextThreshold(cfg: Config, pct: number): Config {
   return { ...cfg, suggestions: { ...suggestionSettings(cfg), contextThreshold: t } };
 }
 
-/** « Ignorer » : la suggestion est masquée pour cette conversation jusqu'au palier suivant. */
+/**
+ * « Ignorer » : la suggestion est masquée pour cette conversation jusqu'au palier suivant.
+ * Règle « hub » : pour la paire, définitivement, donc aussi dans l'autre conversation.
+ */
 export function dismissSuggestion(cfg: Config, s: Suggestion, at = Date.now()): Config {
-  const prefs = cfg.conversations[s.sessionId] ?? {};
-  return {
-    ...cfg,
-    conversations: {
-      ...cfg.conversations,
-      [s.sessionId]: { ...prefs, dismissedSuggestions: { ...prefs.dismissedSuggestions, [s.key]: { level: s.level, at } } },
-    },
+  const one = (c: Config, sessionId: string, key: string): Config => {
+    const prefs = c.conversations[sessionId] ?? {};
+    return {
+      ...c,
+      conversations: {
+        ...c.conversations,
+        [sessionId]: { ...prefs, dismissedSuggestions: { ...prefs.dismissedSuggestions, [key]: { level: s.level, at } } },
+      },
+    };
   };
+  const next = one(cfg, s.sessionId, s.key);
+  const other = s.rule === RULE_HUB ? hubSuggestionData(s).other : "";
+  return other ? one(next, other, `${RULE_HUB}:${s.sessionId}`) : next;
 }
 
 // ---- Magasin -------------------------------------------------------------------------------

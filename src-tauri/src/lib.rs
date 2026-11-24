@@ -260,8 +260,30 @@ fn save_config(app: AppHandle, state: State<AppState>, mut cfg: Config) -> Resul
 /// Contexte de chaque conversation et suggestions à afficher (voir suggestions.rs).
 fn suggestions_snapshot(app: &AppHandle) -> suggestions::Snapshot {
     let contexts = app.state::<context::ContextStore>().all();
+    let exchanges = app.state::<messages::ExchangeTracker>().exchanges();
     let cfg = app.state::<AppState>().config.lock().unwrap().clone();
-    suggestions::snapshot(&suggestions::Inputs { config: &cfg, contexts: &contexts })
+    suggestions::snapshot(&suggestions::Inputs { config: &cfg, contexts: &contexts, exchanges: &exchanges })
+}
+
+/// Prend en compte des `.jsonl` qui ont changé pour la règle « hub » (voir
+/// `messages::ExchangeTracker`) : seuls ces fichiers sont relus (et seulement leur suite), les
+/// échanges ne sont recalculés que si un message est apparu, et les suggestions ne sont émises
+/// que si les échanges ont changé.
+fn update_exchanges(app: &AppHandle, files: &[(String, PathBuf)]) {
+    let state = app.state::<AppState>();
+    let root = state.scanner.root();
+    let (changed, learnt) = app.state::<messages::ExchangeTracker>().update(
+        &app.state::<messages::MessageStore>(),
+        files,
+        || messaging_directory_inner(&state),
+        |id| conversation::locate(root, id, None).is_some(),
+    );
+    if !learnt.is_empty() {
+        state.scanner.remember_names(&learnt);
+    }
+    if changed {
+        emit_suggestions(app);
+    }
 }
 
 /// Recalcule les suggestions et les émet vers l'interface ([`suggestions::EVT_SUGGESTIONS`]).
@@ -548,14 +570,20 @@ fn handoff_finish(app: AppHandle, state: State<AppState>, project_key: String, p
 // Hubs (voir hubs.rs et src/hubs.ts)
 // ---------------------------------------------------------------------------
 
-/// Applique une modification des hubs, enregistre et renvoie la configuration.
-fn change_hubs(state: &AppState, change: impl FnOnce(&mut Config) -> Result<(), String>) -> Result<Config, String> {
-    let mut cfg = state.config.lock().unwrap();
-    let mut next = cfg.clone();
-    change(&mut next)?;
-    state.save_config(&next)?;
-    *cfg = next;
-    Ok(cfg.clone())
+/// Applique une modification des hubs, enregistre et renvoie la configuration. Les suggestions
+/// sont recalculées (règle « hub » : deux conversations regroupées n'ont plus de suggestion).
+fn change_hubs(app: &AppHandle, change: impl FnOnce(&mut Config) -> Result<(), String>) -> Result<Config, String> {
+    let state = app.state::<AppState>();
+    let config = {
+        let mut cfg = state.config.lock().unwrap();
+        let mut next = cfg.clone();
+        change(&mut next)?;
+        state.save_config(&next)?;
+        *cfg = next;
+        cfg.clone()
+    };
+    emit_suggestions(app);
+    Ok(config)
 }
 
 #[derive(Serialize)]
@@ -567,9 +595,9 @@ struct HubCreated {
 
 /// Crée un hub vide (placé en dernier).
 #[tauri::command]
-fn hub_create(state: State<AppState>, name: String, color: Option<String>) -> Result<HubCreated, String> {
+fn hub_create(app: AppHandle, name: String, color: Option<String>) -> Result<HubCreated, String> {
     let mut hub_id = String::new();
-    let config = change_hubs(&state, |cfg| {
+    let config = change_hubs(&app, |cfg| {
         hub_id = hubs::create(cfg, &name, color, actions::now_ms())?;
         Ok(())
     })?;
@@ -578,43 +606,49 @@ fn hub_create(state: State<AppState>, name: String, color: Option<String>) -> Re
 
 /// Renomme un hub et change sa couleur (`color` : `None` = couleur par défaut).
 #[tauri::command]
-fn hub_update(state: State<AppState>, hub_id: String, name: String, color: Option<String>) -> Result<Config, String> {
-    change_hubs(&state, |cfg| hubs::update(cfg, &hub_id, &name, color))
+fn hub_update(app: AppHandle, hub_id: String, name: String, color: Option<String>) -> Result<Config, String> {
+    change_hubs(&app, |cfg| hubs::update(cfg, &hub_id, &name, color))
 }
 
 /// Supprime un hub : seulement le regroupement, ses conversations ne sont pas touchées.
 #[tauri::command]
-fn hub_delete(state: State<AppState>, hub_id: String) -> Result<Config, String> {
-    change_hubs(&state, |cfg| hubs::delete(cfg, &hub_id))
+fn hub_delete(app: AppHandle, hub_id: String) -> Result<Config, String> {
+    change_hubs(&app, |cfg| hubs::delete(cfg, &hub_id))
 }
 
 /// Range une conversation dans un hub avec ce rôle (ou change son rôle) ; elle quitte son
 /// ancien hub, et un nouveau coordinateur rétrograde l'ancien en exécutant.
 #[tauri::command]
-fn hub_set_member(state: State<AppState>, hub_id: String, conversation_id: String, role: config::HubRole) -> Result<Config, String> {
+fn hub_set_member(app: AppHandle, hub_id: String, conversation_id: String, role: config::HubRole) -> Result<Config, String> {
     actions::validate_session_id(&conversation_id)?;
-    change_hubs(&state, |cfg| hubs::set_member(cfg, &hub_id, &conversation_id, role))
+    change_hubs(&app, |cfg| hubs::set_member(cfg, &hub_id, &conversation_id, role))
 }
 
 /// Retire une conversation d'un hub.
 #[tauri::command]
-fn hub_remove_member(state: State<AppState>, hub_id: String, conversation_id: String) -> Result<Config, String> {
-    change_hubs(&state, |cfg| hubs::remove_member(cfg, &hub_id, &conversation_id))
+fn hub_remove_member(app: AppHandle, hub_id: String, conversation_id: String) -> Result<Config, String> {
+    change_hubs(&app, |cfg| hubs::remove_member(cfg, &hub_id, &conversation_id))
 }
 
 /// Marque un hub comme archivé, une fois ses conversations archivées par l'interface (une à
 /// une, avec la confirmation habituelle). `session_ids` : restaurées avec lui.
 #[tauri::command]
-fn hub_mark_archived(state: State<AppState>, hub_id: String, session_ids: Vec<String>) -> Result<Config, String> {
-    change_hubs(&state, |cfg| hubs::mark_archived(cfg, &hub_id, session_ids, actions::now_ms()))
+fn hub_mark_archived(app: AppHandle, hub_id: String, session_ids: Vec<String>) -> Result<Config, String> {
+    change_hubs(&app, |cfg| hubs::mark_archived(cfg, &hub_id, session_ids, actions::now_ms()))
 }
 
 /// Restaure un hub archivé : remet en place les conversations archivées avec lui (celles qui ne
 /// peuvent pas l'être restent dans les archives, signalées dans `errors`) et le fait revenir.
 #[tauri::command(async)]
-fn hub_restore(state: State<AppState>, hub_id: String) -> Result<RestoreProjectResult, String> {
+fn hub_restore(app: AppHandle, hub_id: String) -> Result<RestoreProjectResult, String> {
+    let result = hub_restore_inner(&app.state::<AppState>(), &hub_id);
+    emit_suggestions(&app);
+    result
+}
+
+fn hub_restore_inner(state: &AppState, hub_id: &str) -> Result<RestoreProjectResult, String> {
     let mut cfg = state.config.lock().unwrap();
-    let ids = hubs::archived_ids(&cfg, &hub_id)?;
+    let ids = hubs::archived_ids(&cfg, hub_id)?;
     let (mut restored, mut errors) = (0, Vec::new());
     for id in ids {
         let Some(entry) = cfg.archives.iter().find(|a| a.session_id == id).cloned() else { continue };
@@ -628,7 +662,7 @@ fn hub_restore(state: State<AppState>, hub_id: String) -> Result<RestoreProjectR
             Err(e) => errors.push(format!("« {} » : {e}", entry.title)),
         }
     }
-    hubs::unarchive(&mut cfg, &hub_id)?;
+    hubs::unarchive(&mut cfg, hub_id)?;
     state.save_config(&cfg)?;
     Ok(RestoreProjectResult { config: cfg.clone(), restored, errors })
 }
@@ -683,9 +717,13 @@ fn messaging_directory_inner(state: &AppState) -> Vec<messages::NameUse> {
 /// les ~1,5 s) quand un `.jsonl` ou un titre de session change. Émet aussi
 /// `conversation-changed` (identifiant de la conversation) dès qu'un `.jsonl` change, au
 /// plus toutes les ~250 ms, pour l'interface de conversation affichée en direct.
+/// Les `.jsonl` qui changent alimentent aussi les échanges entre conversations (règle « hub »
+/// des suggestions), par lots de ~2 s ; au démarrage, seules les conversations récentes
+/// ([`messages::EXCHANGE_RECENT_MS`]) sont lues.
 fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
     let (tx, rx) = mpsc::channel::<()>();
     let (tx_conv, rx_conv) = mpsc::channel::<String>();
+    let (tx_exch, rx_exch) = mpsc::channel::<(String, PathBuf)>();
     let root_for_filter = root.clone();
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
@@ -699,6 +737,7 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
             if is_jsonl && depth == 2 {
                 if let Some(stem) = p.file_stem() {
                     let _ = tx_conv.send(stem.to_string_lossy().to_string());
+                    let _ = tx_exch.send((stem.to_string_lossy().to_string(), p.clone()));
                 }
             }
         }
@@ -711,6 +750,26 @@ fn start_watcher(app: tauri::AppHandle, root: PathBuf) {
         return;
     }
     let app_conv = app.clone();
+    let app_exch = app.clone();
+    std::thread::spawn(move || {
+        let since = actions::now_ms().saturating_sub(messages::EXCHANGE_RECENT_MS);
+        update_exchanges(&app_exch, &messages::recent_conversation_files(&root, since));
+        while let Ok(first) = rx_exch.recv() {
+            // Regroupe les écritures d'une conversation active pendant ~2 s.
+            let mut files = HashMap::from([first]);
+            let until = Instant::now() + Duration::from_secs(2);
+            while let Some(left) = until.checked_duration_since(Instant::now()) {
+                match rx_exch.recv_timeout(left) {
+                    Ok((id, path)) => {
+                        files.insert(id, path);
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            update_exchanges(&app_exch, &files.into_iter().collect::<Vec<_>>());
+        }
+    });
     std::thread::spawn(move || {
         // Le watcher vit aussi longtemps que ce thread.
         let _watcher = watcher;
@@ -783,6 +842,8 @@ pub fn run() {
         .manage(commands_list::ListingCache::default())
         // Messages entre conversations déjà lus, par fichier (voir messages.rs).
         .manage(messages::MessageStore::default())
+        // Échanges entre conversations, pour la suggestion de hub (voir messages.rs).
+        .manage(messages::ExchangeTracker::default())
         // Dernier remplissage du contexte de chaque conversation (voir context.rs).
         .manage(context::ContextStore::load(&app_dir))
         .on_window_event(pty::on_window_event)

@@ -2,8 +2,10 @@
 // bandeaux dans l'onglet de la conversation, avec un bouton d'action et « Ignorer ».
 // L'app n'agit jamais d'elle-même : l'action ne part que sur un clic.
 
+import { useContext } from "react";
 import { X } from "lucide-react";
 import { SUGGESTION_RULES, suggestionHint, suggestionsOf, useSuggestions, type Suggestion } from "../suggestions";
+import { ConversationLinksContext } from "../messages";
 
 /** Icône 💡 (sans compteur). `title` : info-bulle. */
 export function SuggestionIcon({ title }: { title: string }) {
@@ -38,6 +40,8 @@ interface BannersProps {
 /** Bandeaux des suggestions d'une conversation (rien s'il n'y en a pas). */
 export function SuggestionBanners({ sessionId, onDismiss, actions }: BannersProps) {
   const list = suggestionsOf(useSuggestions(), sessionId);
+  const links = useContext(ConversationLinksContext);
+  const ctx = { titleOf: links?.titleOf ?? (() => null) };
   const shown = list.filter((s) => SUGGESTION_RULES[s.rule]?.text);
   if (shown.length === 0) return null;
   return (
@@ -51,13 +55,17 @@ export function SuggestionBanners({ sessionId, onDismiss, actions }: BannersProp
             <span className="suggestion-banner-icon" aria-hidden>
               💡
             </span>
-            <span className="suggestion-banner-text">{rule.text!(s)}</span>
+            <span className="suggestion-banner-text">{rule.text!(s, ctx)}</span>
             {rule.action && (
               <button className="btn small primary" disabled={!!unavailable} title={unavailable ?? undefined} onClick={() => handler?.run(s)}>
-                {rule.action.label}
+                {typeof rule.action.label === "function" ? rule.action.label(s) : rule.action.label}
               </button>
             )}
-            <button className="btn small ghost" onClick={() => onDismiss(s)} title="Masquer cette suggestion pour cette conversation (elle reviendra si la situation s'aggrave)">
+            <button
+              className="btn small ghost"
+              onClick={() => onDismiss(s)}
+              title={rule.dismissHint ?? "Masquer cette suggestion pour cette conversation (elle reviendra si la situation s'aggrave)"}
+            >
               <X size={12} /> Ignorer
             </button>
           </div>

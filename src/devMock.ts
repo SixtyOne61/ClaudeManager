@@ -524,9 +524,40 @@ function fakeSuggestions() {
     if (d && d.level >= level && d.at >= c.since) continue;
     suggestions.push({ rule: "context", sessionId: c.sessionId, key: "context", level, since: c.since, data: { percent: Math.round(c.usedPercentage) } });
   }
+  suggestions.push(...fakeHubSuggestions(archivedIds));
   return { contexts: [...contexts.values()], suggestions };
 }
 
+// Échanges fictifs entre conversations (règle « hub ») : deux conversations hors de tout hub
+// (« Créer un hub »), et une conversation qui a écrit au coordinateur du hub fictif (« Ajouter
+// au hub »).
+const fakeExchanges = [
+  { from: site.sessions[2].id, to: jeu.sessions[2].id },
+  { from: jeu.sessions[0].id, to: site.sessions[0].id },
+];
+
+/** Même règle que `detect_hub` (suggestions.rs). */
+function fakeHubSuggestions(archivedIds: Set<string>): Suggestion[] {
+  if ((config.suggestions?.disabled ?? []).includes("hub")) return [];
+  const hubOfId = (id: string) => config.hubs?.find((h) => !h.archived && h.members.some((m) => m.conversationId === id)) ?? null;
+  const out: Suggestion[] = [];
+  for (const e of fakeExchanges) {
+    const [hf, ht] = [hubOfId(e.from), hubOfId(e.to)];
+    if ((hf && ht && hf.id === ht.id) || archivedIds.has(e.from) || archivedIds.has(e.to)) continue;
+    for (const [me, other, mine, theirs] of [
+      [e.from, e.to, hf, ht],
+      [e.to, e.from, ht, hf],
+    ] as const) {
+      const key = `hub:${other}`;
+      if (config.conversations[me]?.dismissedSuggestions?.[key]) continue;
+      const hub = mine ?? theirs;
+      const joiner = mine ? other : theirs ? me : null;
+      const leaves = mine && theirs ? theirs.name : null;
+      out.push({ rule: "hub", sessionId: me, key, level: 1, since: null, data: { other, from: e.from, to: e.to, hubId: hub?.id ?? null, hubName: hub?.name ?? null, joiner, leaves } });
+    }
+  }
+  return out;
+}
 const emitSuggestions = () => setTimeout(() => emit("suggestions", fakeSuggestions()), 0);
 
 function bumpContext(key: string) {
@@ -699,6 +730,8 @@ export function installDevMock() {
   mockIPC((cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     if (cmd.startsWith("pty_")) return fakePty(cmd, a);
+    // Les hubs changent : suggestions recalculées (règle « hub »), comme lib.rs.
+    if (cmd.startsWith("hub_") && cmd !== "hub_messages") emitSuggestions();
     if (cmd === "activity_list") return [...activities.values()];
     if (cmd === "usage_limits") return usageLimits;
     if (cmd === "suggestions_list") return fakeSuggestions();

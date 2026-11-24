@@ -31,7 +31,7 @@ import { ConversationLinksContext, messagesApi } from "./messages";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree, worktreeNameError } from "./pty";
 import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
-import { RULE_WORKTREE, dismissSuggestion, isRuleEnabled } from "./suggestions";
+import { ACTION_HUB, RULE_WORKTREE, dismissSuggestion, hubSuggestionData, isRuleEnabled, type Suggestion } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
 import { ExecutorDialog, HubDialog, type ExecutorRequest, type HubActions, type HubChoice } from "./components/Hubs";
 import { activeHubs, coordinatorOf, defaultRole, executorBlocker, executorFirstMessage } from "./hubs";
@@ -61,6 +61,7 @@ type DialogState =
   | { kind: "renameHub"; hub: Hub }
   | { kind: "addToHub"; session: SessionInfo }
   | { kind: "addExecutor"; hubId: string }
+  | { kind: "hubFromExchange"; from: string; to: string }
   | { kind: "worktreeOffer"; projectKey: string; path: string; sectionId: string | null; count: number }
   | null;
 
@@ -895,6 +896,40 @@ export default function App() {
     if (ok) hubCall(() => api.hubDelete(hub.id));
   };
 
+  /**
+   * Suggestion « hub » acceptée (deux conversations ont échangé) : si l'une est déjà dans un
+   * hub, l'autre l'y rejoint (rôle par défaut du hub) ; sinon, fenêtre de création d'un hub où
+   * l'expéditeur du premier message sera coordinateur et le destinataire exécutant.
+   */
+  const acceptHubSuggestion = async (s: Suggestion) => {
+    const d = hubSuggestionData(s);
+    if (!d.hubId) {
+      setDialog({ kind: "hubFromExchange", from: d.from, to: d.to });
+      return;
+    }
+    const hub = config.hubs?.find((h) => h.id === d.hubId);
+    if (!hub || !d.joiner) return;
+    try {
+      setConfig(await api.hubSetMember(hub.id, d.joiner, defaultRole(hub)));
+      toast(`« ${conversationTitle(d.joiner) ?? "La conversation"} » a rejoint le hub « ${hub.name} »`);
+    } catch (e) {
+      showError(e);
+    }
+  };
+
+  /** Nouveau hub pour deux conversations qui ont échangé : `from` coordinateur, `to` exécutant. */
+  const createHubFromExchange = async (name: string, from: string, to: string) => {
+    try {
+      const created = await api.hubCreate(name, null);
+      setConfig(created.config);
+      await api.hubSetMember(created.hubId, from, "coordinateur");
+      setConfig(await api.hubSetMember(created.hubId, to, "executant"));
+      toast(`Hub « ${name} » créé`);
+    } catch (e) {
+      showError(e);
+    }
+  };
+
   /** Projets proposés pour un exécutant : connus, non archivés, avec un dossier existant. */
   const executorProjects = () =>
     [...projects.values()]
@@ -1041,6 +1076,7 @@ export default function App() {
         onStarted={terminalStarted}
         focus={searchFocus}
         onDismissSuggestion={(s) => updateConfig((c) => dismissSuggestion(c, s))}
+        suggestionActions={{ [ACTION_HUB]: { run: acceptHubSuggestion } }}
         onHandoff={startHandoff}
         lineageOf={lineageOf}
         onOpenConversation={openConversationById}
@@ -1243,6 +1279,18 @@ export default function App() {
             />
           );
         })()}
+      {dialog?.kind === "hubFromExchange" && (
+        <TextPrompt
+          title="Créer un hub"
+          label={`Nom du hub — « ${conversationTitle(dialog.from) ?? "?"} » coordinateur, « ${conversationTitle(dialog.to) ?? "?"} » exécutant`}
+          initial={conversationTitle(dialog.from) ?? ""}
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            setDialog(null);
+            createHubFromExchange(name, dialog.from, dialog.to);
+          }}
+        />
+      )}
       {dialog?.kind === "settings" && <SettingsDialog config={config} onChange={updateConfig} onClose={() => setDialog(null)} />}
 
       <div className="toasts">

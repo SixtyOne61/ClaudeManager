@@ -13,6 +13,8 @@
 //!   être repris plus tard par une autre conversation : chaque nom est daté ([`NameUse`]).
 //!   Les `local_<uuid>` de Claude Desktop ne correspondent pas à l'identifiant de la
 //!   conversation : ils sont appris en appariant un envoi et sa réception ([`hub_thread`]).
+//! - Échanges entre deux conversations (suggestion « hub ») : [`ExchangeTracker`], tenu à jour
+//!   au fil des changements de fichiers, sans relire tous les `.jsonl`.
 //!
 //! Formats non documentés : lecture tolérante, un format inattendu donne un fil vide.
 
@@ -20,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -199,25 +201,53 @@ pub fn parse_line(text: &str, line: u32) -> Vec<CrossMessage> {
     }
 }
 
-/// Messages entre conversations d'un `.jsonl` (lignes numérotées à partir de 0). Fichier
-/// illisible : aucun message.
-pub fn read_file(path: &Path) -> Vec<CrossMessage> {
-    let Ok(file) = File::open(path) else { return Vec::new() };
-    let mut out = Vec::new();
-    for (i, line) in BufReader::with_capacity(256 * 1024, file).split(b'\n').enumerate() {
-        let Ok(bytes) = line else { break };
-        if let Ok(text) = std::str::from_utf8(&bytes) {
-            out.extend(parse_line(text, i as u32));
-        }
+/// Messages entre conversations d'un `.jsonl` à partir de l'octet `offset` (début d'une ligne
+/// numérotée `line` ; 0 et 0 : tout le fichier). Renvoie aussi la position et le numéro de
+/// ligne où reprendre : une dernière ligne sans retour à la ligne (en cours d'écriture) n'est
+/// pas lue, elle le sera la fois suivante. Fichier illisible : aucun message.
+pub fn read_from(path: &Path, offset: u64, line: u32) -> (Vec<CrossMessage>, u64, u32) {
+    let Ok(mut file) = File::open(path) else { return (Vec::new(), offset, line) };
+    if offset > 0 && file.seek(SeekFrom::Start(offset)).is_err() {
+        return (Vec::new(), offset, line);
     }
-    out
+    let mut reader = BufReader::with_capacity(256 * 1024, file);
+    let mut buf = Vec::new();
+    let mut out = Vec::new();
+    let (mut pos, mut line) = (offset, line);
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if !buf.ends_with(b"\n") {
+            break;
+        }
+        if let Ok(text) = std::str::from_utf8(&buf) {
+            out.extend(parse_line(text, line));
+        }
+        pos += buf.len() as u64;
+        line += 1;
+    }
+    (out, pos, line)
 }
 
-/// Messages lus par fichier, relus seulement quand le fichier change (date et taille). La
-/// liste renvoyée reste la même (`Arc::ptr_eq`) tant que le fichier ne change pas.
+/// Messages d'un fichier déjà lus : date et taille du fichier, position et numéro de ligne où
+/// reprendre la lecture.
+struct StoredMessages {
+    stamp: (u64, u64),
+    offset: u64,
+    line: u32,
+    list: Arc<Vec<CrossMessage>>,
+}
+
+/// Messages lus par fichier, relus seulement quand le fichier change (date et taille). Un
+/// `.jsonl` ne fait que s'allonger : quand il a grandi, seule la suite est lue (un fichier
+/// raccourci est relu en entier). La liste renvoyée reste la même (`Arc::ptr_eq`) tant
+/// qu'aucun nouveau message n'est apparu.
 #[derive(Default)]
 pub struct MessageStore {
-    files: Mutex<HashMap<PathBuf, ((u64, u64), Arc<Vec<CrossMessage>>)>>,
+    files: Mutex<HashMap<PathBuf, StoredMessages>>,
 }
 
 impl MessageStore {
@@ -226,13 +256,25 @@ impl MessageStore {
             self.files.lock().unwrap().remove(path);
             return Arc::default();
         };
-        if let Some((known, list)) = self.files.lock().unwrap().get(path) {
-            if *known == stamp {
-                return list.clone();
+        let previous = {
+            let files = self.files.lock().unwrap();
+            match files.get(path) {
+                Some(s) if s.stamp == stamp => return s.list.clone(),
+                Some(s) if stamp.1 >= s.stamp.1 => Some((s.offset, s.line, s.list.clone())),
+                _ => None,
             }
-        }
-        let list = Arc::new(read_file(path));
-        self.files.lock().unwrap().insert(path.to_path_buf(), (stamp, list.clone()));
+        };
+        let known = previous.is_some();
+        let (start, first_line, before) = previous.unwrap_or((0, 0, Arc::default()));
+        let (found, offset, line) = read_from(path, start, first_line);
+        let list = if found.is_empty() && known {
+            before
+        } else {
+            let mut all = (*before).clone();
+            all.extend(found);
+            Arc::new(all)
+        };
+        self.files.lock().unwrap().insert(path.to_path_buf(), StoredMessages { stamp, offset, line, list: list.clone() });
         list
     }
 }
@@ -454,6 +496,130 @@ pub fn hub_thread(members: &[(String, Arc<Vec<CrossMessage>>)], names: &[NameUse
     (out.into_iter().map(|(_, m)| m).collect(), learnt)
 }
 
+// ---------------------------------------------------------------------------
+// Échanges entre conversations (suggestion « hub », voir suggestions.rs)
+// ---------------------------------------------------------------------------
+
+/// Au démarrage, seules les conversations dont le `.jsonl` a changé depuis moins de ce délai
+/// sont lues pour repérer les échanges ; ensuite, chaque `.jsonl` qui change est ajouté.
+pub const EXCHANGE_RECENT_MS: u64 = 7 * 24 * 3600 * 1000;
+
+/// Deux conversations qui ont échangé un message : l'expéditeur et le destinataire du premier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exchange {
+    pub from: String,
+    pub to: String,
+}
+
+impl Exchange {
+    /// Les deux conversations, dans l'ordre alphabétique (clé de la paire).
+    pub fn pair(&self) -> (&str, &str) {
+        if self.from <= self.to {
+            (&self.from, &self.to)
+        } else {
+            (&self.to, &self.from)
+        }
+    }
+}
+
+/// Premier message de chaque paire de conversations d'un fil. Un échange est avéré quand
+/// l'expéditeur et le destinataire sont tous deux des conversations connues (et différentes).
+/// Trié par paire.
+pub fn first_exchanges(thread: &[HubMessage]) -> Vec<Exchange> {
+    let mut out: Vec<Exchange> = Vec::new();
+    for m in thread {
+        let (Some(from), Some(to)) = (&m.from.conversation_id, &m.to.conversation_id) else { continue };
+        let e = Exchange { from: from.clone(), to: to.clone() };
+        if from != to && !out.iter().any(|x| x.pair() == e.pair()) {
+            out.push(e);
+        }
+    }
+    out.sort_by(|a, b| a.pair().cmp(&b.pair()));
+    out
+}
+
+/// `.jsonl` des conversations (`<dossier des projets>/<projet>/<id>.jsonl`) modifiés depuis
+/// `since` (ms) : identifiant et chemin. Dossier illisible : ignoré.
+pub fn recent_conversation_files(root: &Path, since: u64) -> Vec<(String, PathBuf)> {
+    let Ok(projects) = std::fs::read_dir(root) else { return Vec::new() };
+    projects
+        .flatten()
+        .filter(|d| d.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|d| std::fs::read_dir(d.path()).ok())
+        .flat_map(|files| files.flatten().map(|f| f.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .filter(|p| crate::sessions::file_stamp(p).is_some_and(|(mtime, _)| mtime >= since))
+        .filter_map(|p| Some((p.file_stem()?.to_string_lossy().to_string(), p)))
+        .collect()
+}
+
+/// Échanges entre conversations, tenus à jour au fil des changements de fichiers pour la
+/// suggestion « hub » : les messages de chaque conversation suivie restent en mémoire (ceux
+/// du [`MessageStore`], qui ne lit que la suite d'un fichier qui a grandi) et les échanges ne
+/// sont recalculés que lorsqu'un message apparaît ou disparaît. Seules les conversations qui
+/// ont au moins un message sont gardées.
+#[derive(Default)]
+pub struct ExchangeTracker {
+    state: Mutex<TrackerState>,
+}
+
+#[derive(Default)]
+struct TrackerState {
+    /// Messages de chaque conversation suivie.
+    files: HashMap<String, Arc<Vec<CrossMessage>>>,
+    exchanges: Vec<Exchange>,
+}
+
+impl ExchangeTracker {
+    /// Échanges connus (premier message de chaque paire).
+    pub fn exchanges(&self) -> Vec<Exchange> {
+        self.state.lock().unwrap().exchanges.clone()
+    }
+
+    /// Prend en compte des `.jsonl` qui ont changé (identifiant de la conversation et chemin ;
+    /// fichier disparu : la conversation n'est plus suivie). Si un message est apparu ou a
+    /// disparu, ou si une conversation d'un échange a disparu, recalcule les échanges avec les
+    /// noms de messagerie donnés par `names` (appelée seulement dans ce cas) ; `exists` écarte
+    /// les échanges avec une conversation qui n'existe plus (Corbeille), retrouvée par un nom
+    /// déjà vu. Renvoie vrai si les échanges ont changé, et les noms appris en appariant envois
+    /// et réceptions (à garder dans le cache).
+    pub fn update(
+        &self,
+        store: &MessageStore,
+        changed: &[(String, PathBuf)],
+        names: impl FnOnce() -> Vec<NameUse>,
+        exists: impl Fn(&str) -> bool,
+    ) -> (bool, Vec<NameUse>) {
+        // Lecture hors du verrou : `exchanges()` reste disponible pendant une longue lecture.
+        let read: Vec<(&String, Arc<Vec<CrossMessage>>)> = changed.iter().map(|(id, path)| (id, store.read(path))).collect();
+        let mut st = self.state.lock().unwrap();
+        let mut dirty = false;
+        for (id, list) in read {
+            if st.files.get(id).is_some_and(|old| Arc::ptr_eq(old, &list)) {
+                continue;
+            }
+            if list.is_empty() {
+                let in_exchange = st.exchanges.iter().any(|e| e.from == *id || e.to == *id);
+                dirty |= st.files.remove(id).is_some() || in_exchange;
+            } else {
+                st.files.insert(id.clone(), list);
+                dirty = true;
+            }
+        }
+        if !dirty {
+            return (false, Vec::new());
+        }
+        let mut members: Vec<(String, Arc<Vec<CrossMessage>>)> = st.files.iter().map(|(id, l)| (id.clone(), l.clone())).collect();
+        members.sort_by(|a, b| a.0.cmp(&b.0));
+        let (thread, learnt) = hub_thread(&members, &names());
+        let mut exchanges = first_exchanges(&thread);
+        exchanges.retain(|e| [&e.from, &e.to].into_iter().all(|id| st.files.contains_key(id) || exists(id)));
+        let changed = exchanges != st.exchanges;
+        st.exchanges = exchanges;
+        (changed, learnt)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,7 +673,7 @@ mod tests {
         assert_eq!(attr(r#"x-from="no" from="a &quot;b&quot;""#, "from").as_deref(), Some("a \"b\""));
         let sidechain = SENT.replace(r#""isSidechain":false"#, r#""isSidechain":true"#);
         assert!(parse_line(&sidechain, 0).is_empty());
-        assert!(read_file(Path::new("absent.jsonl")).is_empty());
+        assert!(read_from(Path::new("absent.jsonl"), 0, 0).0.is_empty());
     }
 
     #[test]
@@ -624,5 +790,135 @@ mod tests {
         let (thread, _) = hub_thread(&members, &names);
         let to: Vec<_> = thread.iter().map(|m| (m.to.name.as_str(), m.to.conversation_id.as_deref())).collect();
         assert_eq!(to, vec![("nom-c", Some("C")), ("nom-b", Some("B"))]);
+    }
+
+    fn append(p: &Path, text: &str) {
+        use std::io::Write;
+        std::fs::OpenOptions::new().append(true).open(p).unwrap().write_all(text.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn store_reads_only_what_was_appended() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.jsonl");
+        std::fs::write(&p, format!("{QUEUED}\n{RECEIVED}\n")).unwrap();
+        let store = MessageStore::default();
+        let first = store.read(&p);
+        assert_eq!(first.len(), 1);
+        // Une ligne sans message : même liste.
+        append(&p, "{\"type\":\"user\"}\n");
+        assert!(Arc::ptr_eq(&first, &store.read(&p)));
+        // Ligne en cours d'écriture : pas encore lue ; une fois complète, lue une seule fois.
+        let (head, tail) = SENT.split_at(40);
+        append(&p, head);
+        assert_eq!(store.read(&p).len(), 1);
+        append(&p, &format!("{tail}\n"));
+        let m = store.read(&p);
+        assert_eq!(m.iter().map(|m| (m.line, m.sent)).collect::<Vec<_>>(), vec![(1, false), (3, true)]);
+        // Fichier réécrit plus court : relu en entier.
+        std::fs::write(&p, format!("{SENT}\n")).unwrap();
+        assert_eq!(store.read(&p).iter().map(|m| (m.line, m.sent)).collect::<Vec<_>>(), vec![(0, true)]);
+        // Fichier disparu : plus rien.
+        std::fs::remove_file(&p).unwrap();
+        assert!(store.read(&p).is_empty());
+    }
+
+    fn peer(id: Option<&str>) -> Peer {
+        Peer { conversation_id: id.map(str::to_string), name: "n".into() }
+    }
+
+    fn hub_msg(from: Option<&str>, to: Option<&str>) -> HubMessage {
+        HubMessage { from: peer(from), to: peer(to), summary: None, text: "t".into(), timestamp: None }
+    }
+
+    #[test]
+    fn first_exchange_of_each_pair() {
+        let thread = vec![
+            hub_msg(Some("B"), None),         // destinataire inconnu
+            hub_msg(None, Some("A")),         // expéditeur inconnu
+            hub_msg(Some("C"), Some("A")),    // premier échange A–C : C l'a commencé
+            hub_msg(Some("A"), Some("C")),    // réponse : même paire
+            hub_msg(Some("A"), Some("A")),    // à soi-même
+            hub_msg(Some("B"), Some("A")),
+        ];
+        let got: Vec<(String, String)> = first_exchanges(&thread).into_iter().map(|e| (e.from, e.to)).collect();
+        assert_eq!(got, vec![("B".into(), "A".into()), ("C".into(), "A".into())]);
+        assert!(first_exchanges(&[]).is_empty());
+    }
+
+    #[test]
+    fn lists_recent_conversation_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("C--projet");
+        std::fs::create_dir(&proj).unwrap();
+        std::fs::write(proj.join("abc.jsonl"), "{}\n").unwrap();
+        std::fs::write(proj.join("notes.txt"), "x").unwrap();
+        std::fs::write(dir.path().join("racine.jsonl"), "{}\n").unwrap();
+        let found = recent_conversation_files(dir.path(), 0);
+        assert_eq!(found, vec![("abc".to_string(), proj.join("abc.jsonl"))]);
+        assert!(recent_conversation_files(dir.path(), u64::MAX).is_empty());
+        assert!(recent_conversation_files(&dir.path().join("absent"), 0).is_empty());
+    }
+
+    fn sent_line(to: &str, text: &str, ts: &str) -> String {
+        serde_json::json!({"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "tool_use", "name": "SendMessage", "input": {"to": to, "message": text}}]}})
+            .to_string()
+            + "\n"
+    }
+
+    fn received_line(from: &str, text: &str, ts: &str) -> String {
+        let content = format!("<cross-session-message from=\"{from}\">\n{text}\n</cross-session-message>");
+        serde_json::json!({"type": "user", "timestamp": ts, "message": {"content": content}}).to_string() + "\n"
+    }
+
+    #[test]
+    fn tracker_finds_exchanges_and_recomputes_only_on_new_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b, c) = (dir.path().join("A.jsonl"), dir.path().join("B.jsonl"), dir.path().join("C.jsonl"));
+        std::fs::write(&a, sent_line("nom-b", "Peux-tu relire ?", "2026-11-10T08:00:00.000Z")).unwrap();
+        std::fs::write(&b, received_line("nom-a", "Peux-tu relire ?", "2026-11-10T08:00:01.000Z")).unwrap();
+        std::fs::write(&c, "{\"type\":\"user\",\"message\":{\"content\":\"Bonjour\"}}\n").unwrap();
+        let files = vec![("A".to_string(), a.clone()), ("B".to_string(), b.clone()), ("C".to_string(), c.clone())];
+        let names = || vec![NameUse { name: "nom-b".into(), session_id: "B".into(), since: 0 }];
+        let calls = std::cell::Cell::new(0);
+        let counted = || {
+            calls.set(calls.get() + 1);
+            names()
+        };
+        let store = MessageStore::default();
+        let tracker = ExchangeTracker::default();
+
+        let (changed, learnt) = tracker.update(&store, &files, counted, |_| true);
+        assert!(changed);
+        assert_eq!(tracker.exchanges(), vec![Exchange { from: "A".into(), to: "B".into() }]);
+        assert!(learnt.contains(&NameUse { name: "nom-a".into(), session_id: "A".into(), since: iso_ms("2026-11-10T08:00:01.000Z").unwrap() }));
+        assert_eq!(calls.get(), 1);
+
+        // Rien de nouveau : pas de recalcul.
+        let (changed, _) = tracker.update(
+            &store,
+            &files,
+            || {
+                calls.set(calls.get() + 1);
+                names()
+            },
+            |_| true,
+        );
+        assert!(!changed);
+        assert_eq!(calls.get(), 1);
+
+        // B répond : recalcul, mais le premier échange reste A → B.
+        append(&b, &sent_line("nom-a", "C'est relu.", "2026-11-10T09:00:00.000Z"));
+        let (changed, _) = tracker.update(&store, &files[1..2], names, |_| true);
+        assert!(!changed);
+        assert_eq!(tracker.exchanges(), vec![Exchange { from: "A".into(), to: "B".into() }]);
+
+        // A disparaît (Corbeille) : même si « nom-a » est encore connu, plus d'échange avéré.
+        std::fs::remove_file(&a).unwrap();
+        let mut known = names();
+        known.extend(learnt);
+        let (changed, _) = tracker.update(&store, &files[..1], || known, |id| id != "A");
+        assert!(changed);
+        assert!(tracker.exchanges().is_empty());
     }
 }
