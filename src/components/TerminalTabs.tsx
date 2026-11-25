@@ -1,9 +1,9 @@
-// Onglets des conversations ouvertes dans le terminal intégré, et des hubs ouverts (« Vue
-// Hub », onglet `hub:<id>`, voir HubView.tsx).
+// Onglets des conversations ouvertes dans le terminal intégré. Le premier onglet ramène à la
+// vue principale (projet ou hub sélectionné dans la barre latérale).
 // La barre d'onglets et les terminaux sont séparés : la barre s'affiche au-dessus de la
 // vue courante, les terminaux restent tous montés (seul l'onglet actif est visible).
 
-import { FolderKanban, SquareTerminal, X } from "lucide-react";
+import { FolderKanban, Network, SquareTerminal, X } from "lucide-react";
 import { TerminalView } from "./TerminalView";
 import { ActivityDot } from "./Activity";
 import { useActivities } from "../activity";
@@ -11,15 +11,6 @@ import type { SearchFocus } from "./GlobalSearch";
 import type { SuggestionActionHandler } from "./Suggestions";
 import type { Suggestion } from "../suggestions";
 import type { HandoffLineage } from "../handoff";
-import type { Hub } from "../api";
-
-/** Préfixe de l'onglet d'un hub (`hub:<id>`) ; un identifiant de conversation n'en a jamais. */
-export const HUB_TAB_PREFIX = "hub:";
-
-/** Identifiant du hub d'un onglet, ou null pour un onglet de conversation (ou aucun). */
-export function hubTabId(tab: string | null): string | null {
-  return tab?.startsWith(HUB_TAB_PREFIX) ? tab.slice(HUB_TAB_PREFIX.length) : null;
-}
 
 /** Une conversation ouverte dans le terminal intégré. */
 export interface OpenTerminal {
@@ -32,53 +23,27 @@ export interface OpenTerminal {
 
 interface BarProps {
   terminals: OpenTerminal[];
-  /** Hubs ouverts (Vue Hub). */
-  hubs?: Hub[];
-  /** Onglet affiché (identifiant de conversation, ou `hub:<id>`), ou null quand c'est la vue du projet qui est affichée. */
+  /** Vue principale vers laquelle ramène le premier onglet. */
+  home?: "project" | "hub";
+  /** Conversation affichée, ou null quand c'est la vue principale (projet, hub…) qui est affichée. */
   active: string | null;
   onSelect: (tab: string | null) => void;
   onClose: (t: OpenTerminal) => void;
-  onCloseHub?: (hubId: string) => void;
 }
 
-export function TerminalTabBar({ terminals, hubs = [], active, onSelect, onClose, onCloseHub }: BarProps) {
+export function TerminalTabBar({ terminals, home = "project", active, onSelect, onClose }: BarProps) {
   // État de chaque conversation ouverte : pastille dans son onglet.
   const activities = useActivities();
-  if (terminals.length === 0 && hubs.length === 0) return null;
+  if (terminals.length === 0) return null;
   return (
     <div className="terminal-tabs" role="tablist">
-      <button className={"terminal-tab home" + (active === null ? " active" : "")} onClick={() => onSelect(null)} title="Revenir au projet">
-        <FolderKanban size={14} /> Projets
+      <button
+        className={"terminal-tab home" + (active === null ? " active" : "")}
+        onClick={() => onSelect(null)}
+        title={home === "hub" ? "Revenir au hub" : "Revenir au projet"}
+      >
+        {home === "hub" ? <Network size={14} /> : <FolderKanban size={14} />} {home === "hub" ? "Hub" : "Projets"}
       </button>
-      {hubs.map((h) => {
-        const tab = HUB_TAB_PREFIX + h.id;
-        return (
-          <div
-            key={tab}
-            role="tab"
-            aria-selected={active === tab}
-            className={"terminal-tab hub-tab" + (active === tab ? " active" : "")}
-            onClick={() => onSelect(tab)}
-            onAuxClick={(e) => e.button === 1 && onCloseHub?.(h.id)}
-            title={`Hub « ${h.name} »`}
-          >
-            <span className="hub-link-icon" aria-hidden>
-              🔗
-            </span>
-            <span className="terminal-tab-title">{h.name}</span>
-            <button
-              className="icon-btn bare"
-              title="Fermer"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseHub?.(h.id);
-              }}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        );
-      })}
       {terminals.map((t) => (
         <div
           key={t.sessionId}
@@ -126,11 +91,13 @@ interface StackProps {
   lineageOf?: (sessionId: string) => HandoffLineage;
   /** Ouvre une conversation par son identifiant (onglet, ou archives). */
   onOpenConversation?: (sessionId: string) => void;
+  /** Frappe dans une conversation (règle « conversation ancienne »). */
+  onTyping?: (sessionId: string) => void;
 }
 
-export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions, onHandoff, lineageOf, onOpenConversation }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions, onHandoff, lineageOf, onOpenConversation, onTyping }: StackProps) {
   return (
-    <div className="terminal-stack" style={{ display: active && !hubTabId(active) ? undefined : "none" }}>
+    <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
         <TerminalView
           key={t.sessionId}
@@ -146,6 +113,7 @@ export function TerminalStack({ terminals, active, onClose, onStarted, focus, on
           onHandoff={onHandoff && (() => onHandoff(t.sessionId))}
           lineage={lineageOf?.(t.sessionId)}
           onOpenConversation={onOpenConversation}
+          onTyping={onTyping && (() => onTyping(t.sessionId))}
         />
       ))}
     </div>

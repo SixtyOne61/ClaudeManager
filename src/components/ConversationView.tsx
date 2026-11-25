@@ -364,9 +364,11 @@ interface InputProps {
   editing?: EditableMessage | null;
   /** Abandon de la modification (Échap ou ✕) : le brouillon d'avant revient. */
   onCancelEdit?: () => void;
+  /** L'utilisateur tape un message (règle « conversation ancienne », voir src/suggestions.ts). */
+  onTyping?: () => void;
 }
 
-export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null, editing = null, onCancelEdit }: InputProps) {
+export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = null, sessionId = null, editing = null, onCancelEdit, onTyping }: InputProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -550,7 +552,10 @@ Cliquer pour afficher`}>
         value={text}
         placeholder={enabled ? "Message à Claude… (Entrée : envoyer, Maj+Entrée : nouvelle ligne)" : "Claude Code ne tourne pas dans ce terminal."}
         disabled={!enabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          onTyping?.();
+        }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />

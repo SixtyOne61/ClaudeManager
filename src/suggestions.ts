@@ -11,11 +11,15 @@
 // - SUGGESTION_RULES                  présentation de chaque règle : texte, action, réglage
 // - dismissSuggestion(cfg, s)         « Ignorer » (jusqu'au palier suivant), à enregistrer
 // - hubSuggestionData(s)              données de la règle « hub » (deux conversations qui ont échangé)
+// - noteTyping(id, cfg)               frappe dans une conversation : règle « conversation ancienne »
+// - dismissStale / forgetStale        « Ignorer » et fermeture pour cette règle (en mémoire)
 // - suggestionSettings(cfg)           réglages, avec leurs valeurs par défaut
 // - setRuleEnabled / setContextThreshold   modification des réglages
 //
 // Ajouter une règle : la détection dans suggestions.rs (`RULES`), puis sa présentation ici
-// dans SUGGESTION_RULES. Une règle sans bandeau (fenêtre au moment d'une action, comme le
+// dans SUGGESTION_RULES. Exception : la règle « conversation ancienne » se déclenche à la
+// frappe, donc côté interface (voir plus bas), et ses suggestions sont ajoutées à celles du
+// backend. Une règle sans bandeau (fenêtre au moment d'une action, comme le
 // worktree à la troisième conversation) peut n'y déclarer que son libellé de réglage.
 
 import { useSyncExternalStore } from "react";
@@ -96,6 +100,9 @@ export const RULE_WORKTREE = "worktree";
 /** Identifiant de l'action « Hand off » (règle « Contexte rempli »). */
 export const ACTION_HAND_OFF = "handoff";
 
+/** Règle « Conversation ancienne » : détectée ici, à la première frappe (voir noteTyping). */
+export const RULE_STALE = "stale";
+
 /** Règle « Conversations qui ont échangé » : les regrouper dans un hub. */
 export const RULE_HUB = "hub";
 /** Identifiant de l'action « Créer un hub » / « Ajouter au hub » (règle « hub »). */
@@ -135,6 +142,21 @@ function hubText(s: Suggestion, ctx: SuggestionTextContext): string {
     : `${start} : l'ajouter au hub « ${d.hubName} » ?${leaves}`;
 }
 
+/** « 3 h », « 45 min », « 2 j » : ancienneté d'une conversation. */
+export function formatAge(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.round(h / 24)} j`;
+}
+
+/** Texte du bandeau de la règle « conversation ancienne ». */
+function staleText(s: Suggestion): string {
+  const age = formatAge(Number(s.data.ageMs ?? 0));
+  return `Cette conversation date de ${age} : ton prochain message fera relire tout son contexte (${percentOf(s)} %). Un hand off la relit une seule fois et repart léger.`;
+}
+
 /** Présentation de chaque règle, par identifiant (le même que dans suggestions.rs). */
 export const SUGGESTION_RULES: Record<string, SuggestionRuleUi> = {
   context: {
@@ -143,6 +165,15 @@ export const SUGGESTION_RULES: Record<string, SuggestionRuleUi> = {
     text: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off repartirait d'un contexte propre`,
     hint: (s) => `Contexte rempli à ${percentOf(s)} % : un hand off est suggéré`,
     action: { id: ACTION_HAND_OFF, label: "Hand off" },
+  },
+  [RULE_STALE]: {
+    label: "Conversation ancienne",
+    description:
+      "Quand on recommence à écrire dans une conversation inactive depuis longtemps et au contexte chargé, prévenir que le prochain message fera relire tout le contexte (le cache a expiré), et proposer un hand off.",
+    text: staleText,
+    hint: (s) => `Conversation inactive depuis ${formatAge(Number(s.data.ageMs ?? 0))} : un hand off est suggéré`,
+    action: { id: ACTION_HAND_OFF, label: "Hand off" },
+    dismissHint: "Continuer dans cette conversation (le bandeau ne reviendra pas tant qu'elle reste ouverte)",
   },
   [RULE_HUB]: {
     label: "Conversations qui ont échangé",
@@ -169,8 +200,32 @@ export const DEFAULT_CONTEXT_THRESHOLD = 60;
 export const CONTEXT_THRESHOLD_MIN = 10;
 export const CONTEXT_THRESHOLD_MAX = 95;
 
-export function suggestionSettings(cfg: Config): SuggestionSettings {
-  return { disabled: cfg.suggestions?.disabled ?? [], contextThreshold: cfg.suggestions?.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD };
+/** Règle « conversation ancienne » : inactivité (minutes) et contexte (%) par défaut, et bornes
+ *  (mêmes valeurs que config.rs). */
+export const DEFAULT_STALE_MINUTES = 60;
+export const STALE_MINUTES_MIN = 5;
+export const STALE_MINUTES_MAX = 7 * 24 * 60;
+export const DEFAULT_STALE_PERCENT = 30;
+export const STALE_PERCENT_MIN = 5;
+export const STALE_PERCENT_MAX = 95;
+
+export function suggestionSettings(cfg: Config): Required<SuggestionSettings> {
+  return {
+    disabled: cfg.suggestions?.disabled ?? [],
+    contextThreshold: cfg.suggestions?.contextThreshold ?? DEFAULT_CONTEXT_THRESHOLD,
+    staleMinutes: cfg.suggestions?.staleMinutes ?? DEFAULT_STALE_MINUTES,
+    stalePercent: cfg.suggestions?.stalePercent ?? DEFAULT_STALE_PERCENT,
+  };
+}
+
+const clamp = (n: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, n)));
+
+export function setStaleMinutes(cfg: Config, minutes: number): Config {
+  return { ...cfg, suggestions: { ...suggestionSettings(cfg), staleMinutes: clamp(minutes, STALE_MINUTES_MIN, STALE_MINUTES_MAX) } };
+}
+
+export function setStalePercent(cfg: Config, pct: number): Config {
+  return { ...cfg, suggestions: { ...suggestionSettings(cfg), stalePercent: clamp(pct, STALE_PERCENT_MIN, STALE_PERCENT_MAX) } };
 }
 
 export function isRuleEnabled(cfg: Config, rule: string): boolean {
@@ -214,10 +269,19 @@ const EMPTY: readonly Suggestion[] = [];
 let store: SuggestionsSnapshot = { contexts: new Map(), bySession: new Map() };
 const listeners = new Set<() => void>();
 let started = false;
+/** Dernière émission du backend. */
+let backend: Payload = { contexts: [], suggestions: [] };
 
 function set(p: Payload) {
+  backend = p;
+  rebuild();
+}
+
+/** Reconstruit l'instantané : suggestions du backend, plus celles de la règle « conversation ancienne ». */
+function rebuild() {
+  const p = backend;
   const bySession = new Map<string, Suggestion[]>();
-  for (const s of p.suggestions) {
+  for (const s of [...p.suggestions, ...stale.values()]) {
     const list = bySession.get(s.sessionId);
     if (list) list.push(s);
     else bySession.set(s.sessionId, [s]);
@@ -269,6 +333,46 @@ export function hasSuggestion(snap: SuggestionsSnapshot, ids: Iterable<string>):
   for (const id of ids) if (snap.bySession.has(id)) return true;
   return false;
 }
+
+// ---- Règle « conversation ancienne » (côté interface) ---------------------------------------
+// Le cache de contexte de Claude expire : le premier message après une longue pause fait relire
+// tout le contexte au prix fort. À la première frappe dans une conversation inactive depuis plus
+// de `staleMinutes` et dont le contexte dépasse `stalePercent`, un bandeau propose un hand off.
+// Rien à la simple ouverture (on peut vouloir juste relire). « Ignorer » vaut tant que la
+// conversation reste ouverte : rien n'est enregistré.
+
+const stale = new Map<string, Suggestion>();
+/** Conversations où le bandeau a déjà été montré depuis leur ouverture. */
+const staleSeen = new Set<string>();
+
+/** Frappe de l'utilisateur dans une conversation (terminal intégré ou zone de saisie). */
+export function noteTyping(sessionId: string, cfg: Config, now = Date.now()) {
+  if (staleSeen.has(sessionId) || !isRuleEnabled(cfg, RULE_STALE)) return;
+  const ctx = getSuggestions().contexts.get(sessionId);
+  if (!ctx) return;
+  const settings = suggestionSettings(cfg);
+  const ageMs = now - ctx.at;
+  // Vérifié à chaque frappe (simples lectures en mémoire) : un onglet resté ouvert sans
+  // activité peut devenir ancien. Le bandeau n'est montré qu'une fois par ouverture.
+  if (ageMs < settings.staleMinutes * 60_000 || ctx.usedPercentage < settings.stalePercent) return;
+  staleSeen.add(sessionId);
+  stale.set(sessionId, { rule: RULE_STALE, sessionId, key: RULE_STALE, level: 0, since: ctx.at, data: { percent: ctx.usedPercentage, ageMs } });
+  rebuild();
+}
+
+/** « Ignorer » ou hand off lancé : le bandeau disparaît jusqu'à la fermeture de la conversation. */
+export function dismissStale(sessionId: string) {
+  if (stale.delete(sessionId)) rebuild();
+}
+
+/** Conversation fermée : sa prochaine ouverture repart de zéro. */
+export function forgetStale(sessionId: string) {
+  staleSeen.delete(sessionId);
+  dismissStale(sessionId);
+}
+
+/** Suggestion propre à l'interface, dont « Ignorer » n'est pas enregistré dans la configuration. */
+export const isLocalSuggestion = (s: Suggestion) => s.rule === RULE_STALE;
 
 /** Info-bulle de l'icône 💡 d'une conversation. */
 export function suggestionHint(list: readonly Suggestion[]): string {

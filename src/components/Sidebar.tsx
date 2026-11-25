@@ -1,4 +1,5 @@
-// Barre latérale : hubs (en tête, voir src/hubs.ts), catégories (réordonnables), projets
+// Barre latérale, en trois onglets : Projets, Conversations (du projet courant) et Hubs (voir
+// src/hubs.ts et HubsPanel dans Hubs.tsx). Catégories (réordonnables), projets
 // (déplaçables entre catégories), section « Non classés », accès aux archives et aux réglages. Icône 💡 sur une conversation
 // qui a une suggestion, et sur son projet et sa catégorie (voir src/suggestions.ts).
 
@@ -29,6 +30,7 @@ import {
   ListPlus,
   MoreHorizontal,
   MessagesSquare,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -42,7 +44,20 @@ import {
 import type { Category, Config, ProjectInfo, Section, SessionInfo } from "../api";
 import { colorStyle, modKey, projectName, relativeDate } from "../util";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { addSection, deleteSection, groupBySection, moveSection, projectSections, putConversationInSection, renameSection, setSectionCollapsed, setSectionColor } from "../sections";
+import {
+  DEFAULT_SECTION_ID,
+  addSection,
+  defaultSection,
+  deleteSection,
+  groupBySection,
+  moveSection,
+  projectSections,
+  putConversationInSection,
+  renameSection,
+  setSectionCollapsed,
+  setSectionColor,
+  storedSectionId,
+} from "../sections";
 import { TextPrompt } from "./Dialogs";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
@@ -51,7 +66,7 @@ import { ActivityCounts, ActivityDot } from "./Activity";
 import { countActivities, useActivities, type ActivityCount } from "../activity";
 import { hasSuggestion, useSuggestions } from "../suggestions";
 import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
-import { HUB_DROP_PREFIX, HubLinkIcon, HubsBlock, type HubActions } from "./Hubs";
+import { HubLinkIcon, HubsPanel, type HubActions } from "./Hubs";
 
 /** Info-bulle de l'icône 💡 d'un projet ou d'une catégorie. */
 const GROUP_SUGGESTION_HINT = "Une conversation a une suggestion";
@@ -62,7 +77,7 @@ const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((
 /** Conteneur « Non classés » (pas une vraie catégorie). */
 const NONE = "none";
 
-export type Selection = { kind: "project"; key: string } | { kind: "archives" } | null;
+export type Selection = { kind: "project"; key: string } | { kind: "hub"; id: string } | { kind: "archives" } | null;
 
 interface Props {
   config: Config;
@@ -87,20 +102,20 @@ interface Props {
   onOpenConversation: (s: SessionInfo, project: ProjectInfo) => void;
   /** Modifie la configuration (sections du projet courant). */
   onConfigChange: (change: (c: Config) => Config) => void;
-  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
+  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = section par défaut). */
   onNewConversation: (project: ProjectInfo, sectionId: string | null) => void;
   /** Ouvre les réglages. */
   onSettings?: () => void;
   /** « + Hub » : crée un hub. */
   onAddHub: () => void;
-  /** Actions sur les hubs (bloc en tête de la barre latérale). */
+  /** Actions sur les hubs (onglet Hubs). */
   hubActions: HubActions;
-  /** Conversation déposée sur un hub (glisser-déposer depuis la liste des conversations). */
+  /** Conversation déposée sur un hub (glisser un membre d'un hub à l'autre, onglet Hubs). */
   onDropOnHub: (hubId: string, sessionId: string) => void;
 }
 
-/** Vue de la barre latérale : liste des projets, ou conversations du projet courant. */
-type SidebarView = "projects" | "conversations";
+/** Vue de la barre latérale : projets, conversations du projet courant, ou hubs. */
+type SidebarView = "projects" | "conversations" | "hubs";
 
 // Vue et réduction mémorisées (confort local, sans importance si perdues).
 function loadPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -139,7 +154,7 @@ export function Sidebar(props: Props) {
   const { config, projects } = props;
   const [dragId, setDragId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
-  const [view, setViewState] = useState<SidebarView>(() => loadPref("sidebarView", ["projects", "conversations"], "projects"));
+  const [view, setViewState] = useState<SidebarView>(() => loadPref("sidebarView", ["projects", "conversations", "hubs"], "projects"));
   const [reduced, setReducedState] = useState(() => loadPref("sidebarReduced", ["0", "1"], "0") === "1");
   const setView = (v: SidebarView) => {
     setViewState(v);
@@ -258,18 +273,6 @@ export function Sidebar(props: Props) {
   const draggedCategory = dragId?.startsWith("c:") ? config.categories.find((c) => "c:" + c.id === dragId) : undefined;
   const selectedKey = props.selection?.kind === "project" && !props.searchActive ? props.selection.key : null;
 
-  // Hubs : en tête des deux vues (zones de dépôt pour les conversations de la vue « Conversations »).
-  const hubsBlock = (
-    <HubsBlock
-      config={config}
-      projects={projects}
-      activities={activities}
-      activeSessionId={props.activeSessionId ?? null}
-      collapsed={collapsed}
-      onToggle={toggleCollapsed}
-      actions={props.hubActions}
-    />
-  );
 
   const row = (p: ProjectInfo, container: string) => (
     <ProjectRow
@@ -311,6 +314,16 @@ export function Sidebar(props: Props) {
             }}
           >
             <MessagesSquare size={17} />
+          </button>
+          <button
+            className={"icon-btn" + (view === "hubs" ? " on" : "")}
+            title="Hubs"
+            onClick={() => {
+              setView("hubs");
+              setReduced(false);
+            }}
+          >
+            <Network size={17} />
           </button>
         </div>
       ) : (
@@ -355,6 +368,15 @@ export function Sidebar(props: Props) {
             >
               <MessagesSquare size={14} /> Conversations
             </button>
+            <button
+              role="tab"
+              aria-selected={view === "hubs"}
+              className={"sidebar-view" + (view === "hubs" ? " active" : "")}
+              onClick={() => setView("hubs")}
+              title="Conversations qui travaillent ensemble, même de projets différents"
+            >
+              <Network size={14} /> Hubs
+            </button>
           </div>
         </>
       )}
@@ -367,7 +389,19 @@ export function Sidebar(props: Props) {
           onOpen={props.onOpenConversation}
           onConfigChange={props.onConfigChange}
           onNew={props.onNewConversation}
-          hubs={hubsBlock}
+        />
+      )}
+      {!reduced && view === "hubs" && (
+        <HubsPanel
+          config={config}
+          projects={projects}
+          activities={activities}
+          activeSessionId={props.activeSessionId ?? null}
+          selectedHubId={props.selection?.kind === "hub" && !props.searchActive ? props.selection.id : null}
+          collapsed={collapsed}
+          onToggle={toggleCollapsed}
+          actions={props.hubActions}
+          onAddHub={props.onAddHub}
           onDropOnHub={props.onDropOnHub}
         />
       )}
@@ -377,14 +411,10 @@ export function Sidebar(props: Props) {
         <button className="btn small" onClick={props.onAddCategory}>
           <Plus size={14} /> Catégorie
         </button>
-        <button className="btn small" onClick={props.onAddHub} title="Regrouper des conversations qui travaillent ensemble, même de projets différents">
-          <Plus size={14} /> Hub
-        </button>
       </div>
 
       <div className="sidebar-scroll">
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
-          {hubsBlock}
           <SortableContext items={config.categories.map((c) => "c:" + c.id)} strategy={verticalListSortingStrategy}>
             {config.categories.map((cat) => {
               const list = categoryProjects(cat);
@@ -499,13 +529,9 @@ function ConversationsPanel(props: {
   activeSessionId: string | null;
   activities: ReadonlyMap<string, import("../activity").Activity>;
   onOpen: (s: SessionInfo, project: ProjectInfo) => void;
-  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = « Sans section »). */
+  /** Nouvelle conversation dans le terminal intégré, rangée dans la section (null = section par défaut). */
   onNew: (project: ProjectInfo, sectionId: string | null) => void;
   onConfigChange: (change: (c: Config) => Config) => void;
-  /** Bloc des hubs, affiché en tête (zones de dépôt `hub:<id>`). */
-  hubs: React.ReactNode;
-  /** Conversation déposée sur un hub. */
-  onDropOnHub: (hubId: string, sessionId: string) => void;
 }) {
   const { project, config } = props;
   const [dialog, setDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
@@ -515,11 +541,10 @@ function ConversationsPanel(props: {
   if (!project) return <div className="sidebar-scroll"><div className="empty-zone">Aucun projet courant</div></div>;
   const list = [...project.sessions].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
   const groups = groupBySection(config, project.key, list);
-  const hasSections = groups.sections.length > 0;
   const change = props.onConfigChange;
 
   const confirmDelete = async (section: Section) => {
-    const ok = await ask(`Supprimer la section « ${section.name} » ?\nSes conversations reviendront dans « Sans section ».`, {
+    const ok = await ask(`Supprimer la section « ${section.name} » ?\nSes conversations reviendront dans « ${defaultSection(config, project.key).name} ».`, {
       title: "Supprimer la section",
       kind: "warning",
       okLabel: "Supprimer",
@@ -530,7 +555,7 @@ function ConversationsPanel(props: {
 
   /**
    * Détection de la cible : une section glissée vise les autres sections ; une conversation
-   * glissée vise une zone de dépôt (corps d'une section ou « Sans section »), sinon un en-tête.
+   * glissée vise une zone de dépôt (corps d'une section), sinon un en-tête.
    */
   const collision: CollisionDetection = (args) => {
     if (String(args.active.id).startsWith("s:")) {
@@ -538,7 +563,7 @@ function ConversationsPanel(props: {
       return closestCenter({ ...args, droppableContainers: secs });
     }
     const hits = pointerWithin(args);
-    for (const prefix of [HUB_DROP_PREFIX, "zone:", "s:"]) {
+    for (const prefix of ["zone:", "s:"]) {
       const hit = hits.filter((h) => String(h.id).startsWith(prefix));
       if (hit.length) return hit;
     }
@@ -554,17 +579,13 @@ function ConversationsPanel(props: {
       if (o.startsWith("s:")) change((c) => moveSection(c, project.key, a.slice(2), o.slice(2)));
       return;
     }
-    if (o.startsWith(HUB_DROP_PREFIX)) {
-      if (a.startsWith("v:")) props.onDropOnHub(o.slice(HUB_DROP_PREFIX.length), a.slice(2));
-      return;
-    }
     const target = o.startsWith("zone:") ? o.slice(5) : o.startsWith("s:") ? o.slice(2) : null;
     if (!target || !a.startsWith("v:")) return;
     const id = a.slice(2);
-    const current = groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE;
+    const current = groups.sections.find((g) => g.sessions.some((s) => s.id === id))?.section.id ?? DEFAULT_SECTION_ID;
     if (current === target) return;
     change((c) => {
-      const next = putConversationInSection(c, project.key, target === NONE ? null : target, id);
+      const next = putConversationInSection(c, project.key, storedSectionId(target), id);
       const sec = projectSections(next, project.key).find((s) => s.id === target);
       // Section repliée : dépliée pour voir la conversation arriver.
       return sec?.collapsed ? setSectionCollapsed(next, project.key, sec.id, false) : next;
@@ -597,33 +618,10 @@ function ConversationsPanel(props: {
         <button className="btn small" onClick={() => setDialog({ kind: "new" })} title="Regrouper des conversations de ce projet">
           <ListPlus size={14} /> Section
         </button>
-        <button
-          className="btn small"
-          disabled={!project.path}
-          onClick={() => props.onNew(project, null)}
-          title="Nouvelle conversation dans le terminal intégré"
-        >
-          <Plus size={14} /> Conversation
-        </button>
       </div>
       <div className="sidebar-scroll">
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
-          {props.hubs}
           {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
-          {hasSections ? (
-            <Zone id={NONE} className="category unsectioned">
-              <div className="category-header static">
-                <span className="category-name">Sans section</span>
-                <span className="count">{groups.unsectioned.length}</span>
-              </div>
-              <div className="category-body">
-                {groups.unsectioned.map(convRow)}
-                {groups.unsectioned.length === 0 && <div className="empty-zone">Déposez ici pour sortir d'une section</div>}
-              </div>
-            </Zone>
-          ) : (
-            groups.unsectioned.map(convRow)
-          )}
           <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
             {groups.sections.map(({ section, sessions }) => (
               <SectionBlock
@@ -632,13 +630,13 @@ function ConversationsPanel(props: {
                 count={sessions.length}
                 onToggle={() => change((c) => setSectionCollapsed(c, project.key, section.id, !section.collapsed))}
                 onRename={() => setDialog({ kind: "rename", section })}
-                onDelete={() => confirmDelete(section)}
+                onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDelete(section)}
                 onColor={(color) => change((c) => setSectionColor(c, project.key, section.id, color))}
                 onNew={
                   project.path
                     ? () => {
                         if (section.collapsed) change((c) => setSectionCollapsed(c, project.key, section.id, false));
-                        props.onNew(project, section.id);
+                        props.onNew(project, storedSectionId(section.id));
                       }
                     : undefined
                 }
@@ -724,7 +722,8 @@ function SectionBlock(props: {
   count: number;
   onToggle: () => void;
   onRename: () => void;
-  onDelete: () => void;
+  /** Absent pour la section par défaut, qui ne se supprime pas. */
+  onDelete?: () => void;
   onColor: (c: string | null) => void;
   onNew?: () => void;
   children: React.ReactNode;
@@ -765,9 +764,11 @@ function SectionBlock(props: {
             <Pencil size={13} />
           </button>
           <ColorPicker compact value={section.color} onChange={props.onColor} title="Couleur de la section" />
-          <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
-            <Trash2 size={13} />
-          </button>
+          {props.onDelete && (
+            <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
+              <Trash2 size={13} />
+            </button>
+          )}
         </span>
       </div>
       <div ref={zone.setNodeRef} className="category-body">

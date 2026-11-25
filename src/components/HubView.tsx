@@ -1,19 +1,22 @@
-// « Vue Hub » (onglet ouvert en cliquant le nom d'un hub) : ses membres, avec rôle et pastille
-// d'état, puis le fil chronologique des messages entre ses conversations (« A → B : résumé »,
-// dépliable pour lire le message complet). Cliquer un nom ouvre la conversation.
+// « Vue Hub » : affichée dans la zone principale quand on clique un hub dans l'onglet Hubs de
+// la barre latérale, au même niveau que la vue d'un projet. En-tête (nom, actions du hub),
+// membres présentés comme les conversations d'un projet (pastille d'état, titre, rôle, projet,
+// date), puis le fil chronologique des messages entre ses conversations (« A → B : résumé »,
+// dépliable pour lire le message complet), repliable. Cliquer un membre ouvre la conversation.
 // Les messages sont lus dans les `.jsonl` des membres (voir src/messages.ts) ; l'app ne les
 // transporte pas.
 
 import { useMemo, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
 import type { Config, Hub, ProjectInfo } from "../api";
-import { projectName, formatDate } from "../util";
+import { colorStyle, projectName, formatDate, relativeDate } from "../util";
 import { useActivities } from "../activity";
 import { roleLabel, sortedMembers } from "../hubs";
 import { messageHeadline, useHubThread, type HubMessage, type HubPeer } from "../messages";
 import { renderMarkdown } from "../markdown";
 import { ActivityDot } from "./Activity";
-import { AddExecutorButton } from "./Hubs";
+import { HubHeaderActions, HubMemberControls, memberInfo, type HubActions } from "./Hubs";
+import { ConversationSuggestionIcon } from "./Suggestions";
 
 interface Props {
   hub: Hub;
@@ -21,20 +24,19 @@ interface Props {
   projects: Map<string, ProjectInfo>;
   /** Titre d'une conversation (projet ou archives), null si inconnue. */
   titleOf: (id: string) => string | null;
-  /** Ouvre une conversation par son identifiant (onglet, ou archives). */
-  onOpenConversation: (id: string) => void;
-  /** « + Exécutant » (grisé sans coordinateur). */
-  onAddExecutor: () => void;
+  /** Actions sur le hub et ses membres (ouvrir une conversation, renommer, « + Exécutant »…). */
+  actions: HubActions;
 }
 
-export function HubView({ hub, config, projects, titleOf, onOpenConversation, onAddExecutor }: Props) {
+export function HubView({ hub, config, projects, titleOf, actions }: Props) {
   const activities = useActivities();
   const thread = useHubThread(hub);
-  const projectOf = (id: string) => [...projects.values()].find((p) => p.sessions.some((s) => s.id === id)) ?? null;
+  const [threadOpen, setThreadOpen] = useState(true);
+  const open = actions.onOpenConversation;
 
   return (
     <main className="main hub-view">
-      <header className="project-header">
+      <header className="project-header" style={colorStyle(hub.color)}>
         <div className="project-title">
           <h2>
             <span className="hub-view-icon" aria-hidden>
@@ -43,7 +45,7 @@ export function HubView({ hub, config, projects, titleOf, onOpenConversation, on
             {hub.name}
           </h2>
           <div className="project-actions hub-view-actions">
-            <AddExecutorButton hub={hub} onClick={onAddExecutor} />
+            <HubHeaderActions hub={hub} actions={actions} />
           </div>
         </div>
         <p className="muted">
@@ -52,38 +54,67 @@ export function HubView({ hub, config, projects, titleOf, onOpenConversation, on
         </p>
       </header>
       <div className="session-list hub-view-body">
-        <h3 className="archives-heading">Membres</h3>
-        {hub.members.length === 0 && <p className="muted">Aucune conversation : « Ajouter à un hub… » sur une conversation, ou glissez-la sur le hub.</p>}
+        <h3 className="archives-heading">Conversations</h3>
+        {hub.members.length === 0 && <p className="muted">Aucune conversation : « Ajouter à un hub… » sur une conversation.</p>}
         {sortedMembers(hub).map((m) => {
-          const title = titleOf(m.conversationId);
-          const project = projectOf(m.conversationId);
-          const archived = !project && config.archives.some((a) => a.sessionId === m.conversationId);
+          const info = memberInfo(config, projects, m.conversationId);
+          const title = info.session?.title ?? info.archived?.title ?? titleOf(m.conversationId);
+          const date = info.session?.updatedAt ?? null;
           return (
-            <div key={m.conversationId} className={"session-row hub-view-member" + (title ? "" : " gone")}>
+            <div
+              key={m.conversationId}
+              className={"session-row hub-view-member" + (title ? "" : " gone")}
+              onClick={() => open(m.conversationId)}
+              title={info.session?.firstPrompt ?? "Ouvrir la conversation"}
+            >
               <ActivityDot activity={activities.get(m.conversationId)} />
               <div className="session-main">
-                <button className="link-btn session-title" onClick={() => onOpenConversation(m.conversationId)} title="Ouvrir la conversation">
+                <div className="session-title">
                   {title ?? "Conversation introuvable"}
-                </button>
-                <div className="session-meta">{project ? projectName(project, config) : archived ? "archivée" : ""}</div>
+                  <ConversationSuggestionIcon sessionId={m.conversationId} />
+                </div>
+                <div className="session-meta">
+                  {info.project ? (
+                    <span className="hub-view-project" style={colorStyle(config.projects[info.project.key]?.color)}>
+                      {projectName(info.project, config)}
+                    </span>
+                  ) : info.archived ? (
+                    <span>archivée</span>
+                  ) : null}
+                  {date && (
+                    <>
+                      <span className="dot">·</span>
+                      <span title={formatDate(date)}>{relativeDate(date)}</span>
+                    </>
+                  )}
+                </div>
               </div>
               <span className={"hub-role role-" + m.role}>{roleLabel(m.role)}</span>
+              <span className="session-actions hub-member-actions" onClick={(e) => e.stopPropagation()}>
+                <HubMemberControls hub={hub} member={m} actions={actions} />
+              </span>
             </div>
           );
         })}
 
-        <h3 className="archives-heading">Messages</h3>
-        {thread === null ? (
-          <p className="muted">Lecture des messages…</p>
-        ) : thread.length === 0 ? (
-          <p className="muted">Aucun message entre ces conversations pour l'instant.</p>
-        ) : (
-          <div className="hub-thread">
-            {thread.map((m, i) => (
-              <HubThreadItem key={i} message={m} titleOf={titleOf} onOpen={onOpenConversation} />
-            ))}
-          </div>
-        )}
+        <h3 className="archives-heading hub-thread-heading">
+          <button className="icon-btn bare" onClick={() => setThreadOpen((o) => !o)} title={threadOpen ? "Replier" : "Déplier"}>
+            {threadOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+          Messages {thread && thread.length > 0 && <span className="count">{thread.length}</span>}
+        </h3>
+        {threadOpen &&
+          (thread === null ? (
+            <p className="muted">Lecture des messages…</p>
+          ) : thread.length === 0 ? (
+            <p className="muted">Aucun message entre ces conversations pour l'instant.</p>
+          ) : (
+            <div className="hub-thread">
+              {thread.map((m, i) => (
+                <HubThreadItem key={i} message={m} titleOf={titleOf} onOpen={open} />
+              ))}
+            </div>
+          ))}
       </div>
     </main>
   );

@@ -1,21 +1,50 @@
-// Réglages de l'app (menu « … » de la barre latérale) : les suggestions (voir
-// src/suggestions.ts) — une case par règle pour la couper, et le seuil de la règle
-// « Contexte rempli » — et la consigne du résumé de passation du hand off (voir
+// Réglages de l'app (menu « … » de la barre latérale), en onglets latéraux comme les
+// réglages de Rider : affichage, les suggestions (voir
+// src/suggestions.ts) — une case par règle pour la couper, le seuil de la règle
+// « Contexte rempli », l'inactivité et le contexte de la règle « Conversation ancienne » — et
+// la consigne du résumé de passation du hand off (voir
 // src/handoff.ts). Chaque changement est enregistré tout de suite dans config.json.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Config } from "../api";
 import {
   CONTEXT_THRESHOLD_MAX,
   CONTEXT_THRESHOLD_MIN,
+  RULE_STALE,
+  STALE_MINUTES_MAX,
+  STALE_MINUTES_MIN,
+  STALE_PERCENT_MAX,
+  STALE_PERCENT_MIN,
   SUGGESTION_RULES,
   isRuleEnabled,
   setContextThreshold,
   setRuleEnabled,
+  setStaleMinutes,
+  setStalePercent,
   suggestionSettings,
 } from "../suggestions";
 import { DEFAULT_HANDOFF_PROMPT, handoffPrompt, setHandoffPrompt } from "../handoff";
 import { Modal } from "./Dialogs";
+
+/** Onglets des réglages, dans l'ordre de la liste latérale. */
+const SETTINGS_TABS = [
+  { id: "display", label: "Affichage" },
+  { id: "suggestions", label: "Suggestions" },
+  { id: "handoff", label: "Hand off" },
+] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
+
+/** Dernier onglet consulté (préférence locale, comme celles de la barre latérale). */
+const TAB_PREF = "claudeManager.settingsTab";
+function loadTab(): SettingsTab {
+  try {
+    const v = localStorage.getItem(TAB_PREF);
+    if (SETTINGS_TABS.some((t) => t.id === v)) return v as SettingsTab;
+  } catch {
+    /* stockage indisponible */
+  }
+  return "display";
+}
 
 export function SettingsDialog(props: { config: Config; onChange: (change: (c: Config) => Config) => void; onClose: () => void }) {
   const { config, onChange } = props;
@@ -58,14 +87,19 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
     props.onClose();
   };
 
-  return (
-    <Modal title="Réglages" onClose={close}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          close();
-        }}
-      >
+  const [tab, setTab] = useState<SettingsTab>(loadTab);
+  const chooseTab = (t: SettingsTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_PREF, t);
+    } catch {
+      /* préférence non mémorisée */
+    }
+  };
+
+  const panels: Record<SettingsTab, React.ReactNode> = {
+    display: (
+      <>
         <h3 className="settings-heading">Affichage</h3>
         <div className="settings-rule">
           <label className="checkbox">
@@ -78,6 +112,10 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
           </label>
           <small className="settings-rule-help">Projets situés dans un dossier temporaire, masqués par défaut dans la barre latérale.</small>
         </div>
+      </>
+    ),
+    suggestions: (
+      <>
         <h3 className="settings-heading">Suggestions</h3>
         <p className="settings-help">L'app propose une bonne pratique quand elle repère une situation (icône 💡). Elle n'agit jamais d'elle-même.</p>
         {Object.entries(SUGGESTION_RULES).map(([id, rule]) => {
@@ -105,9 +143,37 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
                   % du contexte
                 </label>
               )}
+              {id === RULE_STALE && (
+                <>
+                  <NumberSetting
+                    before="Inactive depuis plus de"
+                    after="minutes"
+                    min={STALE_MINUTES_MIN}
+                    max={STALE_MINUTES_MAX}
+                    step={5}
+                    value={suggestionSettings(config).staleMinutes}
+                    disabled={!enabled}
+                    onCommit={(n) => onChange((c) => setStaleMinutes(c, n))}
+                  />
+                  <NumberSetting
+                    before="Contexte rempli à"
+                    after="% ou plus"
+                    min={STALE_PERCENT_MIN}
+                    max={STALE_PERCENT_MAX}
+                    step={5}
+                    value={suggestionSettings(config).stalePercent}
+                    disabled={!enabled}
+                    onCommit={(n) => onChange((c) => setStalePercent(c, n))}
+                  />
+                </>
+              )}
             </div>
           );
         })}
+      </>
+    ),
+    handoff: (
+      <>
         <h3 className="settings-heading">Hand off</h3>
         <p className="settings-help">
           Consigne tapée dans la conversation pour lui faire rédiger son résumé de passation. La réponse devient le premier message de la nouvelle conversation.
@@ -133,6 +199,38 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
             Rétablir le texte par défaut
           </button>
         </div>
+      </>
+    ),
+  };
+
+  return (
+    <Modal title="Réglages" onClose={close} className="settings-modal">
+      <form
+        className="settings-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          close();
+        }}
+      >
+        <div className="settings-body">
+          <nav className="settings-tabs" role="tablist" aria-label="Catégories de réglages">
+            {SETTINGS_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                className={"settings-tab" + (tab === t.id ? " active" : "")}
+                onClick={() => chooseTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="settings-panel" role="tabpanel">
+            {panels[tab]}
+          </div>
+        </div>
         <div className="modal-actions">
           <button type="submit" className="btn primary">
             Fermer
@@ -140,5 +238,60 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Champ numérique d'un réglage, enregistré quand il perd le focus, sur Entrée, ou quand il
+ * disparaît (changement d'onglet, fermeture). Une saisie vide ou invalide est abandonnée ; la
+ * valeur est bornée.
+ */
+function NumberSetting(props: {
+  before: string;
+  after: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  disabled: boolean;
+  onCommit: (n: number) => void;
+}) {
+  const [text, setText] = useState(String(props.value));
+  useEffect(() => setText(String(props.value)), [props.value]);
+  const latest = useRef({ text, props });
+  latest.current = { text, props };
+  const commit = () => {
+    const { text, props: p } = latest.current;
+    const n = Number(text);
+    if (text.trim() === "" || !Number.isFinite(n)) {
+      setText(String(p.value));
+      return;
+    }
+    const clamped = Math.round(Math.min(p.max, Math.max(p.min, n)));
+    setText(String(clamped));
+    if (clamped !== p.value) p.onCommit(clamped);
+  };
+  useEffect(() => () => commit(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <label className="settings-inline">
+      {props.before}
+      <input
+        type="number"
+        min={props.min}
+        max={props.max}
+        step={props.step}
+        value={text}
+        disabled={props.disabled}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+      {props.after}
+    </label>
   );
 }

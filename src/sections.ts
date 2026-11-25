@@ -1,17 +1,37 @@
 // Sections d'un projet et préférences par conversation : fonctions pures qui renvoient
 // une nouvelle configuration (à passer à `updateConfig` dans App.tsx).
 //
-// Une conversation appartient au plus à une section ; sinon elle est « Sans section ».
+// Une conversation appartient au plus à une section ; sinon elle est dans la **section par
+// défaut** (« Général » tant qu'on ne la renomme pas). Côté données, une conversation de la
+// section par défaut n'est listée nulle part (`sectionId = null`) : l'entrée réservée
+// `DEFAULT_SECTION_ID` de la liste des sections ne garde que son nom, sa couleur, son repli et
+// sa position, et sa liste de conversations reste vide. Absente d'un projet, elle est en tête.
 // Les identifiants qui n'existent plus sont retirés par le backend (voir `prune_conversations`
 // dans config.rs) ; l'affichage ignore de toute façon les identifiants inconnus.
 
 import type { Config, ConversationPrefs, Section, SessionInfo } from "./api";
 import { newId } from "./util";
 
-/** Sections d'un projet, dans l'ordre d'affichage. */
+/** Identifiant réservé de la section par défaut (jamais supprimée). */
+export const DEFAULT_SECTION_ID = "default";
+export const DEFAULT_SECTION_NAME = "Général";
+
+export const isDefaultSection = (sectionId: string | null | undefined) => !sectionId || sectionId === DEFAULT_SECTION_ID;
+
+/** Identifiant à ranger dans une conversation : `null` pour la section par défaut. */
+export const storedSectionId = (sectionId: string | null | undefined): string | null => (isDefaultSection(sectionId) ? null : sectionId!);
+
+/** Sections d'un projet, dans l'ordre d'affichage, section par défaut comprise. */
 export function projectSections(cfg: Config, projectKey: string): Section[] {
-  return cfg.projects[projectKey]?.sections ?? [];
+  const list = cfg.projects[projectKey]?.sections ?? [];
+  if (list.some((s) => s.id === DEFAULT_SECTION_ID)) return list;
+  const def: Section = { id: DEFAULT_SECTION_ID, name: DEFAULT_SECTION_NAME, color: null, conversationIds: [], collapsed: false };
+  return [def, ...list];
 }
+
+/** Section par défaut du projet (nom, couleur, repli). */
+export const defaultSection = (cfg: Config, projectKey: string): Section =>
+  projectSections(cfg, projectKey).find((s) => s.id === DEFAULT_SECTION_ID)!;
 
 /** Remplace les sections d'un projet. */
 function withSections(cfg: Config, projectKey: string, sections: Section[]): Config {
@@ -41,9 +61,9 @@ export const setSectionColor = (cfg: Config, projectKey: string, sectionId: stri
 export const setSectionCollapsed = (cfg: Config, projectKey: string, sectionId: string, collapsed: boolean) =>
   patchSection(cfg, projectKey, sectionId, { collapsed });
 
-/** Supprime une section ; ses conversations retournent dans « Sans section ». */
+/** Supprime une section ; ses conversations retournent dans la section par défaut, qui ne se supprime pas. */
 export const deleteSection = (cfg: Config, projectKey: string, sectionId: string) =>
-  withSections(cfg, projectKey, projectSections(cfg, projectKey).filter((s) => s.id !== sectionId));
+  sectionId === DEFAULT_SECTION_ID ? cfg : withSections(cfg, projectKey, projectSections(cfg, projectKey).filter((s) => s.id !== sectionId));
 
 /** Déplace une section à la place d'une autre. */
 export function moveSection(cfg: Config, projectKey: string, sectionId: string, overId: string): Config {
@@ -57,9 +77,9 @@ export function moveSection(cfg: Config, projectKey: string, sectionId: string, 
 }
 
 /**
- * Range une conversation dans une section du projet (`null` = « Sans section »).
- * Elle est d'abord retirée de toute autre section, de ce projet comme des autres.
- * Sans effet si la section n'existe pas : la conversation reste alors « Sans section ».
+ * Range une conversation dans une section du projet (`null` ou `DEFAULT_SECTION_ID` = section
+ * par défaut). Elle est d'abord retirée de toute autre section, de ce projet comme des autres.
+ * Si la section n'existe pas, la conversation reste dans la section par défaut.
  *
  * À utiliser aussi pour une conversation tout juste créée (nouvelle conversation lancée
  * depuis une section).
@@ -75,7 +95,7 @@ export function putConversationInSection(cfg: Config, projectKey: string, sectio
     };
   }
   let next: Config = { ...cfg, projects };
-  if (sectionId && projectSections(next, projectKey).some((s) => s.id === sectionId)) {
+  if (!isDefaultSection(sectionId) && projectSections(next, projectKey).some((s) => s.id === sectionId)) {
     next = withSections(
       next,
       projectKey,
@@ -87,23 +107,22 @@ export function putConversationInSection(cfg: Config, projectKey: string, sectio
   return next;
 }
 
-/** Section d'une conversation dans un projet, ou `null` (« Sans section »). */
+/** Section d'une conversation dans un projet, ou `null` (section par défaut). */
 export function sectionOf(cfg: Config, projectKey: string, conversationId: string): Section | null {
   return projectSections(cfg, projectKey).find((s) => s.conversationIds.includes(conversationId)) ?? null;
 }
 
 /**
- * Répartit des conversations : d'abord « Sans section », puis chaque section dans l'ordre.
- * L'ordre des conversations (le plus récent d'abord) est conservé dans chaque groupe.
+ * Répartit des conversations entre les sections, dans l'ordre d'affichage ; la section par
+ * défaut reçoit celles qui ne sont rangées nulle part. L'ordre des conversations (le plus
+ * récent d'abord) est conservé dans chaque groupe.
  */
 export function groupBySection(cfg: Config, projectKey: string, sessions: SessionInfo[]) {
   const sections = projectSections(cfg, projectKey);
   const owner = new Map<string, string>();
   for (const s of sections) for (const id of s.conversationIds) if (!owner.has(id)) owner.set(id, s.id);
-  return {
-    unsectioned: sessions.filter((s) => !owner.has(s.id)),
-    sections: sections.map((section) => ({ section, sessions: sessions.filter((s) => owner.get(s.id) === section.id) })),
-  };
+  const ownerOf = (id: string) => owner.get(id) ?? DEFAULT_SECTION_ID;
+  return { sections: sections.map((section) => ({ section, sessions: sessions.filter((s) => ownerOf(s.id) === section.id) })) };
 }
 
 // ---- Préférences par conversation -----------------------------------------------------

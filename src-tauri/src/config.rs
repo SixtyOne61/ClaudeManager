@@ -48,7 +48,8 @@ pub struct ProjectPrefs {
     /// (ils n'ont pas encore de conversation, donc pas de `cwd` à lire).
     pub path: Option<String>,
     /// Sections du projet, dans l'ordre d'affichage. Les conversations absentes de toutes
-    /// les sections sont affichées sous « Sans section ».
+    /// les sections sont dans la section par défaut (entrée réservée `default` de
+    /// cette liste, qui ne garde que son nom, sa couleur, son repli et sa position).
     pub sections: Vec<Section>,
     /// Projet archivé : masqué de la barre latérale, ses conversations sont dans les archives.
     pub archived: Option<ProjectArchive>,
@@ -107,6 +108,10 @@ pub struct Dismissal {
 
 /// Seuil par défaut de la règle « Contexte rempli », en pourcentage.
 pub const DEFAULT_CONTEXT_THRESHOLD: u32 = 60;
+/// Règle « Conversation ancienne » (détectée par l'interface, voir src/suggestions.ts) :
+/// inactivité minimale en minutes et contexte minimal en pourcentage, par défaut.
+pub const DEFAULT_STALE_MINUTES: u32 = 60;
+pub const DEFAULT_STALE_PERCENT: u32 = 30;
 
 /// Réglages des suggestions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,11 +121,20 @@ pub struct SuggestionSettings {
     pub disabled: Vec<String>,
     /// Seuil de la règle « Contexte rempli », en pourcentage.
     pub context_threshold: u32,
+    /// Règle « Conversation ancienne » : inactivité minimale, en minutes.
+    pub stale_minutes: u32,
+    /// Règle « Conversation ancienne » : contexte minimal, en pourcentage.
+    pub stale_percent: u32,
 }
 
 impl Default for SuggestionSettings {
     fn default() -> Self {
-        Self { disabled: Vec::new(), context_threshold: DEFAULT_CONTEXT_THRESHOLD }
+        Self {
+            disabled: Vec::new(),
+            context_threshold: DEFAULT_CONTEXT_THRESHOLD,
+            stale_minutes: DEFAULT_STALE_MINUTES,
+            stale_percent: DEFAULT_STALE_PERCENT,
+        }
     }
 }
 
@@ -433,6 +447,16 @@ mod tests {
     }
 
     #[test]
+    fn stale_settings_default_when_missing() {
+        let s: SuggestionSettings = serde_json::from_str(r#"{"disabled":["hub"],"contextThreshold":70}"#).unwrap();
+        assert_eq!(s.context_threshold, 70);
+        assert_eq!((s.stale_minutes, s.stale_percent), (DEFAULT_STALE_MINUTES, DEFAULT_STALE_PERCENT));
+        let back = serde_json::to_value(&s).unwrap();
+        assert_eq!(back["staleMinutes"], 60);
+        assert_eq!(back["stalePercent"], 30);
+    }
+
+    #[test]
     fn sections_and_conversation_prefs_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("config.json");
@@ -489,7 +513,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("config.json");
         let mut cfg = Config {
-            suggestions: SuggestionSettings { disabled: vec!["context".into()], context_threshold: 70 },
+            suggestions: SuggestionSettings { disabled: vec!["context".into()], context_threshold: 70, ..Default::default() },
             ..Default::default()
         };
         cfg.conversations.entry("a".into()).or_default().dismissed_suggestions.insert("context".into(), Dismissal { level: 80, at: 5 });

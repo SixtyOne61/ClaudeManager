@@ -25,13 +25,23 @@ import { ArchivesView } from "./components/ArchivesView";
 import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
 import { NewProjectDialog, TextPrompt, WorktreeOfferDialog } from "./components/Dialogs";
 import { newId, projectName, worktreePath } from "./util";
-import { HUB_TAB_PREFIX, TerminalStack, TerminalTabBar, hubTabId, type OpenTerminal } from "./components/TerminalTabs";
+import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
 import { HubView } from "./components/HubView";
 import { ConversationLinksContext, messagesApi } from "./messages";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree, worktreeNameError } from "./pty";
 import { putConversationInSection } from "./sections";
 import { getActivities, getActivity, interruptionWarning } from "./activity";
-import { ACTION_HUB, RULE_WORKTREE, dismissSuggestion, hubSuggestionData, isRuleEnabled, type Suggestion } from "./suggestions";
+import {
+  ACTION_HUB,
+  RULE_WORKTREE,
+  dismissStale,
+  dismissSuggestion,
+  hubSuggestionData,
+  isLocalSuggestion,
+  isRuleEnabled,
+  noteTyping,
+  type Suggestion,
+} from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
 import { ExecutorDialog, HubDialog, type ExecutorRequest, type HubActions, type HubChoice } from "./components/Hubs";
 import { activeHubs, coordinatorOf, defaultRole, executorBlocker, executorFirstMessage } from "./hubs";
@@ -94,8 +104,6 @@ export default function App() {
   // Terminal intégré : conversations ouvertes (onglets) et onglet affiché (null = vue projet).
   const [terminals, setTerminals] = useState<OpenTerminal[]>([]);
   const [activeTerminal, setActiveTerminal] = useState<string | null>(null);
-  // Hubs ouverts dans un onglet (Vue Hub) ; l'onglet affiché est alors `hub:<id>` (activeTerminal).
-  const [hubTabs, setHubTabs] = useState<string[]>([]);
   // Nouvelles conversations lancées dans le terminal intégré dont le fichier n'existe pas
   // encore : affichées tout de suite dans leur projet, avec un titre provisoire.
   const [pending, setPending] = useState<SessionInfo[]>([]);
@@ -224,21 +232,23 @@ export default function App() {
 
   // Changer d'onglet de conversation : le projet sélectionné (surligné dans la barre latérale,
   // affiché au retour sur « Projets ») devient celui de la conversation.
+  // Un hub sélectionné reste sélectionné quand on ouvre l'une de ses conversations : l'onglet
+  // « Projets » y ramène.
   useEffect(() => {
     if (activeTerminal === null) return;
     const key = [...projects.values()].find((p) => p.sessions.some((s) => s.id === activeTerminal))?.key;
-    if (key) setSelection((sel) => (sel?.kind === "project" && sel.key === key ? sel : { kind: "project", key }));
-  }, [activeTerminal, projects]);
+    if (!key) return;
+    setSelection((sel) => {
+      if (sel?.kind === "project" && sel.key === key) return sel;
+      if (sel?.kind === "hub" && config?.hubs?.some((h) => h.id === sel.id && h.members.some((m) => m.conversationId === activeTerminal))) return sel;
+      return { kind: "project", key };
+    });
+  }, [activeTerminal, projects, config]);
 
-  // Un hub supprimé ou archivé ferme son onglet.
+  // Un hub supprimé ou archivé n'est plus affiché.
   useEffect(() => {
     if (!config) return;
-    const alive = new Set(activeHubs(config).map((h) => h.id));
-    setHubTabs((tabs) => (tabs.every((id) => alive.has(id)) ? tabs : tabs.filter((id) => alive.has(id))));
-    setActiveTerminal((a) => {
-      const hub = hubTabId(a);
-      return hub && !alive.has(hub) ? null : a;
-    });
+    setSelection((sel) => (sel?.kind === "hub" && !activeHubs(config).some((h) => h.id === sel.id) ? null : sel));
   }, [config]);
 
   if (!config || !scan) {
@@ -964,16 +974,12 @@ export default function App() {
     if (!(await sendWhenReady(id, text))) toast("L'exécutant n'a pas démarré : sa tâche n'a pas été envoyée.", true);
   };
 
-  /** Ouvre la « Vue Hub » dans un onglet (ou bascule sur son onglet). */
+  /** Ouvre la « Vue Hub » dans la zone principale, comme un projet. */
   const openHub = (hubId: string) => {
-    setHubTabs((tabs) => (tabs.includes(hubId) ? tabs : [...tabs, hubId]));
     setSearchOpen(false);
-    setActiveTerminal(HUB_TAB_PREFIX + hubId);
-  };
-
-  const closeHubTab = (hubId: string) => {
-    setHubTabs((tabs) => tabs.filter((id) => id !== hubId));
-    setActiveTerminal((a) => (a === HUB_TAB_PREFIX + hubId ? null : a));
+    setSearchFocus(null);
+    setSelection({ kind: "hub", id: hubId });
+    setActiveTerminal(null);
   };
 
   const hubActions: HubActions = {
@@ -1017,8 +1023,7 @@ export default function App() {
     activeTerminal !== null ? [...projects.values()].find((p) => p.sessions.some((s) => s.id === activeTerminal)) : undefined;
   const currentProject = activeProject ?? selectedProject;
 
-  const openHubs = hubTabs.flatMap((id) => activeHubs(config).filter((h) => h.id === id));
-  const shownHub = openHubs.find((h) => h.id === hubTabId(activeTerminal)) ?? null;
+  const shownHub = selection?.kind === "hub" ? (activeHubs(config).find((h) => h.id === selection.id) ?? null) : null;
   const conversationLinks = { titleOf: conversationTitle, open: openConversationById };
 
   const defaultCategory = selectedProject ? config.categories.find((c) => c.projectKeys.includes(selectedProject.key))?.id ?? null : null;
@@ -1060,9 +1065,9 @@ export default function App() {
       />
 
       <div className="main-column">
-      <TerminalTabBar terminals={tabs} hubs={openHubs} onCloseHub={closeHubTab} active={activeTerminal} onSelect={(id) => {
-        // « Projets » : retour au projet de la conversation qu'on quitte.
-        if (id === null && activeProject) {
+      <TerminalTabBar terminals={tabs} home={shownHub ? "hub" : "project"} active={activeTerminal} onSelect={(id) => {
+        // « Projets » : retour au projet de la conversation qu'on quitte (ou au hub affiché).
+        if (id === null && activeProject && !shownHub) {
           setSearchOpen(false);
           setSelection({ kind: "project", key: activeProject.key });
         }
@@ -1074,22 +1079,14 @@ export default function App() {
         onClose={closeTerminal}
         onStarted={terminalStarted}
         focus={searchFocus}
-        onDismissSuggestion={(s) => updateConfig((c) => dismissSuggestion(c, s))}
+        onDismissSuggestion={(s) => (isLocalSuggestion(s) ? dismissStale(s.sessionId) : updateConfig((c) => dismissSuggestion(c, s)))}
+        onTyping={(id) => noteTyping(id, config)}
         suggestionActions={{ [ACTION_HUB]: { run: acceptHubSuggestion } }}
         onHandoff={startHandoff}
         lineageOf={lineageOf}
         onOpenConversation={openConversationById}
       />
-      {shownHub ? (
-        <HubView
-          hub={shownHub}
-          config={config}
-          projects={projects}
-          titleOf={conversationTitle}
-          onOpenConversation={openConversationById}
-          onAddExecutor={() => hubActions.onAddExecutor?.(shownHub)}
-        />
-      ) : activeTerminal !== null ? null : searchOpen ? (
+      {activeTerminal !== null ? null : searchOpen ? (
         <GlobalSearch
           config={config}
           projects={projects}
@@ -1099,6 +1096,8 @@ export default function App() {
           onClose={() => setSearchOpen(false)}
           onError={showError}
         />
+      ) : shownHub ? (
+        <HubView hub={shownHub} config={config} projects={projects} titleOf={conversationTitle} actions={hubActions} />
       ) : selection?.kind === "archives" ? (
         <ArchivesView
           config={config}

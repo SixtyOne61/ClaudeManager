@@ -1,5 +1,6 @@
 // Vue d'un projet : en-tête (nom, couleur, catégorie, actions) et liste des conversations,
-// regroupées en sections (« Sans section » en haut, puis les sections dans l'ordre choisi).
+// regroupées en sections dans l'ordre choisi, dont la section par défaut (voir src/sections.ts).
+// Chaque en-tête de section a une case pour sélectionner toutes ses conversations.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -45,8 +46,10 @@ import {
 import { api, errorMessage, type Config, type ProjectInfo, type Section, type SessionInfo } from "../api";
 import { colorStyle, formatDate, isMac, modKey, projectName, relativeDate } from "../util";
 import {
+  DEFAULT_SECTION_ID,
   addSection,
   conversationColor,
+  defaultSection,
   deleteSection,
   groupBySection,
   moveSection,
@@ -56,6 +59,7 @@ import {
   setConversationColor,
   setSectionCollapsed,
   setSectionColor,
+  storedSectionId,
 } from "../sections";
 import { ColorPicker } from "./ColorPicker";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
@@ -67,9 +71,6 @@ import { handoffBlocker, useHandoffState } from "../handoff";
 import { hubHint, hubOf } from "../hubs";
 import { HubLinkIcon } from "./Hubs";
 
-/** Zone « Sans section » (pas une vraie section). */
-const NONE = "none";
-
 interface Props {
   project: ProjectInfo;
   config: Config;
@@ -78,7 +79,7 @@ interface Props {
   onLaunch: (sessionId?: string, path?: string) => void;
   /**
    * Nouvelle conversation dans le terminal intégré, rangée dans `sectionId` : bouton « + »
-   * de l'en-tête d'une section, ou `null` (« Sans section ») pour le bouton principal.
+   * de l'en-tête d'une section, ou `null` (section par défaut) pour le bouton principal.
    * `worktree` : dans un nouveau worktree, avec ce nom (vide = nom choisi par Claude Code).
    */
   onNew: (sectionId: string | null, worktree?: string) => void;
@@ -183,7 +184,7 @@ export function ProjectView(props: Props) {
       cancelled = true;
     };
   }, [p.path, canLaunch]);
-  /** Section de la nouvelle conversation en worktree dont on demande le nom (null = « Sans section »). */
+  /** Section de la nouvelle conversation en worktree dont on demande le nom (null = section par défaut). */
   const [worktreeFor, setWorktreeFor] = useState<{ sectionId: string | null } | null>(null);
 
   // ---- Sections -------------------------------------------------------------------------
@@ -191,7 +192,9 @@ export function ProjectView(props: Props) {
   const [sectionDialog, setSectionDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const groups = useMemo(() => groupBySection(config, p.key, sessions), [config, p.key, sessions]);
-  const hasSections = groups.sections.length > 0;
+  const defaultName = defaultSection(config, p.key).name;
+  /** Projet sans aucune conversation ni autre section : un message plutôt qu'une section vide. */
+  const empty = sessions.length === 0 && groups.sections.length === 1;
   const filtering = query.trim().length > 0;
   const change = props.onConfigChange;
 
@@ -220,7 +223,7 @@ export function ProjectView(props: Props) {
 
   /** Conversations sélectionnables, dans l'ordre affiché (sections repliées exclues). */
   const displayed = useMemo(
-    () => [...groups.unsectioned, ...groups.sections.flatMap((g) => (g.section.collapsed ? [] : g.sessions))].filter((s) => !s.provisional),
+    () => groups.sections.flatMap((g) => (g.section.collapsed ? [] : g.sessions)).filter((s) => !s.provisional),
     [groups],
   );
   const allDisplayedSelected = displayed.length > 0 && displayed.every((s) => selected.has(s.id));
@@ -230,6 +233,26 @@ export function ProjectView(props: Props) {
     setAnchor(null);
   };
   const selectAll = () => setSelected((sel) => new Set([...sel, ...displayed.map((s) => s.id)]));
+
+  /** Case d'une section : état (aucune / partielle / toutes) et bascule, section repliée comprise. */
+  const sectionSelectable = (list: SessionInfo[]) => list.filter((s) => !s.provisional);
+  const sectionSelectState = (list: SessionInfo[]): "none" | "some" | "all" => {
+    const ids = sectionSelectable(list);
+    const n = ids.filter((s) => selected.has(s.id)).length;
+    return n === 0 ? "none" : n === ids.length ? "all" : "some";
+  };
+  const toggleSection = (list: SessionInfo[]) => {
+    const ids = sectionSelectable(list).map((s) => s.id);
+    const all = sectionSelectState(list) === "all";
+    setSelected((sel) => {
+      const next = new Set(sel);
+      for (const id of ids) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  };
 
   /** Clic sur la case à cocher (`toggle`) ou sur la ligne d'une conversation. */
   const selectClick = (s: SessionInfo, e: React.MouseEvent, toggle: boolean) => {
@@ -264,12 +287,12 @@ export function ProjectView(props: Props) {
   }, [selecting]);
 
   /**
-   * Range des conversations dans une section (`null` = « Sans section ») et la déplie, pour
+   * Range des conversations dans une section (`null` = section par défaut) et la déplie, pour
    * que les conversations déplacées (souvent encore sélectionnées) restent visibles.
    */
   const putInSection = (cfg: Config, sectionId: string | null, ids: string[]) => {
-    const next = ids.reduce((c, id) => putConversationInSection(c, p.key, sectionId, id), cfg);
-    const target = sectionId ? projectSections(next, p.key).find((s) => s.id === sectionId) : undefined;
+    const next = ids.reduce((c, id) => putConversationInSection(c, p.key, storedSectionId(sectionId), id), cfg);
+    const target = projectSections(next, p.key).find((s) => s.id === (sectionId ?? DEFAULT_SECTION_ID));
     return target?.collapsed ? setSectionCollapsed(next, p.key, target.id, false) : next;
   };
 
@@ -281,7 +304,7 @@ export function ProjectView(props: Props) {
   const [reveal, setReveal] = useState<{ sectionId: string; ids: string[]; block: ScrollLogicalPosition } | null>(null);
   const moveTo = (sectionId: string | null, ids: string[], block: ScrollLogicalPosition) => {
     change((c) => putInSection(c, sectionId, ids));
-    setReveal({ sectionId: sectionId ?? NONE, ids, block });
+    setReveal({ sectionId: sectionId ?? DEFAULT_SECTION_ID, ids, block });
   };
 
   useEffect(() => {
@@ -316,7 +339,7 @@ export function ProjectView(props: Props) {
 
   /**
    * Détection de la cible : une section glissée vise les autres sections ; une conversation
-   * glissée vise une zone de dépôt (corps d'une section ou « Sans section »), sinon un en-tête.
+   * glissée vise une zone de dépôt (corps d'une section), sinon un en-tête.
    */
   const collision: CollisionDetection = (args) => {
     if (String(args.active.id).startsWith("s:")) {
@@ -344,10 +367,10 @@ export function ProjectView(props: Props) {
     if (!target || !a.startsWith("v:")) return;
     // Une conversation sélectionnée emmène toute la sélection.
     const ids = draggedIds(a.slice(2)).filter(
-      (id) => (groups.sections.find((g) => g.section.conversationIds.includes(id))?.section.id ?? NONE) !== target,
+      (id) => (groups.sections.find((g) => g.sessions.some((s) => s.id === id))?.section.id ?? DEFAULT_SECTION_ID) !== target,
     );
     if (ids.length === 0) return;
-    moveTo(target === NONE ? null : target, ids, "nearest");
+    moveTo(storedSectionId(target), ids, "nearest");
   };
 
   /** Conversations déplacées en glissant `id` : toute la sélection si elle en fait partie. */
@@ -356,7 +379,7 @@ export function ProjectView(props: Props) {
   const confirmDeleteSection = async (section: Section) => {
     const n = section.conversationIds.length;
     const ok = await ask(
-      `Supprimer la section « ${section.name} » ?` + (n ? `\nSes conversations reviendront dans « Sans section ».` : ""),
+      `Supprimer la section « ${section.name} » ?` + (n ? `\nSes conversations reviendront dans « ${defaultName} ».` : ""),
       { title: "Supprimer la section", kind: "warning", okLabel: "Supprimer", cancelLabel: "Annuler" },
     );
     if (ok) change((c) => deleteSection(c, p.key, section.id));
@@ -413,7 +436,7 @@ export function ProjectView(props: Props) {
             className="btn primary"
             disabled={!canLaunch}
             onClick={() => props.onNew(null)}
-            title={"Lance « claude » dans le terminal intégré" + (hasSections ? " (rangée dans « Sans section »)" : "")}
+            title={`Lance « claude » dans le terminal intégré (rangée dans « ${defaultName} »)`}
           >
             <MessageSquarePlus size={15} /> Nouvelle conversation
           </button>
@@ -486,7 +509,7 @@ export function ProjectView(props: Props) {
       </div>
 
       <div className="session-list">
-        {sessions.length === 0 && !hasSections && (
+        {empty && (
           <div className="empty">{p.sessions.length === 0 ? "Aucune conversation dans ce projet." : "Aucune conversation ne correspond à la recherche."}</div>
         )}
         <DndContext
@@ -496,36 +519,26 @@ export function ProjectView(props: Props) {
           onDragEnd={onDragEnd}
           onDragCancel={() => setDragId(null)}
         >
-          {hasSections ? (
-            <SessionZone id={NONE} className="section unsectioned">
-              <div className="section-header static">
-                <span className="section-name">Sans section</span>
-                <span className="count">{groups.unsectioned.length}</span>
-              </div>
-              {groups.unsectioned.map(row)}
-              {groups.unsectioned.length === 0 && <div className="empty-zone">{filtering ? "Aucun résultat" : "Déposez ici une conversation pour la sortir de sa section"}</div>}
-            </SessionZone>
-          ) : (
-            groups.unsectioned.map(row)
-          )}
-
           <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
             {groups.sections.map(({ section, sessions: list }) =>
-              filtering && list.length === 0 ? null : (
+              (filtering || empty) && list.length === 0 ? null : (
                 <SectionBlock
                   key={section.id}
                   section={section}
                   count={list.length}
+                  selectState={sectionSelectState(list)}
+                  selecting={selecting}
+                  onSelectAll={sectionSelectable(list).length ? () => toggleSection(list) : undefined}
                   onToggle={() => change((c) => setSectionCollapsed(c, p.key, section.id, !section.collapsed))}
                   onRename={() => setSectionDialog({ kind: "rename", section })}
-                  onDelete={() => confirmDeleteSection(section)}
+                  onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDeleteSection(section)}
                   onColor={(color) => change((c) => setSectionColor(c, p.key, section.id, color))}
                   onNew={
                     canLaunch
                       ? () => {
                           // Section repliée : dépliée pour voir la nouvelle conversation.
                           if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
-                          props.onNew(section.id);
+                          props.onNew(storedSectionId(section.id));
                         }
                       : undefined
                   }
@@ -533,7 +546,7 @@ export function ProjectView(props: Props) {
                     canLaunch && isGit
                       ? () => {
                           if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
-                          setWorktreeFor({ sectionId: section.id });
+                          setWorktreeFor({ sectionId: storedSectionId(section.id) });
                         }
                       : undefined
                   }
@@ -574,7 +587,7 @@ export function ProjectView(props: Props) {
           <span className="selection-spacer" />
           <SectionMenu
             sections={projectSections(config, p.key)}
-            onPick={(sectionId) => moveTo(sectionId, selectedSessions.map((s) => s.id), "center")}
+            onPick={(sectionId) => moveTo(storedSectionId(sectionId), selectedSessions.map((s) => s.id), "center")}
             onNew={() => setSectionForSelection(true)}
           />
           <ColorPicker
@@ -647,22 +660,19 @@ export function ProjectView(props: Props) {
   );
 }
 
-/** Zone de dépôt des conversations (« Sans section » ou corps d'une section). */
-function SessionZone({ id, className, children }: { id: string; className: string; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: "zone:" + id });
-  return (
-    <section ref={setNodeRef} data-section-id={id} className={className + (isOver ? " drop-over" : "")}>
-      {children}
-    </section>
-  );
-}
-
 function SectionBlock(props: {
   section: Section;
   count: number;
+  /** Conversations de la section dans la sélection : aucune, une partie, toutes. */
+  selectState: "none" | "some" | "all";
+  /** Une sélection existe : la case reste visible. */
+  selecting: boolean;
+  /** Coche ou décoche toutes les conversations de la section (absent si elle n'en a pas). */
+  onSelectAll?: () => void;
   onToggle: () => void;
   onRename: () => void;
-  onDelete: () => void;
+  /** Absent pour la section par défaut, qui ne se supprime pas. */
+  onDelete?: () => void;
   onColor: (c: string | null) => void;
   /** Nouvelle conversation dans cette section (absent si le projet ne peut pas lancer Claude). */
   onNew?: () => void;
@@ -687,8 +697,14 @@ function SectionBlock(props: {
       style={style}
       className={"section" + (section.color ? " colored" : "") + (zone.isOver || sortable.isOver ? " drop-over" : "")}
     >
-      <div className="section-header" style={colorStyle(section.color)} {...sortable.attributes} {...sortable.listeners}>
+      <div
+        className={"section-header" + (props.selecting || props.selectState !== "none" ? " selecting" : "")}
+        style={colorStyle(section.color)}
+        {...sortable.attributes}
+        {...sortable.listeners}
+      >
         <GripVertical size={14} className="grip" />
+        {props.onSelectAll && <SectionCheck state={props.selectState} onToggle={props.onSelectAll} onPointerDown={stop} />}
         <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? "Déplier" : "Replier"}>
           {section.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
@@ -711,9 +727,11 @@ function SectionBlock(props: {
             <Pencil size={13} />
           </button>
           <ColorPicker compact value={section.color} onChange={props.onColor} title="Couleur de la section" />
-          <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
-            <Trash2 size={13} />
-          </button>
+          {props.onDelete && (
+            <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
+              <Trash2 size={13} />
+            </button>
+          )}
         </span>
       </div>
       <div ref={zone.setNodeRef} className="section-body">
@@ -721,6 +739,29 @@ function SectionBlock(props: {
         {!section.collapsed && props.count === 0 && <div className="empty-zone">Déposez des conversations ici</div>}
       </div>
     </section>
+  );
+}
+
+/** Case à trois états de l'en-tête d'une section : sélectionne toutes ses conversations. */
+function SectionCheck(props: { state: "none" | "some" | "all"; onToggle: () => void; onPointerDown: (e: React.PointerEvent) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = props.state === "some";
+  }, [props.state]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="section-check"
+      checked={props.state === "all"}
+      readOnly
+      title={props.state === "all" ? "Désélectionner les conversations de la section" : "Sélectionner toutes les conversations de la section"}
+      onPointerDown={props.onPointerDown}
+      onClick={(e) => {
+        e.stopPropagation();
+        props.onToggle();
+      }}
+    />
   );
 }
 
@@ -755,9 +796,6 @@ function SectionMenu(props: { sections: Section[]; onPick: (sectionId: string | 
       </button>
       {open && (
         <div className="popover menu">
-          <button className="menu-item" onClick={() => pick(() => props.onPick(null))}>
-            Sans section
-          </button>
           {props.sections.map((s) => (
             <button key={s.id} className="menu-item" onClick={() => pick(() => props.onPick(s.id))}>
               <span className="swatch-dot" style={{ background: s.color ?? "transparent" }} /> {s.name}

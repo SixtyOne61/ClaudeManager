@@ -128,6 +128,10 @@ export interface SuggestionSettings {
   disabled: string[];
   /** Seuil de la règle « Contexte rempli », en pourcentage. */
   contextThreshold: number;
+  /** Règle « Conversation ancienne » : inactivité minimale, en minutes (absente : 60). */
+  staleMinutes?: number;
+  /** Règle « Conversation ancienne » : contexte minimal, en pourcentage (absent : 30). */
+  stalePercent?: number;
 }
 
 /** Lien d'un hand off, rangé sous l'identifiant de la parente (voir src/handoff.ts). */
