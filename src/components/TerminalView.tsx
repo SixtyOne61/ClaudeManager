@@ -31,7 +31,7 @@ import { GrillBackBar, GrillForm, useGrillMode } from "./Grill";
 import { pendingRound } from "../grill";
 import type { SearchFocus } from "./GlobalSearch";
 import { SuggestionBanners, type SuggestionActionHandler } from "./Suggestions";
-import { ACTION_HAND_OFF, type Suggestion } from "../suggestions";
+import { ACTION_HAND_OFF, dismissStale, forgetStale, type Suggestion } from "../suggestions";
 import { cancelHandoff, useHandoffBlocker, useHandoffState, type HandoffLineage } from "../handoff";
 
 interface Props {
@@ -55,6 +55,8 @@ interface Props {
   lineage?: HandoffLineage;
   /** Ouvre une conversation par son identifiant (onglet, ou archives). */
   onOpenConversation?: (sessionId: string) => void;
+  /** L'utilisateur tape dans le terminal ou la zone de saisie (règle « conversation ancienne »). */
+  onTyping?: () => void;
 }
 
 type RunState = { kind: "starting" } | { kind: "running" } | { kind: "exited"; code: number | null } | { kind: "error"; message: string };
@@ -109,8 +111,14 @@ export function TerminalView({
   onHandoff,
   lineage,
   onOpenConversation,
+  onTyping,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // Lu par le terminal (abonnement créé une fois) : toujours la version à jour.
+  const onTypingRef = useRef(onTyping);
+  onTypingRef.current = onTyping;
+  // Conversation fermée : la règle « conversation ancienne » repartira de zéro à la réouverture.
+  useEffect(() => () => forgetStale(sessionId), [sessionId]);
 
   // ---- Hand off (voir src/handoff.ts) ----------------------------------------------------
   /** Raison pour laquelle Hand off est grisé (null : disponible). */
@@ -118,8 +126,20 @@ export function TerminalView({
   const handoffPhase = useHandoffState(sessionId);
   /** Actions des bandeaux de suggestion, avec Hand off pour cette conversation. */
   const bannerActions = useMemo(
-    () => (onHandoff ? { ...suggestionActions, [ACTION_HAND_OFF]: { run: () => onHandoff(), disabledReason: handoffReason } } : suggestionActions),
-    [suggestionActions, onHandoff, handoffReason],
+    () =>
+      onHandoff
+        ? {
+            ...suggestionActions,
+            [ACTION_HAND_OFF]: {
+              run: () => {
+                dismissStale(sessionId);
+                onHandoff();
+              },
+              disabledReason: handoffReason,
+            },
+          }
+        : suggestionActions,
+    [suggestionActions, onHandoff, handoffReason, sessionId],
   );
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -201,6 +221,16 @@ export function TerminalView({
     };
   }, [sessionId, lowerAuto, trustPromptShown]);
 
+  /**
+   * « Arrêter » : interrompt l'agent. Pendant la rédaction d'un résumé de hand off, c'est aussi
+   * l'annulation du hand off (une interruption ne déclenche aucun hook de fin de tour : sans
+   * cela, le hand off attendrait indéfiniment). `cancelHandoff` interrompt lui-même l'agent.
+   */
+  const stop = () => {
+    if (handoffPhase === "summary") cancelHandoff(sessionId);
+    else sendInterrupt(sessionId).catch(() => {});
+  };
+
   /** ✏️ sur le dernier message : interrompt l'agent et met le message dans la zone de saisie. */
   const startEdit = (m: EditableMessage) => {
     sendInterrupt(sessionId).catch(() => {});
@@ -281,7 +311,11 @@ export function TerminalView({
       return true;
     });
 
-    const dataSub = term.onData((d) => ptyApi.write(sessionId, d).catch(() => {}));
+    const dataSub = term.onData((d) => {
+      // Les séquences d'échappement (flèches, réponses du terminal, focus) ne sont pas une frappe de message.
+      if (!d.startsWith("\x1b")) onTypingRef.current?.();
+      ptyApi.write(sessionId, d).catch(() => {});
+    });
     const resizeSub = term.onResize(({ cols, rows }) => ptyApi.resize(sessionId, cols, rows).catch(() => {}));
 
     let unsubscribe: (() => void) | null = null;
@@ -437,7 +471,7 @@ export function TerminalView({
           pending={grill}
           enabled={state.kind === "running"}
           onSend={send}
-          onStop={() => sendInterrupt(sessionId).catch(() => {})}
+          onStop={stop}
           onFreeText={() => grillMode.setFreeText(true)}
           autoFocus={active && !terminalShown}
         />
@@ -448,12 +482,13 @@ export function TerminalView({
       <ConversationInput
         enabled={state.kind === "running"}
         onSend={send}
-        onStop={() => sendInterrupt(sessionId).catch(() => {})}
+        onStop={stop}
         autoFocus={active && !terminalShown && !formVisible}
         cwd={cwd}
         sessionId={sessionId}
         editing={editing}
         onCancelEdit={() => setEditing(null)}
+        onTyping={onTyping}
       />
       </div>
       <ConversationFooter
