@@ -715,6 +715,16 @@ button.conv-footer-item:disabled { cursor: default; opacity: .6; }
 .grill-comment { flex: 1; background: var(--bg); min-height: 34px; padding: 7px 10px; }
 .grill-form-foot .btn { height: 34px; }
 
+/* ---------- Confirmation de Claude Code reprise du terminal (voir ConfirmCard) ---------- */
+.confirm-card {
+  flex: none; display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 10px;
+  border-top: 1px solid var(--border); background: var(--bg-elev);
+}
+.confirm-head { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12.5px; }
+.confirm-title { font-weight: 600; }
+.confirm-detail { color: var(--text-muted); font-size: 12.5px; }
+.confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+
 /* ---------- Suggestions (voir src/suggestions.ts) ---------- */
 .suggestion-icon { flex: none; font-size: 12px; line-height: 1; cursor: default; }
 .suggestion-banners { flex: none; display: flex; flex-direction: column; }

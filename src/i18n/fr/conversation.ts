@@ -102,6 +102,8 @@ export default {
   "conversation.terminal.upPermission": "Claude Code demande une permission : réponds dans le terminal.",
   "conversation.terminal.upQuestion": "Claude Code pose une question : réponds dans le terminal.",
   "conversation.terminal.upCommand": "Commande envoyée : termine-la dans le terminal si un menu s'est ouvert.",
+  "conversation.confirm.label": "Claude Code demande une confirmation",
+  "conversation.confirm.cancelTitle": "Ferme la question sans rien choisir (Échap)",
   "conversation.terminal.upLaunch": "Claude Code demande si tu fais confiance à ce dossier : réponds dans le terminal.",
   "conversation.terminal.exited": "Claude Code s'est terminé.",
   "conversation.terminal.exitedWithCode": "Claude Code s'est terminé (code {code}).",

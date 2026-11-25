@@ -2,7 +2,8 @@
 // utilisé, lus dans le `.jsonl` (voir `conversation::Meta`).
 //
 // - Modèle : clic → petit menu de choix ; `/model <alias>` est envoyé au terminal sans le faire
-//   remonter. Claude Code n'écrit le nouveau modèle dans le `.jsonl` (réponse, annonce) qu'au
+//   remonter ; si Claude Code demande une confirmation (« Switch model? » en cours de
+//   conversation), elle est reprise dans la conversation (voir ConfirmCard). Claude Code n'écrit le nouveau modèle dans le `.jsonl` (réponse, annonce) qu'au
 //   message suivant, mais tout de suite la sortie « Set model to … » : elle sert d'affichage.
 // - Mode : clic → Maj+Tab (ESC [ Z) envoyé au terminal, qui passe au mode suivant. Claude Code
 //   n'écrit le mode dans le `.jsonl` qu'avec le message suivant : le nouveau mode est donc lu

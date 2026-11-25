@@ -33,6 +33,8 @@ import type { SearchFocus } from "./GlobalSearch";
 import { SuggestionBanners, type SuggestionActionHandler } from "./Suggestions";
 import { ACTION_HAND_OFF, dismissStale, forgetStale, type Suggestion } from "../suggestions";
 import { cancelHandoff, useHandoffBlocker, useHandoffState, type HandoffLineage } from "../handoff";
+import { parseConfirmPrompt, samePrompt, type ConfirmPrompt } from "../terminalPrompt";
+import { ConfirmCard } from "./ConfirmCard";
 import { t } from "../i18n";
 import { tSplit } from "../i18n/rich";
 
@@ -79,6 +81,10 @@ const TRUST_POLL_MS = 400;
 const TRUST_WATCH_MS = 60_000;
 /** Après l'envoi d'une commande `/…`, l'évènement « message envoyé » qui suit est le sien. */
 const COMMAND_GRACE_MS = 2000;
+/** Après une commande « silencieuse », l'écran est relu à cet intervalle… */
+const CONFIRM_POLL_MS = 150;
+/** …pendant ce délai pour voir la confirmation apparaître (elle s'affiche en moins d'une seconde). */
+const CONFIRM_APPEAR_MS = 3000;
 
 /** Explication affichée au-dessus du terminal remonté tout seul. */
 function upReason(up: TerminalUp): string | null {
@@ -173,15 +179,46 @@ export function TerminalView({
     setUp((u) => (u === "manual" ? u : null));
   }, []);
 
-  /** L'écran du terminal affiche la question de confiance du dossier. */
-  const trustPromptShown = useCallback(() => {
+  /** Lignes visibles de l'écran du terminal. */
+  const screenLines = useCallback(() => {
     const term = termRef.current;
-    if (!term) return false;
+    if (!term) return [];
     const buf = term.buffer.active;
-    let screen = "";
-    for (let y = buf.viewportY; y < buf.viewportY + term.rows; y++) screen += (buf.getLine(y)?.translateToString(true) ?? "") + " ";
-    return TRUST_PROMPT.test(screen.replace(/\s+/g, " "));
+    const lines: string[] = [];
+    for (let y = buf.viewportY; y < buf.viewportY + term.rows; y++) lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    return lines;
   }, []);
+  /** L'écran du terminal affiche la question de confiance du dossier. */
+  const trustPromptShown = useCallback(() => TRUST_PROMPT.test(screenLines().join(" ").replace(/\s+/g, " ")), [screenLines]);
+
+  /**
+   * Boîte de confirmation ouverte par une commande « silencieuse » (« Switch model? » après
+   * `/model` en cours de conversation). Cachée sous la conversation, elle avalerait le message
+   * suivant (texte collé ignoré, Entrée qui valide la boîte) : elle est donc reprise dans la
+   * conversation (ConfirmCard), à la place de la zone de saisie, tant qu'elle est à l'écran.
+   */
+  const [confirm, setConfirm] = useState<ConfirmPrompt | null>(null);
+  const confirmWatch = useRef<ReturnType<typeof setInterval>>(undefined);
+  useEffect(() => () => clearInterval(confirmWatch.current), []);
+  const watchConfirm = useCallback(() => {
+    clearInterval(confirmWatch.current);
+    const until = Date.now() + CONFIRM_APPEAR_MS;
+    let shown = false;
+    confirmWatch.current = setInterval(() => {
+      const prompt = parseConfirmPrompt(screenLines());
+      if (prompt) {
+        shown = true;
+        setConfirm((c) => (samePrompt(c, prompt) ? c : prompt));
+      } else if (shown || Date.now() > until) {
+        clearInterval(confirmWatch.current);
+        setConfirm(null);
+      }
+    }, CONFIRM_POLL_MS);
+  }, [screenLines]);
+  /** Réponse à la boîte depuis la carte : touches envoyées au terminal, comme au clavier. */
+  const answerConfirm = (keys: string) => {
+    ptyApi.write(sessionId, keys).catch(() => {});
+  };
 
   // Suit l'état de la conversation (hooks de Claude Code, ticket 04).
   useEffect(() => {
@@ -257,10 +294,13 @@ export function TerminalView({
     await sendMessage(sessionId, text);
     // Une commande `/…` peut ouvrir un menu interactif : le terminal remonte.
     if (isCommand && !opts?.quiet) setUp((u) => (u === "manual" ? u : "command"));
+    else if (isCommand) watchConfirm();
   };
   const terminalShown = up !== null;
   /** Série de questions affichée en formulaire plein espace (la conversation et le terminal sont repliés). */
-  const formVisible = grillMode.showForm && !terminalShown;
+  const formVisible = grillMode.showForm && !terminalShown && !confirm;
+  /** Confirmation de Claude Code affichée en carte (le terminal remonté la montre déjà). */
+  const confirmVisible = !!confirm && !terminalShown;
   const onStartedRef = useRef(onStarted);
   onStartedRef.current = onStarted;
 
@@ -483,8 +523,11 @@ export function TerminalView({
         />
       )}
       {grill && grillMode.freeTextOnRound && <GrillBackBar count={grill.round.questions.length} onBack={() => grillMode.setFreeText(false)} />}
+      {confirm && confirmVisible && (
+        <ConfirmCard prompt={confirm} onAnswer={answerConfirm} autoFocus={active} />
+      )}
       {/* Gardée montée sous le formulaire : son brouillon reste. */}
-      <div className="conv-input-slot" hidden={formVisible}>
+      <div className="conv-input-slot" hidden={formVisible || confirmVisible}>
       <ConversationInput
         enabled={state.kind === "running"}
         onSend={send}
