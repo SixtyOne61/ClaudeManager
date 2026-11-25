@@ -21,8 +21,8 @@
 import type { ConversationEntry } from "./conversation";
 
 export interface GrillQuestion {
-  /** Numéro donné par Claude (Q3 → 3). */
-  n: number;
+  /** Numéro donné par Claude (Q3 → "3", Q1b → "1b"). */
+  n: string;
   /** Titre, en Markdown (sans les `**` qui l'encadrent). */
   title: string;
   /** Énoncé en Markdown (peut être vide si tout tient dans le titre). */
@@ -40,7 +40,7 @@ export interface GrillRound {
 }
 
 /** `❓ **Q1** - **Titre** : énoncé` ou `❓ **Q1 - Titre** énoncé`. */
-const QUESTION = /^\s*❓️?\s*\*\*Q(\d+)(?:\*\*\s*[-–—:.]\s*\*\*|\s*[-–—:.]\s*)(.+?)\*\*\s*(.*)$/u;
+const QUESTION = /^\s*❓️?\s*\*\*Q(\d+[a-z]?)(?:\*\*\s*[-–—:.]\s*\*\*|\s*[-–—:.]\s*)(.+?)\*\*\s*(.*)$/u;
 /** `➡️ recommandation`. */
 const RECOMMENDATION = /^\s*➡️?\s?(.*)$/u;
 /** Séparateur Markdown entre deux questions. */
@@ -57,7 +57,7 @@ export function parseGrill(text: string): GrillRound | null {
   const lines = text.split(/\r?\n/);
   const intro: string[] = [];
   const outro: string[] = [];
-  const questions: { n: number; title: string; body: string[]; reco: string[] | null; recoDone: boolean; after: string[] }[] = [];
+  const questions: { n: string; title: string; body: string[]; reco: string[] | null; recoDone: boolean; after: string[] }[] = [];
   let inFence = false;
 
   for (const line of lines) {
@@ -67,7 +67,7 @@ export function parseGrill(text: string): GrillRound | null {
     if (head) {
       const title = head[2].trim().replace(/\s*:$/, "");
       const rest = head[3].replace(/^\s*:\s*/, "");
-      questions.push({ n: Number(head[1]), title, body: rest ? [rest] : [], reco: null, recoDone: false, after: [] });
+      questions.push({ n: head[1], title, body: rest ? [rest] : [], reco: null, recoDone: false, after: [] });
       continue;
     }
     if (!q) {
@@ -145,7 +145,7 @@ export interface Answer {
 }
 
 export interface Draft {
-  answers: Record<number, Answer>;
+  answers: Record<string, Answer>;
   /** Commentaire général, ajouté à la fin du message. */
   comment: string;
   /** L'utilisateur a choisi de répondre en texte libre (zone de saisie normale). */
@@ -177,7 +177,7 @@ function answerText(a: Answer): string {
 }
 
 /** Ligne d'une réponse dans le message : « Q1 — Titre : réponse ». */
-export const ANSWER_LINE = /^Q(\d+) — /;
+export const ANSWER_LINE = /^Q(\d+[a-z]?) — /;
 
 /** Message envoyé à Claude : une ligne par question, puis le commentaire général. */
 export function formatAnswers(round: GrillRound, draft: Draft): string {

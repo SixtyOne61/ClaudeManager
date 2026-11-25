@@ -30,7 +30,7 @@ export function grillHtml(text: string): string | null {
  * Fait défiler la conversation jusqu'à la carte de la question Qn : la plus proche au-dessus
  * de `from` (pastille d'une réponse), ou la dernière (formulaire, sous la conversation).
  */
-export function scrollToQuestion(from: HTMLElement, n: number) {
+export function scrollToQuestion(from: HTMLElement, n: string) {
   const root = from.closest(".terminal-view")?.querySelector(".conversation") ?? document;
   const cards = [...root.querySelectorAll<HTMLElement>(`.grill-card[data-grill-n="${n}"]`)];
   const before = cards.filter((c) => c.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -44,10 +44,10 @@ export function scrollToQuestion(from: HTMLElement, n: number) {
 }
 
 /** Lignes « Q1 — Titre : réponse » d'un message, ou null s'il ne commence pas par l'une d'elles. */
-function answerLines(text: string): { n: number | null; text: string }[] | null {
+function answerLines(text: string): { n: string | null; text: string }[] | null {
   const lines = text.split(/\r?\n/);
   if (!ANSWER_LINE.test(lines[0] ?? "")) return null;
-  const out: { n: number | null; text: string }[] = [];
+  const out: { n: string | null; text: string }[] = [];
   let rest: string[] = [];
   const flush = () => {
     if (rest.join("").trim()) out.push({ n: null, text: rest.join("\n").trim() });
@@ -57,7 +57,7 @@ function answerLines(text: string): { n: number | null; text: string }[] | null 
     const m = ANSWER_LINE.exec(l);
     if (m) {
       flush();
-      out.push({ n: Number(m[1]), text: l.slice(m[0].length) });
+      out.push({ n: m[1], text: l.slice(m[0].length) });
     } else rest.push(l);
   }
   flush();
@@ -155,7 +155,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
     setLocal(next);
     setDraft(sessionId, key, next);
   };
-  const setAnswer = (n: number, a: Answer) => update({ ...draft, answers: { ...draft.answers, [n]: a } });
+  const setAnswer = (n: string, a: Answer) => update({ ...draft, answers: { ...draft.answers, [n]: a } });
 
   const answered = round.questions.filter((q) => isAnswered(draft.answers[q.n])).length;
   const complete = answered === round.questions.length;
@@ -188,7 +188,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
     }
   };
 
-  const choose = (n: number, choice: Choice, hasReco: boolean, el: HTMLElement) => {
+  const choose = (n: string, choice: Choice, hasReco: boolean, el: HTMLElement) => {
     const prev = draft.answers[n];
     setAnswer(n, { choice, text: prev?.text ?? "" });
     // « Non » ou « Autre réponse » : le curseur va dans le champ ; « D'accord » : question suivante.
