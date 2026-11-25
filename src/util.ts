@@ -1,5 +1,6 @@
 // Petites fonctions utilitaires : couleurs, dates, noms.
 
+import { locale, t } from "./i18n";
 import type { Config, ProjectInfo } from "./api";
 
 /** Vrai sous macOS. */
@@ -66,26 +67,25 @@ export function projectName(p: ProjectInfo, cfg: Config | null): string {
   return p.key;
 }
 
-const dateFmt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
-
+/** Date et heure dans la langue de l'interface. */
 export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "date inconnue";
+  if (!iso) return t("common.dateUnknown");
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : dateFmt.format(d);
+  return isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" }).format(d);
 }
 
-/** « à l'instant », « il y a 3 h », « hier », « il y a 5 j », puis la date. */
+/** « à l'instant », « il y a 3 h », « hier », « il y a 5 j », puis la date (langue de l'interface). */
 export function relativeDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return "à l'instant";
-  if (diff < 3600) return `il y a ${Math.floor(diff / 60)} min`;
-  if (diff < 86400) return `il y a ${Math.floor(diff / 3600)} h`;
-  if (diff < 2 * 86400) return "hier";
-  if (diff < 30 * 86400) return `il y a ${Math.floor(diff / 86400)} j`;
-  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(d);
+  if (diff < 60) return t("common.justNow");
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: "auto", style: "short" });
+  if (diff < 3600) return rtf.format(-Math.floor(diff / 60), "minute");
+  if (diff < 86400) return rtf.format(-Math.floor(diff / 3600), "hour");
+  if (diff < 30 * 86400) return rtf.format(-Math.floor(diff / 86400), "day");
+  return new Intl.DateTimeFormat(locale(), { dateStyle: "medium" }).format(d);
 }
 
 export function newId(): string {

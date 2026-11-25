@@ -25,6 +25,7 @@ mod search;
 mod sessions;
 mod shell_env;
 mod suggestions;
+mod ui_error;
 mod worktrees;
 
 use actions::{SessionFiles, Terminal};

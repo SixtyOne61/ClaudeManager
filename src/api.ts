@@ -1,6 +1,7 @@
 // Types et appels au backend Rust (voir src-tauri/src/lib.rs).
 // Toutes les opérations sur disque passent par ces fonctions.
 
+import { hasKey, t, type Vars } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 
 export type TitleSource = "custom" | "ai" | "prompt" | "none";
@@ -352,8 +353,27 @@ export const api = {
 };
 
 /** Convertit une erreur Tauri (chaîne) ou JS en message lisible. */
+/**
+ * Texte d'une erreur, dans la langue de l'interface. Le backend renvoie les erreurs que
+ * l'utilisateur doit comprendre sous forme codée (`{"uiError":"pty.notFound","params":{…}}`,
+ * voir `ui_error.rs`) : le texte est celui de la clé `error.<code>` du catalogue. Les autres
+ * (sortie de git, erreurs système brutes) sont affichées telles quelles.
+ */
 export function errorMessage(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
-  return String(e);
+  const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+  return uiErrorText(raw) ?? raw;
+}
+
+/** Texte d'une erreur codée par le backend, ou null si `raw` n'en est pas une. */
+export function uiErrorText(raw: string): string | null {
+  if (!raw.startsWith('{"uiError"')) return null;
+  try {
+    const { uiError, params } = JSON.parse(raw) as { uiError: string; params?: Vars };
+    const key = "error." + uiError;
+    if (hasKey(key)) return t(key, params ?? {});
+    const detail = params ? Object.values(params).filter((v) => v !== null && v !== undefined).join(" · ") : "";
+    return detail ? `${uiError} : ${detail}` : uiError;
+  } catch {
+    return null;
+  }
 }
