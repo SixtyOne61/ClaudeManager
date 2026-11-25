@@ -1,6 +1,6 @@
 # Catalogue de textes (refactoring)
 
-Status: ready-for-agent
+Status: resolved
 
 ## Ce qu'on veut
 
@@ -23,3 +23,14 @@ Sortir tous les textes de l'interface du code pour pouvoir les traduire (ticket 
 - Les variables d'un texte sont toutes fournies à l'appel.
 
 ## Comments
+
+Fait (681 clés) :
+- `src/i18n/index.ts` : `t(key, vars)`, sous-ensemble d'ICU (`{var}`, `plural`, `select`), `useLanguage()` (appelé en tête d'`App`), `locale()`, `setLanguage(code, dict)`, `hasKey`, `variablesOf` (pour contrôler les traductions du ticket 06). `src/i18n/rich.tsx` : `tRich` (variables remplacées par des éléments React) et `tSplit` (texte avant / après une variable).
+- Catalogue `src/i18n/fr/<zone>.ts` (common, app, project, sidebar, hubs, conversation, settings, suggestions, slash, tools, handoff, errors), assemblé dans `src/i18n/fr.ts`. Contrôle : `npm run i18n:check` (préfixes, doublons, clés inutilisées).
+- Dates et nombres via `Intl` dans la langue courante (`formatDate`, `relativeDate`, limites d'usage, pied de conversation).
+- Rust : erreurs visibles codées (`ui_error.rs`, `ui_err(code, params)` → `{"uiError":…}`), affichées par `errorMessage()` avec la clé `error.<code>`. `SESSION_ACTIVE` devient le code `actions.sessionActive` (`isUiError`). Notices « compactée » / « interrompu » avec un champ `code`, détail TodoWrite et titre de repli « Session xxxx » traduits côté interface. Restent en français par choix : textes envoyés à Claude (hand off, premier message d'exécutant, contexte de hub), ligne d'état de Claude Code (`limits.rs`), erreur développeur d'`attachments.rs`.
+- Commandes `/…` intégrées : descriptions et indications d'arguments copiées dans `slash.builtin.<nom>` (`.hint`), utilisées si la clé existe.
+
+Écarts volontaires en français (accords corrigés par les pluriels ICU) : « 1 ligne ignorée » au lieu de « 1 ligne(s) ignorée(s) », « 1 ligne » au lieu de « 1 lignes », « 0 question en attente » au lieu de « 1 question », première lettre en majuscule dans « Cette conversation a été modifiée… ». Laissés tels quels (à reprendre si on veut) : « Ses {count} projet(s)… », « … et {count} autre(s) ».
+
+Limite connue : le texte autour d'un champ numérique des réglages (« Seuil : » / « % du contexte ») est en deux clés ; un traducteur ne peut pas changer l'ordre autour du champ.

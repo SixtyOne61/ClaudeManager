@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { api, errorMessage, type Config, type ProjectInfo, type SearchHit, type SearchResult, type SessionHits } from "../api";
 import { formatDate, projectName } from "../util";
+import { t } from "../i18n";
 
 /** Longueur minimale d'une recherche (comme côté Rust). */
 const MIN_CHARS = 2;
@@ -105,11 +106,9 @@ export function GlobalSearch(props: Props) {
     <main className="main" onKeyDown={(e) => e.key === "Escape" && props.onClose()}>
       <header className="project-header">
         <div className="project-title">
-          <h2>Rechercher partout</h2>
+          <h2>{t("app.search.title")}</h2>
         </div>
-        <p className="muted">
-          Dans les messages et les réponses de toutes les conversations, archives comprises. Casse et accents ignorés.
-        </p>
+        <p className="muted">{t("app.search.intro")}</p>
       </header>
 
       <div className="search-bar">
@@ -118,11 +117,11 @@ export function GlobalSearch(props: Props) {
           ref={input}
           value={query}
           onChange={(e) => props.onQueryChange(e.target.value)}
-          placeholder="Un mot, une phrase…"
+          placeholder={t("app.search.placeholder")}
         />
-        {searching && <span className="search-status">Recherche…</span>}
+        {searching && <span className="search-status">{t("app.search.searching")}</span>}
         {query && (
-          <button className="icon-btn" onClick={() => props.onQueryChange("")} title="Effacer">
+          <button className="icon-btn" onClick={() => props.onQueryChange("")} title={t("common.clear")}>
             <X size={14} />
           </button>
         )}
@@ -130,17 +129,15 @@ export function GlobalSearch(props: Props) {
 
       {result && !short && (
         <div className="search-summary">
-          {count === 0
-            ? "Aucune conversation ne contient ce texte."
-            : `${count} conversation${count > 1 ? "s" : ""} dans ${groups.length} projet${groups.length > 1 ? "s" : ""}`}
-          {result.truncated && " (liste limitée aux plus récentes)"}
+          {count === 0 ? t("app.search.noResult") : t("app.search.summary", { count, projects: groups.length })}
+          {result.truncated && " " + t("app.search.truncated")}
           <span className="dot">·</span>
-          {result.elapsedMs} ms
+          {t("app.search.elapsed", { ms: String(result.elapsedMs) })}
         </div>
       )}
 
       <div className="session-list">
-        {short && <div className="empty">Tapez au moins {MIN_CHARS} caractères.</div>}
+        {short && <div className="empty">{t("app.search.tooShort", { count: MIN_CHARS })}</div>}
         {!short &&
           groups.map(([key, sessions]) => (
             <section key={key} className="search-group">
@@ -149,18 +146,18 @@ export function GlobalSearch(props: Props) {
               </h3>
               {sessions.map((s) => (
                 <div key={s.sessionId} className="search-result">
-                  <button className="search-result-head" onClick={() => props.onOpen(s, s.hits[0])} title="Ouvrir la conversation">
+                  <button className="search-result-head" onClick={() => props.onOpen(s, s.hits[0])} title={t("app.search.open")}>
                     <span className="session-title">{s.title}</span>
-                    {s.archived && <span className="tag">archivée</span>}
+                    {s.archived && <span className="tag">{t("app.search.archived")}</span>}
                     <span className="session-meta">
                       {formatDate(s.updatedAt)}
                       <span className="dot">·</span>
-                      {s.matchCount} message{s.matchCount > 1 ? "s" : ""}
+                      {t("app.search.matchCount", { count: s.matchCount })}
                     </span>
                   </button>
                   {s.hits.map((h) => (
                     <button key={h.line} className="search-excerpt" onClick={() => props.onOpen(s, h)}>
-                      <span className="search-role">{h.role === "user" ? "Vous" : "Claude"}</span>
+                      <span className="search-role">{h.role === "user" ? t("app.search.you") : "Claude"}</span>
                       <span>
                         {h.excerpt.before}
                         <mark>{h.excerpt.matched}</mark>
@@ -169,10 +166,7 @@ export function GlobalSearch(props: Props) {
                     </button>
                   ))}
                   {s.matchCount > s.hits.length && (
-                    <div className="search-more">
-                      et {s.matchCount - s.hits.length} autre{s.matchCount - s.hits.length > 1 ? "s" : ""} message
-                      {s.matchCount - s.hits.length > 1 ? "s" : ""}
-                    </div>
+                    <div className="search-more">{t("app.search.more", { count: s.matchCount - s.hits.length })}</div>
                   )}
                 </div>
               ))}

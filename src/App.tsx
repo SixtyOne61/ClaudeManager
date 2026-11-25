@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import {
   api,
   ERR_ACTIVE,
+  isUiError,
   errorMessage,
   type ArchiveEntry,
   type Category,
@@ -56,9 +57,17 @@ import {
   successorOf,
   type HandoffLineage,
 } from "./handoff";
+import { t, useLanguage } from "./i18n";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
-const NEW_CONVERSATION_TITLE = "Nouvelle conversation";
+const newConversationTitle = () => t("app.newConversationTitle");
+
+/** Liste à puces des titres (8 au plus), pour les confirmations. */
+const titleList = (l: SessionInfo[]) =>
+  l.slice(0, 8).map((s) => `• ${s.title}`).join("\n") + (l.length > 8 ? "\n" + t("app.andMore", { count: l.length - 8 }) : "");
+
+/** Les 5 premières lignes, puis « … et N autre(s) ». */
+const shortList = (l: string[]) => l.slice(0, 5).join("\n") + (l.length > 5 ? "\n" + t("app.andMore", { count: l.length - 5 }) : "");
 
 /** Boîte de dialogue ouverte (une seule à la fois). */
 type DialogState =
@@ -76,6 +85,8 @@ type DialogState =
   | null;
 
 export default function App() {
+  // Changement de langue : toute l'interface se redessine.
+  useLanguage();
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
@@ -177,12 +188,11 @@ export default function App() {
         ptyApi.quit();
         return;
       }
-      const what = busy > 1 ? `${busy} conversations ont un agent au travail ou une action en attente.` : "Une conversation a un agent au travail ou une action en attente.";
-      const ok = await ask(`${what}\nQuitter les interrompra (les conversations restent enregistrées).`, {
-        title: "Quitter Claude Manager",
+      const ok = await ask(t("app.quit.busy", { count: busy }), {
+        title: t("app.quit.title"),
         kind: "warning",
-        okLabel: "Quitter",
-        cancelLabel: "Annuler",
+        okLabel: t("app.quit.ok"),
+        cancelLabel: t("common.cancel"),
       });
       if (ok) ptyApi.quit();
     });
@@ -252,7 +262,7 @@ export default function App() {
   }, [config]);
 
   if (!config || !scan) {
-    return <div className="loading-screen">Lecture des conversations…</div>;
+    return <div className="loading-screen">{t("app.loading")}</div>;
   }
 
   const selectedProject = selection?.kind === "project" ? projects.get(selection.key) : undefined;
@@ -273,11 +283,11 @@ export default function App() {
     }));
 
   const deleteCategory = async (cat: Category) => {
-    const ok = await ask(`Supprimer la catégorie « ${cat.name} » ?\nSes ${cat.projectKeys.length} projet(s) reviendront dans « Non classés ».`, {
-      title: "Supprimer la catégorie",
+    const ok = await ask(t("app.category.deleteConfirm", { name: cat.name, count: cat.projectKeys.length }), {
+      title: t("app.category.deleteTitle"),
       kind: "warning",
-      okLabel: "Supprimer",
-      cancelLabel: "Annuler",
+      okLabel: t("common.delete"),
+      cancelLabel: t("common.cancel"),
     });
     if (ok) updateConfig((c) => ({ ...c, categories: c.categories.filter((x) => x.id !== cat.id) }));
   };
@@ -300,7 +310,7 @@ export default function App() {
     if (!path) return;
     api
       .launchClaude(path, sessionId)
-      .then(() => toast(sessionId ? "Reprise de la conversation dans un terminal…" : "Nouvelle conversation dans un terminal…"))
+      .then(() => toast(sessionId ? t("app.launch.resume") : t("app.launch.new")))
       .catch(showError);
   };
 
@@ -325,12 +335,13 @@ export default function App() {
     } catch (e) {
       const msg = errorMessage(e);
       // Autre erreur (fichier introuvable…) : le terminal l'affichera au lancement.
-      if (msg.startsWith(ERR_ACTIVE)) {
-        const ok = await ask(
-          msg.replace(`${ERR_ACTIVE}: `, "") +
-            "\nDeux programmes qui écrivent en même temps dans la même conversation peuvent l'abîmer.\n\nContinuer quand même ?",
-          { title: "Conversation peut-être en cours", kind: "warning", okLabel: "Continuer", cancelLabel: "Annuler" },
-        );
+      if (isUiError(e, ERR_ACTIVE)) {
+        const ok = await ask(t("app.openElsewhere.confirm", { message: msg }), {
+          title: t("app.maybeActive.title"),
+          kind: "warning",
+          okLabel: t("app.maybeActive.continue"),
+          cancelLabel: t("common.cancel"),
+        });
         if (!ok) {
           opening.current.delete(s.id);
           return;
@@ -358,7 +369,7 @@ export default function App() {
   ): string | null => {
     if (!path) return null;
     const id = newId();
-    const title = opts?.title ?? NEW_CONVERSATION_TITLE;
+    const title = opts?.title ?? newConversationTitle();
     const now = new Date();
     // Dans un nouveau worktree (`worktree` défini, vide = nom choisi par Claude Code) :
     // badge « worktree » tout de suite ; le vrai chemin arrive avec le fichier (ticket 08).
@@ -382,7 +393,7 @@ export default function App() {
         worktree === undefined
           ? (opts?.inWorktree ?? null)
           : {
-              name: wtName || "(nom automatique)",
+              name: wtName || t("app.worktreeAutoName"),
               path: worktreePath(path, wtName),
               exists: true,
             },
@@ -449,25 +460,25 @@ export default function App() {
     updateConfigRef.current((c) => putConversationInSection(c, "", null, id));
   };
 
-  const closeTerminal = async (t: OpenTerminal) => {
+  const closeTerminal = async (tab: OpenTerminal) => {
     // On ne prévient que si fermer interromprait quelque chose : l'agent travaille, ou une
     // action attend ta permission. Une conversation qui attend simplement ton message se ferme
     // sans question : elle reste enregistrée et se reprend plus tard.
-    const warning = isTerminalRunning(t.sessionId) ? interruptionWarning(getActivity(t.sessionId)) : null;
+    const warning = isTerminalRunning(tab.sessionId) ? interruptionWarning(getActivity(tab.sessionId)) : null;
     if (warning) {
-      const ok = await ask(`${warning}\n\nFermer « ${t.title} » quand même ?`, {
-        title: "Fermer la conversation",
+      const ok = await ask(t("app.closeConversation.confirm", { warning, title: tab.title }), {
+        title: t("app.closeConversation.title"),
         kind: "warning",
-        okLabel: "Fermer",
-        cancelLabel: "Annuler",
+        okLabel: t("common.close"),
+        cancelLabel: t("common.cancel"),
       });
       if (!ok) return;
     }
-    await killTerminal(t.sessionId).catch(() => {});
-    releasedAt.current.set(t.sessionId, Date.now());
-    setTerminals((ts) => ts.filter((x) => x.sessionId !== t.sessionId));
-    setActiveTerminal((a) => (a === t.sessionId ? null : a));
-    if (t.isNew) await dropIfEmpty(t.sessionId);
+    await killTerminal(tab.sessionId).catch(() => {});
+    releasedAt.current.set(tab.sessionId, Date.now());
+    setTerminals((ts) => ts.filter((x) => x.sessionId !== tab.sessionId));
+    setActiveTerminal((a) => (a === tab.sessionId ? null : a));
+    if (tab.isNew) await dropIfEmpty(tab.sessionId);
   };
 
   /** Onglets avec le titre à jour (le vrai titre remplace « Nouvelle conversation »). */
@@ -506,7 +517,7 @@ export default function App() {
     if (!cwd) return;
     const r = await requestSummary(sessionId, cwd, handoffPrompt(config), parent.title);
     if (r.kind === "cancelled") {
-      toast("Hand off annulé : rien n'a été créé ni archivé.");
+      toast(t("app.handoff.cancelled"));
       return;
     }
     if (r.kind === "failed") {
@@ -515,13 +526,10 @@ export default function App() {
     }
     try {
       // Même dossier (même worktree le cas échéant), même projet affiché.
-      const successorId = startNewConversation(p.key, cwd, null, undefined, { title: `Suite de ${parent.title}`, inWorktree: parent.worktree });
+      const successorId = startNewConversation(p.key, cwd, null, undefined, { title: t("app.handoff.successorTitle", { title: parent.title }), inWorktree: parent.worktree });
       if (!successorId) return;
       if (!(await sendWhenReady(successorId, r.summary.firstMessage))) {
-        toast(
-          "Hand off interrompu : la nouvelle conversation n'a pas démarré. La conversation d'origine n'est pas archivée ; son résumé de passation y reste visible.",
-          true,
-        );
+        toast(t("app.handoff.notStarted"), true);
         return;
       }
       // La parente : terminal arrêté et onglet fermé (son fichier va être déplacé), puis archivée.
@@ -531,8 +539,8 @@ export default function App() {
       setActiveTerminal((a) => (a === sessionId ? successorId : a));
       const done = await api.handoffFinish(parent.projectKey, sessionId, successorId);
       setConfig(done.config);
-      if (done.archiveError) toast(`La suite a pris le relais, mais « ${parent.title} » n'a pas pu être archivée : ${done.archiveError}`, true);
-      else toast(`Hand off : « ${parent.title} » est archivée, sa suite a pris le relais.`);
+      if (done.archiveError) toast(t("app.handoff.archiveFailed", { title: parent.title, error: errorMessage(done.archiveError) }), true);
+      else toast(t("app.handoff.done", { title: parent.title }));
       refresh();
     } catch (e) {
       showError(e);
@@ -547,7 +555,7 @@ export default function App() {
 
   /** Parente et suite d'une conversation (liens « ← Suite de … » et « Suite : … → »). */
   const lineageOf = (id: string): HandoffLineage => {
-    const link = (x: string | null) => (x ? { id: x, title: conversationTitle(x) ?? "conversation introuvable" } : null);
+    const link = (x: string | null) => (x ? { id: x, title: conversationTitle(x) ?? t("app.conversationNotFound") } : null);
     return { parent: link(parentOf(config, id)), successor: link(successorOf(config, id)) };
   };
 
@@ -563,7 +571,7 @@ export default function App() {
     }
     const found = findSession(id);
     if (found) openInTerminal(found.s, found.p.path);
-    else toast("Cette conversation est introuvable (mise à la Corbeille ?).", true);
+    else toast(t("app.conversationMissing"), true);
   };
 
   // ---- Archives / Corbeille -------------------------------------------------------------
@@ -578,12 +586,12 @@ export default function App() {
       return true;
     } catch (e) {
       const msg = errorMessage(e);
-      if (!msg.startsWith(ERR_ACTIVE)) throw e;
-      const ok = await ask(msg.replace(`${ERR_ACTIVE}: `, "") + "\n\nContinuer quand même ?", {
-        title: "Conversation peut-être en cours",
+      if (!isUiError(e, ERR_ACTIVE)) throw e;
+      const ok = await ask(t("app.maybeActive.confirm", { message: msg }), {
+        title: t("app.maybeActive.title"),
         kind: "warning",
-        okLabel: "Continuer",
-        cancelLabel: "Annuler",
+        okLabel: t("app.maybeActive.continue"),
+        cancelLabel: t("common.cancel"),
       });
       if (!ok) return false;
       await run(true);
@@ -594,7 +602,7 @@ export default function App() {
   const archiveSession = async (s: SessionInfo) => {
     try {
       const done = await withActiveCheck(async (force) => setConfig(await api.archiveSession(s.projectKey, s.id, force)));
-      if (done) toast(`« ${s.title} » archivée`);
+      if (done) toast(t("app.conversation.archived", { title: s.title }));
     } catch (e) {
       showError(e);
     }
@@ -602,16 +610,16 @@ export default function App() {
   };
 
   const trashSession = async (s: SessionInfo) => {
-    const ok = await ask(`Mettre la conversation « ${s.title} » à la Corbeille ?\nElle pourra être récupérée depuis la Corbeille.`, {
-      title: "Supprimer la conversation",
+    const ok = await ask(t("app.conversation.trashConfirm", { title: s.title }), {
+      title: t("app.conversation.trashTitle"),
       kind: "warning",
-      okLabel: "Mettre à la Corbeille",
-      cancelLabel: "Annuler",
+      okLabel: t("app.moveToTrash"),
+      cancelLabel: t("common.cancel"),
     });
     if (!ok) return;
     try {
       const done = await withActiveCheck((force) => api.trashSession(s.projectKey, s.id, force));
-      if (done) toast("Conversation envoyée à la Corbeille");
+      if (done) toast(t("app.conversation.trashed"));
     } catch (e) {
       showError(e);
     }
@@ -633,23 +641,14 @@ export default function App() {
   ): Promise<{ done: SessionInfo[]; remaining: number } | null> => {
     if (list.length === 0) return null;
     const trash = kind === "trash";
-    const count = (n: number) => `${n} conversation${n > 1 ? "s" : ""}`;
-    const titles = (l: SessionInfo[]) =>
-      l.slice(0, 8).map((s) => `• ${s.title}`).join("\n") + (l.length > 8 ? `\n… et ${l.length - 8} autre(s)` : "");
-    const plural = list.length > 1;
     const ok =
       confirmed ||
-      (await ask(
-      trash
-        ? `Mettre ${count(list.length)} à la Corbeille ?\n${plural ? "Elles pourront être récupérées" : "Elle pourra être récupérée"} depuis la Corbeille.\n\n${titles(list)}`
-        : `Archiver ${count(list.length)} ?\n${plural ? "Elles pourront être restaurées" : "Elle pourra être restaurée"} depuis les Archives.\n\n${titles(list)}`,
-      {
-        title: trash ? "Supprimer les conversations" : "Archiver les conversations",
+      (await ask(t(trash ? "app.bulk.trashConfirm" : "app.bulk.archiveConfirm", { count: list.length, titles: titleList(list) }), {
+        title: trash ? t("app.bulk.trashTitle") : t("app.bulk.archiveTitle"),
         kind: "warning",
-        okLabel: trash ? "Mettre à la Corbeille" : "Archiver",
-        cancelLabel: "Annuler",
-      },
-    ));
+        okLabel: trash ? t("app.moveToTrash") : t("common.archive"),
+        cancelLabel: t("common.cancel"),
+      }));
     if (!ok) return null;
 
     const run = async (s: SessionInfo, force: boolean) => {
@@ -665,37 +664,32 @@ export default function App() {
         doneList.push(s);
       } catch (e) {
         const msg = errorMessage(e);
-        if (!force && msg.startsWith(ERR_ACTIVE)) active.push(s);
-        else failed.push(`« ${s.title} » : ${msg}`);
+        if (!force && isUiError(e, ERR_ACTIVE)) active.push(s);
+        else failed.push(t("app.bulk.failedItem", { title: s.title, message: msg }));
       }
     };
     for (const s of list) await attempt(s, false);
 
     let skipped = 0;
     if (active.length > 0) {
-      const go = await ask(
-        `${count(active.length)} ${active.length > 1 ? "ont été modifiées" : "a été modifiée"} il y a moins de 2 minutes : ` +
-          `peut-être ouverte${active.length > 1 ? "s" : ""} dans Claude Desktop ou dans un autre terminal.\n\n${titles(active)}`,
-        {
-          title: "Conversations peut-être en cours",
-          kind: "warning",
-          okLabel: trash ? "Les mettre aussi à la Corbeille" : "Les archiver aussi",
-          cancelLabel: "Les ignorer",
-        },
-      );
+      const go = await ask(t("app.bulk.activeConfirm", { count: active.length, titles: titleList(active) }), {
+        title: t("app.bulk.activeTitle"),
+        kind: "warning",
+        okLabel: trash ? t("app.bulk.trashToo") : t("app.bulk.archiveToo"),
+        cancelLabel: t("app.bulk.ignore"),
+      });
       if (go) for (const s of active) await attempt(s, true);
       else skipped = active.length;
     }
 
     const done = doneList.length;
     if (done > 0) {
-      const what = trash ? (done > 1 ? "envoyées à la Corbeille" : "envoyée à la Corbeille") : done > 1 ? "archivées" : "archivée";
-      toast(`${count(done)} ${what}` + (skipped ? ` (${skipped} ignorée${skipped > 1 ? "s" : ""})` : ""));
+      toast(t(trash ? "app.bulk.trashed" : "app.bulk.archived", { count: done, skipped }));
     } else if (skipped) {
-      toast(`Aucune conversation ${trash ? "supprimée" : "archivée"} (${skipped} ignorée${skipped > 1 ? "s" : ""})`);
+      toast(t(trash ? "app.bulk.noneTrashed" : "app.bulk.noneArchived", { skipped }));
     }
     if (failed.length > 0) {
-      toast(`Échec pour ${count(failed.length)} :\n` + failed.slice(0, 5).join("\n") + (failed.length > 5 ? `\n… et ${failed.length - 5} autre(s)` : ""), true);
+      toast(t("app.bulk.failed", { count: failed.length, list: shortList(failed) }), true);
     }
     await refresh();
     return { done: doneList, remaining: skipped + failed.length };
@@ -710,35 +704,31 @@ export default function App() {
   const archiveProject = async (p: ProjectInfo) => {
     const name = projectName(p, config);
     if (terminals.some((t) => p.sessions.some((s) => s.id === t.sessionId))) {
-      toast(`Fermez d'abord les onglets ouverts du projet « ${name} ».`, true);
+      toast(t("app.project.closeTabsFirst", { name }), true);
       return;
     }
     const sessions = p.sessions.filter((s) => !s.provisional);
     const n = sessions.length;
-    const ok = await ask(
-      `Archiver le projet « ${name} » ?\n\n` +
-        (n > 0 ? `Ses ${n} conversation${n > 1 ? "s seront archivées" : " sera archivée"} avec lui. ` : "") +
-        "Le projet disparaît de la barre latérale et se restaure depuis les Archives, avec sa catégorie, sa couleur et ses sections.\nLe dossier du projet n'est pas touché.",
-      { title: "Archiver le projet", kind: "warning", okLabel: "Archiver le projet", cancelLabel: "Annuler" },
-    );
+    const ok = await ask(t("app.project.archiveConfirm", { name, count: n }), {
+      title: t("app.project.archiveTitle"),
+      kind: "warning",
+      okLabel: t("app.project.archiveTitle"),
+      cancelLabel: t("common.cancel"),
+    });
     if (!ok) return;
     let ids: string[] = [];
     if (n > 0) {
       const r = await bulkSessionAction(sessions, "archive", true);
       if (!r) return;
       if (r.remaining > 0) {
-        toast(
-          `Le projet « ${name} » n'a pas été archivé : ${r.remaining} conversation${r.remaining > 1 ? "s sont restées" : " est restée"} en place. ` +
-            "Celles déjà archivées se restaurent depuis les Archives.",
-          true,
-        );
+        toast(t("app.project.notArchived", { name, count: r.remaining }), true);
         return;
       }
       ids = r.done.map((s) => s.id);
     }
     try {
       setConfig(await api.markProjectArchived(p.key, ids));
-      toast(`Projet « ${name} » archivé`);
+      toast(t("app.project.archived", { name }));
       setSelection((sel) => (sel?.kind === "project" && sel.key === p.key ? null : sel));
     } catch (e) {
       showError(e);
@@ -749,15 +739,8 @@ export default function App() {
     try {
       const r = await api.restoreProject(key);
       setConfig(r.config);
-      toast(`Projet « ${name} » restauré` + (r.restored ? ` (${r.restored} conversation${r.restored > 1 ? "s" : ""})` : ""));
-      if (r.errors.length > 0) {
-        toast(
-          `${r.errors.length} conversation${r.errors.length > 1 ? "s sont restées" : " est restée"} dans les archives :\n` +
-            r.errors.slice(0, 5).join("\n") +
-            (r.errors.length > 5 ? `\n… et ${r.errors.length - 5} autre(s)` : ""),
-          true,
-        );
-      }
+      toast(t("app.project.restored", { name, count: r.restored }));
+      if (r.errors.length > 0) toast(t("app.restore.errors", { count: r.errors.length, list: shortList(r.errors.map(errorMessage)) }), true);
     } catch (e) {
       showError(e);
     }
@@ -767,7 +750,7 @@ export default function App() {
   const restoreArchive = async (a: ArchiveEntry) => {
     try {
       setConfig(await api.restoreArchive(a.sessionId));
-      toast(`« ${a.title} » restaurée`);
+      toast(t("app.conversation.restored", { title: a.title }));
     } catch (e) {
       showError(e);
     }
@@ -775,16 +758,16 @@ export default function App() {
   };
 
   const trashArchive = async (a: ArchiveEntry) => {
-    const ok = await ask(`Mettre la conversation archivée « ${a.title} » à la Corbeille ?`, {
-      title: "Supprimer l'archive",
+    const ok = await ask(t("app.archive.trashConfirm", { title: a.title }), {
+      title: t("app.archive.trashTitle"),
       kind: "warning",
-      okLabel: "Mettre à la Corbeille",
-      cancelLabel: "Annuler",
+      okLabel: t("app.moveToTrash"),
+      cancelLabel: t("common.cancel"),
     });
     if (!ok) return;
     try {
       setConfig(await api.trashArchive(a.sessionId));
-      toast("Archive envoyée à la Corbeille");
+      toast(t("app.archive.trashed"));
     } catch (e) {
       showError(e);
     }
@@ -804,7 +787,7 @@ export default function App() {
   const createHub = async (name: string) => {
     try {
       setConfig((await api.hubCreate(name, null)).config);
-      toast(`Hub « ${name} » créé : ajoutez-y des conversations (glisser-déposer, ou « Ajouter à un hub… »)`);
+      toast(t("app.hub.createdHint", { name }));
     } catch (e) {
       showError(e);
     }
@@ -844,34 +827,30 @@ export default function App() {
       return found && !found.s.provisional ? [found.s] : [];
     });
     if (terminals.some((t) => sessions.some((s) => s.id === t.sessionId))) {
-      toast(`Fermez d'abord les onglets ouverts des conversations du hub « ${hub.name} ».`, true);
+      toast(t("app.hub.closeTabsFirst", { name: hub.name }), true);
       return;
     }
     const n = sessions.length;
-    const ok = await ask(
-      `Archiver le hub « ${hub.name} » ?\n\n` +
-        (n > 0 ? `Ses ${n} conversation${n > 1 ? "s seront archivées" : " sera archivée"} avec lui. ` : "") +
-        "Le hub disparaît de la barre latérale et se restaure depuis les Archives, avec ses conversations.",
-      { title: "Archiver le hub", kind: "warning", okLabel: "Archiver le hub", cancelLabel: "Annuler" },
-    );
+    const ok = await ask(t("app.hub.archiveConfirm", { name: hub.name, count: n }), {
+      title: t("app.hub.archiveTitle"),
+      kind: "warning",
+      okLabel: t("app.hub.archiveTitle"),
+      cancelLabel: t("common.cancel"),
+    });
     if (!ok) return;
     let ids: string[] = [];
     if (n > 0) {
       const r = await bulkSessionAction(sessions, "archive", true);
       if (!r) return;
       if (r.remaining > 0) {
-        toast(
-          `Le hub « ${hub.name} » n'a pas été archivé : ${r.remaining} conversation${r.remaining > 1 ? "s sont restées" : " est restée"} en place. ` +
-            "Celles déjà archivées se restaurent depuis les Archives.",
-          true,
-        );
+        toast(t("app.hub.notArchived", { name: hub.name, count: r.remaining }), true);
         return;
       }
       ids = r.done.map((s) => s.id);
     }
     try {
       setConfig(await api.hubMarkArchived(hub.id, ids));
-      toast(`Hub « ${hub.name} » archivé`);
+      toast(t("app.hub.archived", { name: hub.name }));
     } catch (e) {
       showError(e);
     }
@@ -881,15 +860,8 @@ export default function App() {
     try {
       const r = await api.hubRestore(hub.id);
       setConfig(r.config);
-      toast(`Hub « ${hub.name} » restauré` + (r.restored ? ` (${r.restored} conversation${r.restored > 1 ? "s" : ""})` : ""));
-      if (r.errors.length > 0) {
-        toast(
-          `${r.errors.length} conversation${r.errors.length > 1 ? "s sont restées" : " est restée"} dans les archives :\n` +
-            r.errors.slice(0, 5).join("\n") +
-            (r.errors.length > 5 ? `\n… et ${r.errors.length - 5} autre(s)` : ""),
-          true,
-        );
-      }
+      toast(t("app.hub.restored", { name: hub.name, count: r.restored }));
+      if (r.errors.length > 0) toast(t("app.restore.errors", { count: r.errors.length, list: shortList(r.errors.map(errorMessage)) }), true);
     } catch (e) {
       showError(e);
     }
@@ -897,11 +869,11 @@ export default function App() {
   };
 
   const deleteHub = async (hub: Hub) => {
-    const ok = await ask(`Supprimer le hub « ${hub.name} » ?\nSes conversations restent dans leur projet, seul le regroupement disparaît.`, {
-      title: "Supprimer le hub",
+    const ok = await ask(t("app.hub.deleteConfirm", { name: hub.name }), {
+      title: t("app.hub.deleteTitle"),
       kind: "warning",
-      okLabel: "Supprimer",
-      cancelLabel: "Annuler",
+      okLabel: t("common.delete"),
+      cancelLabel: t("common.cancel"),
     });
     if (ok) hubCall(() => api.hubDelete(hub.id));
   };
@@ -921,7 +893,7 @@ export default function App() {
     if (!hub || !d.joiner) return;
     try {
       setConfig(await api.hubSetMember(hub.id, d.joiner, defaultRole(hub)));
-      toast(`« ${conversationTitle(d.joiner) ?? "La conversation"} » a rejoint le hub « ${hub.name} »`);
+      toast(t("app.hub.joined", { title: conversationTitle(d.joiner) ?? t("app.hub.theConversation"), hub: hub.name }));
     } catch (e) {
       showError(e);
     }
@@ -934,7 +906,7 @@ export default function App() {
       setConfig(created.config);
       await api.hubSetMember(created.hubId, from, "coordinateur");
       setConfig(await api.hubSetMember(created.hubId, to, "executant"));
-      toast(`Hub « ${name} » créé`);
+      toast(t("app.hub.created", { name }));
     } catch (e) {
       showError(e);
     }
@@ -968,10 +940,10 @@ export default function App() {
     const text = executorFirstMessage(r.task, hub.name, { messagingName, title: conversationTitle(coordinator.conversationId) ?? "coordinateur" });
     const firstLine = r.task.split(/\r?\n/)[0].trim();
     const title = firstLine.length > 60 ? firstLine.slice(0, 59) + "…" : firstLine;
-    const id = startNewConversation(p.key, p.path, null, r.worktree ?? undefined, { title: title || NEW_CONVERSATION_TITLE });
+    const id = startNewConversation(p.key, p.path, null, r.worktree ?? undefined, { title: title || newConversationTitle() });
     if (!id) return;
     joinHub.current.set(id, hub.id);
-    if (!(await sendWhenReady(id, text))) toast("L'exécutant n'a pas démarré : sa tâche n'a pas été envoyée.", true);
+    if (!(await sendWhenReady(id, text))) toast(t("app.hub.executorNotStarted"), true);
   };
 
   /** Ouvre la « Vue Hub » dans la zone principale, comme un projet. */
@@ -1133,14 +1105,14 @@ export default function App() {
           onConfigChange={updateConfig}
         />
       ) : (
-        <main className="main empty-main">Sélectionnez un projet.</main>
+        <main className="main empty-main">{t("app.selectProject")}</main>
       )}
       </div>
 
       {dialog?.kind === "newCategory" && (
         <TextPrompt
-          title="Nouvelle catégorie"
-          label="Nom"
+          title={t("app.category.new")}
+          label={t("common.name")}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
             updateConfig((c) => ({ ...c, categories: [...c.categories, { id: newId(), name, color: null, projectKeys: [] }] }));
@@ -1150,8 +1122,8 @@ export default function App() {
       )}
       {dialog?.kind === "renameCategory" && (
         <TextPrompt
-          title="Renommer la catégorie"
-          label="Nom"
+          title={t("app.category.rename")}
+          label={t("common.name")}
           initial={dialog.category.name}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
@@ -1162,8 +1134,8 @@ export default function App() {
       )}
       {dialog?.kind === "renameProject" && (
         <TextPrompt
-          title="Nom d'affichage du projet"
-          label="Nom (laisser vide pour revenir au nom du dossier)"
+          title={t("app.project.renameTitle")}
+          label={t("app.project.renameLabel")}
           initial={projectName(dialog.project, config)}
           allowEmpty
           onClose={() => setDialog(null)}
@@ -1218,8 +1190,8 @@ export default function App() {
       )}
       {dialog?.kind === "newHub" && (
         <TextPrompt
-          title="Nouveau hub"
-          label="Nom"
+          title={t("app.hub.new")}
+          label={t("common.name")}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
             setDialog(null);
@@ -1229,8 +1201,8 @@ export default function App() {
       )}
       {dialog?.kind === "renameHub" && (
         <TextPrompt
-          title="Renommer le hub"
-          label="Nom"
+          title={t("app.hub.rename")}
+          label={t("common.name")}
           initial={dialog.hub.name}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
@@ -1244,7 +1216,7 @@ export default function App() {
           config={config}
           sessionId={dialog.session.id}
           title={dialog.session.title}
-          titleOf={(id) => conversationTitle(id) ?? "conversation introuvable"}
+          titleOf={(id) => conversationTitle(id) ?? t("app.conversationNotFound")}
           onClose={() => setDialog(null)}
           onSubmit={(choice) => {
             setDialog(null);
@@ -1266,7 +1238,7 @@ export default function App() {
               hub={hub}
               projects={executorProjects()}
               defaultProjectKey={projectOfConversation(coordinator.conversationId)}
-              coordinator={{ id: coordinator.conversationId, title: conversationTitle(coordinator.conversationId) ?? "Conversation introuvable" }}
+              coordinator={{ id: coordinator.conversationId, title: conversationTitle(coordinator.conversationId) ?? t("app.conversationNotFoundTitle") }}
               validateWorktree={worktreeNameError}
               onOpenCoordinator={() => openConversationById(coordinator.conversationId)}
               onClose={() => setDialog(null)}
@@ -1279,8 +1251,8 @@ export default function App() {
         })()}
       {dialog?.kind === "hubFromExchange" && (
         <TextPrompt
-          title="Créer un hub"
-          label={`Nom du hub — « ${conversationTitle(dialog.from) ?? "?"} » coordinateur, « ${conversationTitle(dialog.to) ?? "?"} » exécutant`}
+          title={t("app.hub.createTitle")}
+          label={t("app.hub.createFromExchangeLabel", { from: conversationTitle(dialog.from) ?? "?", to: conversationTitle(dialog.to) ?? "?" })}
           initial={conversationTitle(dialog.from) ?? ""}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {

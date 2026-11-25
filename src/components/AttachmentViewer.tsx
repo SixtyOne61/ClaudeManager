@@ -10,6 +10,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, X } from "lucide-react";
 import { baseName } from "../attachments";
 import { renderMarkdown } from "../markdown";
+import { t } from "../i18n";
+import { errorMessage } from "../api";
 
 type Preview =
   | { kind: "image"; src: string; transcript: boolean }
@@ -35,7 +37,7 @@ export function AttachmentViewer({ path, sessionId = null, cwd = null, onClose }
     setPreview(null);
     invoke<Preview>("attachment_preview", { path, sessionId, cwd })
       .then((p) => alive && setPreview(p))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(errorMessage(e)));
     return () => {
       alive = false;
     };
@@ -66,12 +68,12 @@ export function AttachmentViewer({ path, sessionId = null, cwd = null, onClose }
     [preview, isMarkdown],
   );
 
-  const openExternal = () => invoke("open_attachment", { path }).catch((e) => setError(String(e)));
+  const openExternal = () => invoke("open_attachment", { path }).catch((e) => setError(errorMessage(e)));
   const onDisk = preview !== null && preview.kind !== "missing" && !(preview.kind === "image" && preview.transcript);
 
   let body;
   if (error) body = <div className="viewer-message">{error}</div>;
-  else if (!preview) body = <div className="viewer-message">Chargement…</div>;
+  else if (!preview) body = <div className="viewer-message">{t("tools.attachment.loading")}</div>;
   else if (preview.kind === "image") body = <img className="viewer-image" src={preview.src} alt={baseName(path)} />;
   else if (preview.kind === "pdf") body = pdfUrl && <iframe className="viewer-pdf" src={pdfUrl} title={baseName(path)} />;
   else if (preview.kind === "text")
@@ -82,16 +84,14 @@ export function AttachmentViewer({ path, sessionId = null, cwd = null, onClose }
         ) : (
           <pre className="viewer-text">{preview.text}</pre>
         )}
-        {preview.truncated && <div className="viewer-note">Fichier tronqué : seuls les 512 premiers Ko sont affichés.</div>}
+        {preview.truncated && <div className="viewer-note">{t("tools.attachment.truncated")}</div>}
       </>
     );
   else if (preview.kind === "unsupported")
-    body = <div className="viewer-message">Aperçu non disponible pour ce type de fichier.</div>;
+    body = <div className="viewer-message">{t("tools.attachment.unsupported")}</div>;
   else
     body = (
-      <div className="viewer-message">
-        Fichier introuvable : il a été déplacé ou supprimé (les images collées sont supprimées à la fermeture de l'app).
-      </div>
+      <div className="viewer-message">{t("tools.attachment.missing")}</div>
     );
 
   return createPortal(
@@ -101,13 +101,13 @@ export function AttachmentViewer({ path, sessionId = null, cwd = null, onClose }
           <div className="viewer-title">
             <span className="viewer-name">{baseName(path)}</span>
             <span className="viewer-path" title={path}>
-              {preview?.kind === "image" && preview.transcript ? "Copie gardée dans la conversation (fichier supprimé)" : path}
+              {preview?.kind === "image" && preview.transcript ? t("tools.attachment.transcriptCopy") : path}
             </span>
           </div>
-          <button className="btn small" onClick={openExternal} disabled={!onDisk} title="Ouvrir avec l'application par défaut">
-            <ExternalLink size={13} /> Ouvrir
+          <button className="btn small" onClick={openExternal} disabled={!onDisk} title={t("tools.attachment.openTitle")}>
+            <ExternalLink size={13} /> {t("tools.attachment.open")}
           </button>
-          <button className="btn small ghost" onClick={onClose} title="Fermer (Échap)">
+          <button className="btn small ghost" onClick={onClose} title={t("tools.attachment.closeTitle")}>
             <X size={14} />
           </button>
         </div>

@@ -80,7 +80,15 @@ pub enum Entry {
         truncated: bool,
     },
     /// Remarque discrète : interruption, sortie d'une commande `/…`, conversation compactée.
-    Notice { line: u32, uuid: Option<String>, text: String },
+    /// `code` : notice produite par l'app (« compacted », « interrupted »), que l'interface
+    /// affiche dans sa langue ; `text` garde le texte français (repli, recherche).
+    Notice {
+        line: u32,
+        uuid: Option<String>,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
     /// Message entre conversations (voir messages.rs) : envoyé par l'agent (`SendMessage`) ou
     /// reçu d'une autre conversation (`<cross-session-message>`), au lieu d'un appel d'outil
     /// ou d'un message de l'utilisateur.
@@ -348,7 +356,7 @@ pub fn parse_line_meta(text: &str, line: u32, out: &mut Vec<Entry>, meta: &mut M
                 return;
             }
             if flag("isCompactSummary") {
-                out.push(Entry::Notice { line, uuid, text: "Conversation compactée".into() });
+                out.push(Entry::Notice { line, uuid, text: "Conversation compactée".into(), code: Some("compacted".into()) });
                 return;
             }
             if flag("isMeta") {
@@ -458,7 +466,7 @@ fn user_entry(raw: &str, line: u32, uuid: Option<String>) -> Option<Entry> {
     if let Some(stdout) = tag_content(raw, "local-command-stdout") {
         let text = strip_ansi(stdout).trim().to_string();
         let (text, _) = truncate(&text);
-        return (!text.is_empty()).then_some(Entry::Notice { line, uuid, text });
+        return (!text.is_empty()).then_some(Entry::Notice { line, uuid, text, code: None });
     }
     let mut text = raw.to_string();
     for tag in NOISE_SECTIONS.iter().copied().chain(["task-notification", "command-message"]) {
@@ -472,7 +480,7 @@ fn user_entry(raw: &str, line: u32, uuid: Option<String>) -> Option<Entry> {
         return None;
     }
     if text.starts_with("[Request interrupted") {
-        return Some(Entry::Notice { line, uuid, text: "Interrompu par l'utilisateur".into() });
+        return Some(Entry::Notice { line, uuid, text: "Interrompu par l'utilisateur".into(), code: Some("interrupted".into()) });
     }
     Some(Entry::User { line, uuid, text: text.to_string(), command: false })
 }
@@ -768,7 +776,7 @@ Bonjour
         assert_eq!(ops, [" a", "-b", "+B", " c"]);
         let Entry::ToolResult { text, is_error, .. } = &e[6] else { panic!() };
         assert_eq!((text.as_str(), *is_error), ("Exit code 2", true));
-        assert_eq!(e[7], Entry::Notice { line: 9, uuid: Some("u6".into()), text: "Interrompu par l'utilisateur".into() });
+        assert_eq!(e[7], Entry::Notice { line: 9, uuid: Some("u6".into()), text: "Interrompu par l'utilisateur".into(), code: Some("interrupted".into()) });
         assert_eq!(e.len(), 8);
     }
 

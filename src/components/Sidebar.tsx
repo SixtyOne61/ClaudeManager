@@ -54,10 +54,12 @@ import {
   projectSections,
   putConversationInSection,
   renameSection,
+  sectionName,
   setSectionCollapsed,
   setSectionColor,
   storedSectionId,
 } from "../sections";
+import { t } from "../i18n";
 import { TextPrompt } from "./Dialogs";
 import { ColorPicker } from "./ColorPicker";
 import { UpdateButton } from "./UpdateButton";
@@ -67,9 +69,6 @@ import { countActivities, useActivities, type ActivityCount } from "../activity"
 import { hasSuggestion, useSuggestions } from "../suggestions";
 import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
 import { HubLinkIcon, HubsPanel, type HubActions } from "./Hubs";
-
-/** Info-bulle de l'icône 💡 d'un projet ou d'une catégorie. */
-const GROUP_SUGGESTION_HINT = "Une conversation a une suggestion";
 
 /** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
 const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((s) => s.id));
@@ -292,12 +291,12 @@ export function Sidebar(props: Props) {
     <aside className={"sidebar" + (reduced ? " reduced" : "")}>
       {reduced ? (
         <div className="sidebar-rail">
-          <button className="icon-btn" title="Agrandir la barre latérale" onClick={() => setReduced(false)}>
+          <button className="icon-btn" title={t("sidebar.rail.expand")} onClick={() => setReduced(false)}>
             <PanelLeftOpen size={17} />
           </button>
           <button
             className={"icon-btn" + (view === "projects" ? " on" : "")}
-            title="Projets"
+            title={t("sidebar.view.projects")}
             onClick={() => {
               setView("projects");
               setReduced(false);
@@ -307,7 +306,7 @@ export function Sidebar(props: Props) {
           </button>
           <button
             className={"icon-btn" + (view === "conversations" ? " on" : "")}
-            title="Conversations du projet courant"
+            title={t("sidebar.view.conversationsHint")}
             onClick={() => {
               setView("conversations");
               setReduced(false);
@@ -317,7 +316,7 @@ export function Sidebar(props: Props) {
           </button>
           <button
             className={"icon-btn" + (view === "hubs" ? " on" : "")}
-            title="Hubs"
+            title={t("sidebar.view.hubs")}
             onClick={() => {
               setView("hubs");
               setReduced(false);
@@ -331,10 +330,10 @@ export function Sidebar(props: Props) {
           <div className="sidebar-header">
             <h1>Claude Manager</h1>
             <span className="sidebar-header-actions">
-              <button className="icon-btn" title="Ajouter un projet" onClick={props.onAddProject}>
+              <button className="icon-btn" title={t("sidebar.header.addProject")} onClick={props.onAddProject}>
                 <FolderPlus size={16} />
               </button>
-              <button className="icon-btn" title="Rafraîchir" onClick={props.onRefresh} disabled={props.loading}>
+              <button className="icon-btn" title={t("sidebar.header.refresh")} onClick={props.onRefresh} disabled={props.loading}>
                 <RefreshCw size={16} className={props.loading ? "spin" : ""} />
               </button>
               <MoreMenu>
@@ -342,40 +341,40 @@ export function Sidebar(props: Props) {
                   className={"nav-item" + (props.selection?.kind === "archives" && !props.searchActive ? " selected" : "")}
                   onClick={() => props.onSelect({ kind: "archives" })}
                 >
-                  <Archive size={15} /> Archives <span className="count">{config.archives.length}</span>
+                  <Archive size={15} /> {t("sidebar.header.archives")} <span className="count">{config.archives.length}</span>
                 </button>
                 {props.onSettings && (
                   <button className="nav-item" onClick={props.onSettings}>
-                    <Settings size={15} /> Réglages
+                    <Settings size={15} /> {t("sidebar.header.settings")}
                   </button>
                 )}
               </MoreMenu>
-              <button className="icon-btn" title="Réduire la barre latérale" onClick={() => setReduced(true)}>
+              <button className="icon-btn" title={t("sidebar.header.collapse")} onClick={() => setReduced(true)}>
                 <PanelLeftClose size={16} />
               </button>
             </span>
           </div>
           <div className="sidebar-views" role="tablist">
             <button role="tab" aria-selected={view === "projects"} className={"sidebar-view" + (view === "projects" ? " active" : "")} onClick={() => setView("projects")}>
-              <FolderTree size={14} /> Projets
+              <FolderTree size={14} /> {t("sidebar.view.projects")}
             </button>
             <button
               role="tab"
               aria-selected={view === "conversations"}
               className={"sidebar-view" + (view === "conversations" ? " active" : "")}
               onClick={() => setView("conversations")}
-              title="Conversations du projet courant"
+              title={t("sidebar.view.conversationsHint")}
             >
-              <MessagesSquare size={14} /> Conversations
+              <MessagesSquare size={14} /> {t("sidebar.view.conversations")}
             </button>
             <button
               role="tab"
               aria-selected={view === "hubs"}
               className={"sidebar-view" + (view === "hubs" ? " active" : "")}
               onClick={() => setView("hubs")}
-              title="Conversations qui travaillent ensemble, même de projets différents"
+              title={t("sidebar.view.hubsHint")}
             >
-              <Network size={14} /> Hubs
+              <Network size={14} /> {t("sidebar.view.hubs")}
             </button>
           </div>
         </>
@@ -409,7 +408,7 @@ export function Sidebar(props: Props) {
         <>
       <div className="sidebar-toolbar">
         <button className="btn small" onClick={props.onAddCategory}>
-          <Plus size={14} /> Catégorie
+          <Plus size={14} /> {t("sidebar.projects.addCategory")}
         </button>
       </div>
 
@@ -443,15 +442,15 @@ export function Sidebar(props: Props) {
 
           <Zone id={NONE} className="category uncategorized">
             <div className="category-header static">
-              <span className="category-name">Non classés</span>
-              {hasSuggestion(suggestions, sessionIds(uncategorized)) && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
+              <span className="category-name">{t("sidebar.projects.uncategorized")}</span>
+              {hasSuggestion(suggestions, sessionIds(uncategorized)) && <SuggestionIcon title={t("sidebar.groupSuggestionHint")} />}
               <ActivityCounts {...countActivities(activities, sessionIds(uncategorized))} />
               <span className="count">{uncategorized.length}</span>
             </div>
             <SortableContext items={uncategorized.map((p) => "p:" + p.key)} strategy={verticalListSortingStrategy}>
               {uncategorized.map((p) => row(p, NONE))}
             </SortableContext>
-            {uncategorized.length === 0 && <div className="empty-zone">Aucun projet</div>}
+            {uncategorized.length === 0 && <div className="empty-zone">{t("sidebar.projects.noProjects")}</div>}
           </Zone>
 
           <DragOverlay dropAnimation={null}>
@@ -478,9 +477,9 @@ export function Sidebar(props: Props) {
           <button
             className={"nav-item" + (props.searchActive ? " selected" : "")}
             onClick={props.onSearch}
-            title={`Chercher dans le contenu de toutes les conversations (${modKey}+Maj+F)`}
+            title={t("sidebar.footer.searchAllHint", { mod: modKey })}
           >
-            <Search size={15} /> Rechercher partout
+            <Search size={15} /> {t("sidebar.footer.searchAll")}
           </button>
         )}
         <UsageLimits />
@@ -510,7 +509,7 @@ function MoreMenu({ children }: { children: React.ReactNode }) {
   }, [open]);
   return (
     <div className="color-picker" ref={ref}>
-      <button className="icon-btn" title="Plus" onClick={() => setOpen((o) => !o)}>
+      <button className="icon-btn" title={t("sidebar.header.more")} onClick={() => setOpen((o) => !o)}>
         <MoreHorizontal size={16} />
       </button>
       {open && (
@@ -538,17 +537,21 @@ function ConversationsPanel(props: {
   const [dragId, setDragId] = useState<string | null>(null);
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  if (!project) return <div className="sidebar-scroll"><div className="empty-zone">Aucun projet courant</div></div>;
+  if (!project) return <div className="sidebar-scroll"><div className="empty-zone">{t("sidebar.conversations.noProject")}</div></div>;
   const list = [...project.sessions].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
   const groups = groupBySection(config, project.key, list);
   const change = props.onConfigChange;
 
   const confirmDelete = async (section: Section) => {
-    const ok = await ask(`Supprimer la section « ${section.name} » ?\nSes conversations reviendront dans « ${defaultSection(config, project.key).name} ».`, {
-      title: "Supprimer la section",
+    const message = t("sidebar.section.deleteConfirmMove", {
+      name: sectionName(section),
+      defaultName: sectionName(defaultSection(config, project.key)),
+    });
+    const ok = await ask(message, {
+      title: t("sidebar.section.deleteTitle"),
       kind: "warning",
-      okLabel: "Supprimer",
-      cancelLabel: "Annuler",
+      okLabel: t("common.delete"),
+      cancelLabel: t("common.cancel"),
     });
     if (ok) change((c) => deleteSection(c, project.key, section.id));
   };
@@ -615,13 +618,13 @@ function ConversationsPanel(props: {
         <span className="count">{list.length}</span>
       </div>
       <div className="sidebar-toolbar">
-        <button className="btn small" onClick={() => setDialog({ kind: "new" })} title="Regrouper des conversations de ce projet">
-          <ListPlus size={14} /> Section
+        <button className="btn small" onClick={() => setDialog({ kind: "new" })} title={t("sidebar.section.addHint")}>
+          <ListPlus size={14} /> {t("sidebar.section.add")}
         </button>
       </div>
       <div className="sidebar-scroll">
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
-          {list.length === 0 && <div className="empty-zone">Aucune conversation</div>}
+          {list.length === 0 && <div className="empty-zone">{t("sidebar.conversations.empty")}</div>}
           <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
             {groups.sections.map(({ section, sessions }) => (
               <SectionBlock
@@ -653,7 +656,7 @@ function ConversationsPanel(props: {
             )}
             {draggedSection && (
               <div className="category overlay" style={colorStyle(draggedSection.color)}>
-                <div className="category-header">{draggedSection.name}</div>
+                <div className="category-header">{sectionName(draggedSection)}</div>
               </div>
             )}
           </DragOverlay>
@@ -661,8 +664,8 @@ function ConversationsPanel(props: {
       </div>
       {dialog?.kind === "new" && (
         <TextPrompt
-          title="Nouvelle section"
-          label="Nom"
+          title={t("sidebar.section.newTitle")}
+          label={t("common.name")}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
             change((c) => addSection(c, project.key, name));
@@ -672,9 +675,9 @@ function ConversationsPanel(props: {
       )}
       {dialog?.kind === "rename" && (
         <TextPrompt
-          title="Renommer la section"
-          label="Nom"
-          initial={dialog.section.name}
+          title={t("sidebar.section.renameTitle")}
+          label={t("common.name")}
+          initial={sectionName(dialog.section)}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
             change((c) => renameSection(c, project.key, dialog.section.id, name));
@@ -711,7 +714,7 @@ function ConversationRow(props: {
       <span className="project-name">{s.title}</span>
       <HubLinkIcon config={props.config} sessionId={s.id} />
       <ConversationSuggestionIcon sessionId={s.id} />
-      <span className="project-meta">{s.provisional ? "nouveau" : relativeDate(s.updatedAt)}</span>
+      <span className="project-meta">{s.provisional ? t("sidebar.conversations.new") : relativeDate(s.updatedAt)}</span>
     </div>
   );
 }
@@ -747,25 +750,25 @@ function SectionBlock(props: {
     >
       <div className="category-header" {...sortable.attributes} {...sortable.listeners}>
         <GripVertical size={14} className="grip" />
-        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? "Déplier" : "Replier"}>
+        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? t("common.expand") : t("common.collapse")}>
           {section.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <span className="category-name" onDoubleClick={props.onRename}>
-          {section.name}
+          {sectionName(section)}
         </span>
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
           {props.onNew && (
-            <button className="icon-btn" title="Nouvelle conversation dans cette section (terminal intégré)" onClick={props.onNew}>
+            <button className="icon-btn" title={t("sidebar.section.newConversation")} onClick={props.onNew}>
               <Plus size={13} />
             </button>
           )}
-          <button className="icon-btn" title="Renommer" onClick={props.onRename}>
+          <button className="icon-btn" title={t("common.rename")} onClick={props.onRename}>
             <Pencil size={13} />
           </button>
-          <ColorPicker compact value={section.color} onChange={props.onColor} title="Couleur de la section" />
+          <ColorPicker compact value={section.color} onChange={props.onColor} title={t("sidebar.section.color")} />
           {props.onDelete && (
-            <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
+            <button className="icon-btn" title={t("sidebar.section.deleteTitle")} onClick={props.onDelete}>
               <Trash2 size={13} />
             </button>
           )}
@@ -773,7 +776,7 @@ function SectionBlock(props: {
       </div>
       <div ref={zone.setNodeRef} className="category-body">
         {!section.collapsed && props.children}
-        {!section.collapsed && props.count === 0 && <div className="empty-zone">Déposez des conversations ici</div>}
+        {!section.collapsed && props.count === 0 && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
       </div>
     </section>
   );
@@ -818,28 +821,28 @@ function CategoryBlock(props: {
     <section ref={sortable.setNodeRef} style={style} className={"category" + (cat.color ? " colored" : "") + (zone.isOver ? " drop-over" : "")}>
       <div className="category-header" {...sortable.attributes} {...sortable.listeners}>
         <GripVertical size={14} className="grip" />
-        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={props.collapsed ? "Déplier" : "Replier"}>
+        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={props.collapsed ? t("common.expand") : t("common.collapse")}>
           {props.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <span className="category-name" onDoubleClick={props.onRename}>
           {cat.name}
         </span>
-        {props.suggested && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
+        {props.suggested && <SuggestionIcon title={t("sidebar.groupSuggestionHint")} />}
         <ActivityCounts {...props.activity} />
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
-          <button className="icon-btn" title="Renommer" onClick={props.onRename}>
+          <button className="icon-btn" title={t("common.rename")} onClick={props.onRename}>
             <Pencil size={13} />
           </button>
-          <ColorPicker compact value={cat.color} onChange={props.onColor} title="Couleur de la catégorie" />
-          <button className="icon-btn" title="Supprimer la catégorie" onClick={props.onDelete}>
+          <ColorPicker compact value={cat.color} onChange={props.onColor} title={t("sidebar.category.color")} />
+          <button className="icon-btn" title={t("sidebar.category.delete")} onClick={props.onDelete}>
             <Trash2 size={13} />
           </button>
         </span>
       </div>
       <div ref={zone.setNodeRef} className="category-body">
         {!props.collapsed && props.children}
-        {!props.collapsed && props.count === 0 && <div className="empty-zone">Déposez des projets ici</div>}
+        {!props.collapsed && props.count === 0 && <div className="empty-zone">{t("sidebar.category.dropProjects")}</div>}
       </div>
     </section>
   );
@@ -876,11 +879,11 @@ function ProjectRow(props: {
       {...s.listeners}
     >
       <span className="project-name">{props.name}</span>
-      {!p.exists && <TriangleAlert size={13} className="warn" aria-label="Dossier introuvable" />}
-      {props.suggested && <SuggestionIcon title={GROUP_SUGGESTION_HINT} />}
+      {!p.exists && <TriangleAlert size={13} className="warn" aria-label={t("sidebar.project.folderMissing")} />}
+      {props.suggested && <SuggestionIcon title={t("sidebar.groupSuggestionHint")} />}
       <ActivityCounts {...props.activity} />
       <span className="project-meta">
-        {p.sessions.length > 0 ? `${p.sessions.length} · ${relativeDate(p.lastActivity)}` : "vide"}
+        {p.sessions.length > 0 ? `${p.sessions.length} · ${relativeDate(p.lastActivity)}` : t("sidebar.project.empty")}
       </span>
     </div>
   );

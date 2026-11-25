@@ -8,7 +8,9 @@ import { api, type ArchiveEntry, type Config, type Hub, type HubMember, type Hub
 import { colorStyle, projectName } from "../util";
 import { countActivities, type Activity } from "../activity";
 import { hasSuggestion, useSuggestions } from "../suggestions";
-import { HUB_ROLES, activeHubs, coordinatorOf, executorBlocker, hubHint, hubOf, roleLabel, sortedMembers } from "../hubs";
+import { HUB_ROLES, activeHubs, coordinatorOf, executorBlocker, hubHint, hubOf, roleHint, roleLabel, sortedMembers } from "../hubs";
+import { t } from "../i18n";
+import { tRich } from "../i18n/rich";
 import { messagesApi } from "../messages";
 import { ActivityCounts, ActivityDot } from "./Activity";
 import { ColorPicker } from "./ColorPicker";
@@ -95,13 +97,13 @@ export function HubsPanel(props: {
   return (
     <>
       <div className="sidebar-toolbar">
-        <button className="btn small" onClick={props.onAddHub} title="Regrouper des conversations qui travaillent ensemble, même de projets différents">
-          <Plus size={14} /> Hub
+        <button className="btn small" onClick={props.onAddHub} title={t("hubs.panel.addHubTitle")}>
+          <Plus size={14} /> {t("hubs.panel.addHub")}
         </button>
       </div>
       <div className="sidebar-scroll">
         {hubs.length === 0 && (
-          <div className="empty-zone">Aucun hub. Créez-en un, ou « Ajouter à un hub… » sur une conversation.</div>
+          <div className="empty-zone">{t("hubs.panel.empty")}</div>
         )}
         <DndContext
           sensors={sensors}
@@ -159,7 +161,7 @@ function HubBlock(props: {
       style={colorStyle(hub.color)}
     >
       <div className={"category-header hub-header" + (props.selected ? " selected" : "")}>
-        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={props.collapsed ? "Déplier" : "Replier"}>
+        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={props.collapsed ? t("common.expand") : t("common.collapse")}>
           {props.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <span className="hub-link-icon" aria-hidden>
@@ -167,13 +169,13 @@ function HubBlock(props: {
         </span>
         <span
           className="category-name hub-name"
-          title={actions.onOpenHub ? `Ouvrir le hub « ${hub.name} »` : hub.name}
+          title={actions.onOpenHub ? t("hubs.block.openHub", { name: hub.name }) : hub.name}
           onClick={() => (actions.onOpenHub ? actions.onOpenHub(hub.id) : props.onToggle())}
           onDoubleClick={() => actions.onRename(hub)}
         >
           {hub.name}
         </span>
-        {hasSuggestion(suggestions, ids) && <SuggestionIcon title="Une conversation a une suggestion" />}
+        {hasSuggestion(suggestions, ids) && <SuggestionIcon title={t("hubs.block.suggestion")} />}
         <ActivityCounts {...countActivities(props.activities, ids)} />
         <span className="count">{hub.members.length}</span>
         <span className="hover-actions" onPointerDown={stop}>
@@ -185,7 +187,7 @@ function HubBlock(props: {
           {sortedMembers(hub).map((m) => (
             <HubMemberRow key={m.conversationId} {...props} member={m} />
           ))}
-          {hub.members.length === 0 && <div className="empty-zone">« Ajouter à un hub… » sur une conversation, ou glissez ici le membre d'un autre hub</div>}
+          {hub.members.length === 0 && <div className="empty-zone">{t("hubs.block.emptyMembers")}</div>}
         </div>
       )}
     </section>
@@ -205,8 +207,8 @@ function HubMemberRow(props: {
   const { hub, member: m, actions } = props;
   const drag = useDraggable({ id: MEMBER_DRAG_PREFIX + m.conversationId });
   const info = memberInfo(props.config, props.projects, m.conversationId);
-  const title = info.session?.title ?? info.archived?.title ?? "Conversation introuvable";
-  const where = info.project ? projectName(info.project, props.config) : info.archived ? "archivée" : "";
+  const title = info.session?.title ?? info.archived?.title ?? t("hubs.member.notFound");
+  const where = info.project ? projectName(info.project, props.config) : info.archived ? t("hubs.member.archived") : "";
   const stop = (e: React.PointerEvent) => e.stopPropagation();
   return (
     <div
@@ -239,7 +241,7 @@ export function HubMemberControls({ hub, member: m, actions }: { hub: Hub; membe
       <select
         className="hub-role-select"
         value={m.role}
-        title="Rôle dans le hub"
+        title={t("hubs.member.roleTitle")}
         onChange={(e) => actions.onSetRole(hub, m.conversationId, e.target.value as HubRole)}
       >
         {HUB_ROLES.map((r) => (
@@ -248,7 +250,7 @@ export function HubMemberControls({ hub, member: m, actions }: { hub: Hub; membe
           </option>
         ))}
       </select>
-      <button className="icon-btn" title="Retirer du hub" onClick={() => actions.onRemoveMember(hub, m.conversationId)}>
+      <button className="icon-btn" title={t("hubs.member.remove")} onClick={() => actions.onRemoveMember(hub, m.conversationId)}>
         <X size={13} />
       </button>
     </>
@@ -261,14 +263,14 @@ export function HubHeaderActions({ hub, actions, compact }: { hub: Hub; actions:
   return (
     <>
       {actions.onAddExecutor && <AddExecutorButton hub={hub} onClick={() => actions.onAddExecutor?.(hub)} compact={compact} />}
-      <button className="icon-btn" title="Renommer" onClick={() => actions.onRename(hub)}>
+      <button className="icon-btn" title={t("common.rename")} onClick={() => actions.onRename(hub)}>
         <Pencil size={size} />
       </button>
-      <ColorPicker compact={compact} value={hub.color} onChange={(c) => actions.onColor(hub, c)} title="Couleur du hub" />
-      <button className="icon-btn" title="Archiver le hub et ses conversations" onClick={() => actions.onArchive(hub)}>
+      <ColorPicker compact={compact} value={hub.color} onChange={(c) => actions.onColor(hub, c)} title={t("hubs.actions.color")} />
+      <button className="icon-btn" title={t("hubs.actions.archive")} onClick={() => actions.onArchive(hub)}>
         <Archive size={size} />
       </button>
-      <button className="icon-btn" title="Supprimer le hub (les conversations restent dans leur projet)" onClick={() => actions.onDelete(hub)}>
+      <button className="icon-btn" title={t("hubs.actions.delete")} onClick={() => actions.onDelete(hub)}>
         <Trash2 size={size} />
       </button>
     </>
@@ -309,7 +311,7 @@ export function HubDialog(props: {
   const unchanged = !!target && current?.hub.id === target.id && current.role === role;
 
   return (
-    <Modal title="Ajouter à un hub" onClose={props.onClose}>
+    <Modal title={t("hubs.dialog.title")} onClose={props.onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -318,10 +320,10 @@ export function HubDialog(props: {
         }}
       >
         <p className="muted hub-dialog-conv">
-          Conversation : <strong>{props.title}</strong>
+          {tRich("hubs.dialog.conversation", {}, { title: <strong>{props.title}</strong> })}
         </p>
         <label className="field">
-          <span>Hub</span>
+          <span>{t("hubs.dialog.hub")}</span>
           <select
             value={hubId}
             onChange={(e) => {
@@ -335,45 +337,39 @@ export function HubDialog(props: {
                 {h.name} ({h.members.length})
               </option>
             ))}
-            <option value={NEW_HUB}>Nouveau hub…</option>
+            <option value={NEW_HUB}>{t("hubs.dialog.newHub")}</option>
           </select>
         </label>
         {isNew && (
           <label className="field">
-            <span>Nom du nouveau hub</span>
+            <span>{t("hubs.dialog.newHubName")}</span>
             <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           </label>
         )}
         <div className="field">
-          <span>Rôle</span>
+          <span>{t("hubs.dialog.role")}</span>
           {HUB_ROLES.map((r) => (
             <label key={r} className="checkbox">
               <input type="radio" name="hub-role" checked={role === r} onChange={() => setRole(r)} />
               {roleLabel(r)}
-              <small>
-                {r === "coordinateur"
-                  ? "répartit le travail et reçoit les comptes rendus (un seul par hub)"
-                  : r === "executant"
-                    ? "réalise une tâche confiée par le coordinateur"
-                    : "membre d'un hub sans coordinateur"}
-              </small>
+              <small>{roleHint(r)}</small>
             </label>
           ))}
-          {demoted && <small>« {props.titleOf(demoted.conversationId)} » deviendra exécutant.</small>}
-          {current && !current.hub.archived && target && current.hub.id !== target.id && <small>Elle quittera le hub « {current.hub.name} ».</small>}
-          {current && isNew && <small>Elle quittera le hub « {current.hub.name} ».</small>}
+          {demoted && <small>{t("hubs.dialog.demoted", { title: props.titleOf(demoted.conversationId) })}</small>}
+          {current && !current.hub.archived && target && current.hub.id !== target.id && <small>{t("hubs.dialog.willLeave", { name: current.hub.name })}</small>}
+          {current && isNew && <small>{t("hubs.dialog.willLeave", { name: current.hub.name })}</small>}
         </div>
         <div className="modal-actions">
           {current && (
             <button type="button" className="btn ghost danger hub-dialog-remove" onClick={() => props.onRemove(current.hub)}>
-              Retirer du hub « {current.hub.name} »
+              {t("hubs.dialog.removeFrom", { name: current.hub.name })}
             </button>
           )}
           <button type="button" className="btn ghost" onClick={props.onClose}>
-            Annuler
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={!valid || unchanged}>
-            {current ? "Valider" : "Ajouter"}
+            {current ? t("hubs.dialog.submit") : t("common.add")}
           </button>
         </div>
       </form>
@@ -387,12 +383,12 @@ export function HubDialog(props: {
 export function AddExecutorButton({ hub, onClick, compact }: { hub: Hub; onClick: () => void; compact?: boolean }) {
   const blocker = executorBlocker(hub);
   return compact ? (
-    <button className="icon-btn" title={blocker ? `+ Exécutant : ${blocker}` : "+ Exécutant…"} disabled={!!blocker} onClick={onClick}>
+    <button className="icon-btn" title={blocker ? t("hubs.executor.compactTitleBlocked", { reason: blocker }) : t("hubs.executor.compactTitle")} disabled={!!blocker} onClick={onClick}>
       <UserPlus size={13} />
     </button>
   ) : (
-    <button className="btn" title={blocker ?? "Lancer une nouvelle conversation exécutante, qui rendra compte au coordinateur"} disabled={!!blocker} onClick={onClick}>
-      <UserPlus size={14} /> Exécutant
+    <button className="btn" title={blocker ?? t("hubs.executor.buttonTitle")} disabled={!!blocker} onClick={onClick}>
+      <UserPlus size={14} /> {t("hubs.executor.button")}
     </button>
   );
 }
@@ -474,7 +470,7 @@ export function ExecutorDialog(props: {
   };
 
   return (
-    <Modal title={`+ Exécutant dans « ${props.hub.name} »`} onClose={props.onClose}>
+    <Modal title={t("hubs.executor.dialogTitle", { hub: props.hub.name })} onClose={props.onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -483,28 +479,25 @@ export function ExecutorDialog(props: {
       >
         <div className="executor-coordinator">
           <span>
-            Coordinateur : <strong>{props.coordinator.title}</strong>
+            {tRich("hubs.executor.coordinator", {}, { title: <strong>{props.coordinator.title}</strong> })}
             {name && (
               <>
                 {" "}
-                (nom de messagerie <code>{name}</code>)
+                {tRich("hubs.executor.messagingName", {}, { name: <code>{name}</code> })}
               </>
             )}
           </span>
           {name === null && (
             <div className="executor-warning">
-              <span>
-                Il ne tourne pas : l'exécutant ne connaîtra que le nom de sa conversation, pas son nom de messagerie (qui change à chaque lancement). Ouvrez-le
-                d'abord pour que l'exécutant puisse lui rendre compte.
-              </span>
+              <span>{t("hubs.executor.notRunning")}</span>
               <button type="button" className="btn small" onClick={props.onOpenCoordinator}>
-                Ouvrir le coordinateur
+                {t("hubs.executor.openCoordinator")}
               </button>
             </div>
           )}
         </div>
         <label className="field">
-          <span>Projet</span>
+          <span>{t("hubs.executor.project")}</span>
           <select value={projectKey} onChange={(e) => setProjectKey(e.target.value)}>
             {props.projects.map((p) => (
               <option key={p.key} value={p.key}>
@@ -514,11 +507,11 @@ export function ExecutorDialog(props: {
           </select>
         </label>
         <label className="field">
-          <span>Tâche</span>
+          <span>{t("hubs.executor.task")}</span>
           <textarea
             value={task}
             rows={6}
-            placeholder="Ce que l'exécutant doit faire (envoyé comme premier message)"
+            placeholder={t("hubs.executor.taskPlaceholder")}
             onChange={(e) => setTask(e.target.value)}
             onKeyDown={(e) => {
               // Ctrl+Entrée (⌘+Entrée) : valider.
@@ -529,28 +522,28 @@ export function ExecutorDialog(props: {
             }}
             autoFocus
           />
-          <small>Suivie de la consigne de rendre compte au coordinateur avec l'outil SendMessage.</small>
+          <small>{t("hubs.executor.taskHint")}</small>
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={useWorktree} disabled={!worktreeOk} onChange={(e) => setInWorktree(e.target.checked)} />
-          Dans un nouveau worktree
+          {t("hubs.executor.inWorktree")}
         </label>
-        {!worktreeOk && <small className="executor-hint">Le dossier de ce projet n'est pas un dépôt git : l'exécutant démarrera dans le dossier du projet.</small>}
+        {!worktreeOk && <small className="executor-hint">{t("hubs.executor.notGit")}</small>}
         {useWorktree && (
           <label className="field executor-worktree">
-            <span>Nom du worktree (facultatif)</span>
-            <input value={worktree} placeholder="ex. correction-connexion" onChange={(e) => setWorktree(e.target.value)} spellCheck={false} />
+            <span>{t("hubs.executor.worktreeName")}</span>
+            <input value={worktree} placeholder={t("hubs.executor.worktreePlaceholder")} onChange={(e) => setWorktree(e.target.value)} spellCheck={false} />
             <small>
-              {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
+              {error ?? t("hubs.executor.worktreeHint")}
             </small>
           </label>
         )}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={props.onClose}>
-            Annuler
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={!valid}>
-            Lancer l'exécutant
+            {t("hubs.executor.launch")}
           </button>
         </div>
       </form>

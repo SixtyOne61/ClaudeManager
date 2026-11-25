@@ -5,7 +5,6 @@ export default {
   "common.justNow": "à l'instant",
   "common.cancel": "Annuler",
   "common.close": "Fermer",
-  "common.ok": "OK",
   "common.rename": "Renommer",
   "common.delete": "Supprimer",
   "common.archive": "Archiver",

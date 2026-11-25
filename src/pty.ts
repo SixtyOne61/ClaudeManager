@@ -12,6 +12,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { t } from "./i18n";
 
 export interface PtyInfo {
   key: string;
@@ -109,9 +110,9 @@ export function startInNewWorktree(sessionId: string, name: string) {
 export function worktreeNameError(name: string): string | null {
   const n = name.trim();
   if (!n) return null; // facultatif
-  if (n.length > 64) return "64 caractères au plus.";
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(n)) return "Lettres, chiffres, « - », « _ » ou « . » uniquement, en commençant par une lettre ou un chiffre.";
-  if (n.includes("..") || n.endsWith(".") || n.toLowerCase().endsWith(".lock")) return "Pas de « .. », ni de « . » ou « .lock » à la fin.";
+  if (n.length > 64) return t("conversation.worktree.tooLong");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(n)) return t("conversation.worktree.invalidChars");
+  if (n.includes("..") || n.endsWith(".") || n.toLowerCase().endsWith(".lock")) return t("conversation.worktree.invalidEnd");
   return null;
 }
 

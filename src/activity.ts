@@ -17,6 +17,7 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { t } from "./i18n";
 
 export type ActivityState = "running" | "waiting" | "ended";
 
@@ -110,8 +111,8 @@ export function getActivities(): ReadonlyMap<string, Activity> {
  * (l'agent a fini son tour et attend simplement un message).
  */
 export function interruptionWarning(a: Activity | null | undefined): string | null {
-  if (a?.state === "running") return "L'agent est en train de travailler : fermer l'arrêtera en cours de route.";
-  if (isAwaitingPermission(a)) return "Une action attend ta permission : fermer l'annulera.";
+  if (a?.state === "running") return t("app.activity.warnRunning");
+  if (isAwaitingPermission(a)) return t("app.activity.warnPermission");
   return null;
 }
 
@@ -135,16 +136,16 @@ export function isAwaitingPermission(a: Activity | null | undefined): boolean {
 /** Libellé de l'état, pour les info-bulles. */
 export function activityLabel(a: Activity | null | undefined): string {
   const d = activityDisplay(a);
-  if (!a || d === "closed") return "Fermée";
-  if (d === "running") return "En cours";
-  if (d === "yours") return "À toi : Claude attend ton prochain message";
+  if (!a || d === "closed") return t("app.activity.closed");
+  if (d === "running") return t("app.activity.running");
+  if (d === "yours") return t("app.activity.yours");
   switch (a.kind) {
     case "permission":
-      return "Action requise : permission demandée";
+      return t("app.activity.permission");
     case "question":
-      return "Action requise : question posée";
+      return t("app.activity.question");
     default:
-      return "Action requise : erreur" + (a.detail ? ` (${a.detail})` : "") + ", relance ton message";
+      return a.detail ? t("app.activity.errorDetail", { detail: a.detail }) : t("app.activity.error");
   }
 }
 

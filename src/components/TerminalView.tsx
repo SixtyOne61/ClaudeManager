@@ -33,6 +33,9 @@ import type { SearchFocus } from "./GlobalSearch";
 import { SuggestionBanners, type SuggestionActionHandler } from "./Suggestions";
 import { ACTION_HAND_OFF, dismissStale, forgetStale, type Suggestion } from "../suggestions";
 import { cancelHandoff, useHandoffBlocker, useHandoffState, type HandoffLineage } from "../handoff";
+import { t } from "../i18n";
+import { tSplit } from "../i18n/rich";
+
 
 interface Props {
   sessionId: string;
@@ -81,13 +84,13 @@ const COMMAND_GRACE_MS = 2000;
 function upReason(up: TerminalUp): string | null {
   switch (up) {
     case "permission":
-      return "Claude Code demande une permission : réponds dans le terminal.";
+      return t("conversation.terminal.upPermission");
     case "question":
-      return "Claude Code pose une question : réponds dans le terminal.";
+      return t("conversation.terminal.upQuestion");
     case "command":
-      return "Commande envoyée : termine-la dans le terminal si un menu s'est ouvert.";
+      return t("conversation.terminal.upCommand");
     case "launch":
-      return "Claude Code demande si tu fais confiance à ce dossier : réponds dans le terminal.";
+      return t("conversation.terminal.upLaunch");
     default:
       return null;
   }
@@ -370,17 +373,20 @@ export function TerminalView({
     start();
   };
 
+  const parentText = tSplit("conversation.toolbar.parent", "title");
+  const successorText = tSplit("conversation.toolbar.successor", "title");
+
   return (
     <div className="terminal-view" style={{ display: active ? undefined : "none" }}>
       {state.kind === "exited" && (
         <div className="banner terminal-banner">
           <TriangleAlert size={15} />
-          <span>Claude Code s'est terminé{state.code != null ? ` (code ${state.code})` : ""}.</span>
+          <span>{state.code != null ? t("conversation.terminal.exitedWithCode", { code: String(state.code) }) : t("conversation.terminal.exited")}</span>
           <button className="btn small primary" onClick={relaunch}>
-            <RotateCcw size={13} /> Relancer
+            <RotateCcw size={13} /> {t("conversation.terminal.relaunch")}
           </button>
           <button className="btn small ghost" onClick={onClose}>
-            <X size={13} /> Fermer l'onglet
+            <X size={13} /> {t("conversation.terminal.closeTab")}
           </button>
         </div>
       )}
@@ -389,48 +395,48 @@ export function TerminalView({
           <TriangleAlert size={15} />
           <span className="terminal-error">{state.message}</span>
           <button className="btn small" onClick={relaunch}>
-            <RotateCcw size={13} /> Réessayer
+            <RotateCcw size={13} /> {t("conversation.terminal.retry")}
           </button>
         </div>
       )}
       <div className="conv-toolbar">
         {terminalShown ? (
-          <button className="btn small" onClick={() => setUp(null)} title="Revenir à l'interface de conversation">
-            <MessagesSquare size={13} /> Revenir à la conversation
+          <button className="btn small" onClick={() => setUp(null)} title={t("conversation.toolbar.backToConversationTitle")}>
+            <MessagesSquare size={13} /> {t("conversation.toolbar.backToConversation")}
           </button>
         ) : (
-          <button className="btn small" onClick={() => setUp("manual")} title="Afficher le vrai terminal de Claude Code">
-            <SquareTerminal size={13} /> Voir le terminal
+          <button className="btn small" onClick={() => setUp("manual")} title={t("conversation.toolbar.showTerminalTitle")}>
+            <SquareTerminal size={13} /> {t("conversation.toolbar.showTerminal")}
           </button>
         )}
         <button
           className="btn small"
           onClick={() => api.openFolder(cwd).catch(() => {})}
-          title={`Ouvrir le dossier dans l'explorateur : ${cwd}`}
+          title={t("conversation.toolbar.openFolderTitle", { path: cwd })}
         >
-          <FolderOpen size={13} /> Ouvrir le dossier
+          <FolderOpen size={13} /> {t("conversation.toolbar.openFolder")}
         </button>
         {onHandoff && (
           <button
             className="btn small"
             disabled={!!handoffReason}
             onClick={onHandoff}
-            title={handoffReason ?? "Passer le relais à une nouvelle conversation, qui démarre avec un résumé de passation écrit par celle-ci"}
+            title={handoffReason ?? t("conversation.toolbar.handoffTitle")}
           >
-            <Handshake size={13} /> Hand off
+            <Handshake size={13} /> {t("conversation.toolbar.handoff")}
           </button>
         )}
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}
         {(lineage?.parent || lineage?.successor) && (
           <span className="conv-lineage">
             {lineage.parent && (
-              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title="Ouvrir la conversation d'origine de ce hand off">
-                <ArrowLeft size={12} /> Suite de <em>{lineage.parent.title}</em>
+              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title={t("conversation.toolbar.parentTitle")}>
+                <ArrowLeft size={12} /> {parentText[0]}<em>{lineage.parent.title}</em>{parentText[1]}
               </button>
             )}
             {lineage.successor && (
-              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title="Ouvrir la conversation qui a pris le relais">
-                Suite : <em>{lineage.successor.title}</em> <ArrowRight size={12} />
+              <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title={t("conversation.toolbar.successorTitle")}>
+                {successorText[0]}<em>{lineage.successor.title}</em>{successorText[1]} <ArrowRight size={12} />
               </button>
             )}
           </span>
@@ -441,12 +447,12 @@ export function TerminalView({
           <Loader2 size={14} className="spin" />
           <span className="handoff-banner-text">
             {handoffPhase === "summary"
-              ? "Hand off en cours… L'agent rédige le résumé de passation."
-              : "Hand off en cours… Création de la nouvelle conversation."}
+              ? t("conversation.handoff.summary")
+              : t("conversation.handoff.creating")}
           </span>
           {handoffPhase === "summary" && (
-            <button className="btn small ghost" onClick={() => cancelHandoff(sessionId)} title="Arrêter le hand off : rien n'est créé ni archivé">
-              <X size={12} /> Annuler
+            <button className="btn small ghost" onClick={() => cancelHandoff(sessionId)} title={t("conversation.handoff.cancelTitle")}>
+              <X size={12} /> {t("common.cancel")}
             </button>
           )}
         </div>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 import type { Category } from "../api";
+import { t } from "../i18n";
 
 export function Modal({ title, children, onClose, className }: { title: string; children: React.ReactNode; onClose: () => void; className?: string }) {
   useEffect(() => {
@@ -49,10 +50,10 @@ export function TextPrompt(props: {
         </label>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={props.onClose}>
-            Annuler
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={!valid}>
-            Valider
+            {t("app.dialog.submit")}
           </button>
         </div>
       </form>
@@ -72,7 +73,7 @@ export function WorktreePrompt(props: {
   const [value, setValue] = useState("");
   const error = props.validate(value);
   return (
-    <Modal title="Nouvelle conversation dans un nouveau worktree" onClose={props.onClose}>
+    <Modal title={t("app.worktree.newTitle")} onClose={props.onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -80,18 +81,16 @@ export function WorktreePrompt(props: {
         }}
       >
         <label className="field">
-          <span>Nom du worktree (facultatif)</span>
-          <input value={value} placeholder="ex. correction-connexion" onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
-          <small>
-            {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
-          </small>
+          <span>{t("app.worktree.nameLabel")}</span>
+          <input value={value} placeholder={t("app.worktree.namePlaceholder")} onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
+          <small>{error ?? t("app.worktree.nameHint")}</small>
         </label>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={props.onClose}>
-            Annuler
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={!!error}>
-            Démarrer
+            {t("app.dialog.start")}
           </button>
         </div>
       </form>
@@ -114,35 +113,30 @@ export function WorktreeOfferDialog(props: {
   const [value, setValue] = useState("");
   const [dontAsk, setDontAsk] = useState(false);
   const error = props.validate(value);
-  const count = props.count === 2 ? "Deux" : String(props.count);
   return (
-    <Modal title="Démarrer dans un worktree ?" onClose={props.onClose}>
+    <Modal title={t("app.worktree.offerTitle")} onClose={props.onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           if (!error) props.onSubmit(value.trim(), dontAsk);
         }}
       >
-        <p className="modal-text">
-          {count} conversations tournent déjà dans ce dossier. Démarrer celle-ci dans un worktree pour éviter qu'elles se marchent dessus ?
-        </p>
+        <p className="modal-text">{t("app.worktree.offerText", { count: props.count })}</p>
         <label className="field">
-          <span>Nom du worktree (facultatif)</span>
-          <input value={value} placeholder="ex. correction-connexion" onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
-          <small>
-            {error ?? "Copie de travail séparée dans .claude\\worktrees\\<nom>, sur la branche worktree-<nom>. Sans nom, Claude Code en choisit un."}
-          </small>
+          <span>{t("app.worktree.nameLabel")}</span>
+          <input value={value} placeholder={t("app.worktree.namePlaceholder")} onChange={(e) => setValue(e.target.value)} autoFocus spellCheck={false} />
+          <small>{error ?? t("app.worktree.nameHint")}</small>
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
-          Ne plus demander pour ce projet
+          {t("app.worktree.dontAskAgain")}
         </label>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={() => props.onSubmit(null, dontAsk)}>
-            Ici quand même
+            {t("app.worktree.hereAnyway")}
           </button>
           <button type="submit" className="btn primary" disabled={!!error}>
-            Dans un worktree
+            {t("app.worktree.inWorktree")}
           </button>
         </div>
       </form>
@@ -190,12 +184,12 @@ export function NewProjectDialog(props: {
   const [startConversation, setStartConversation] = useState(true);
 
   const pick = async () => {
-    const chosen = await open({ directory: true, multiple: false, title: "Choisir ou créer le dossier du projet" });
+    const chosen = await open({ directory: true, multiple: false, title: t("app.newProject.pickTitle") });
     if (typeof chosen === "string") setPath(chosen);
   };
 
   return (
-    <Modal title="Nouveau projet" onClose={props.onClose}>
+    <Modal title={t("app.newProject.title")} onClose={props.onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -203,19 +197,19 @@ export function NewProjectDialog(props: {
         }}
       >
         <label className="field">
-          <span>Dossier</span>
+          <span>{t("app.newProject.folder")}</span>
           <div className="path-row">
-            <input value={path} readOnly placeholder="Aucun dossier choisi" onClick={pick} />
+            <input value={path} readOnly placeholder={t("app.newProject.noFolder")} onClick={pick} />
             <button type="button" className="btn" onClick={pick}>
-              <FolderOpen size={14} /> Parcourir…
+              <FolderOpen size={14} /> {t("app.newProject.browse")}
             </button>
           </div>
-          <small>Pour créer un dossier, utilisez « Nouveau dossier » dans la fenêtre de sélection.</small>
+          <small>{t("app.newProject.folderHint")}</small>
         </label>
         <label className="field">
-          <span>Catégorie</span>
+          <span>{t("app.newProject.category")}</span>
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">Non classés</option>
+            <option value="">{t("app.newProject.uncategorized")}</option>
             {props.categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -224,31 +218,31 @@ export function NewProjectDialog(props: {
           </select>
         </label>
         <label className="field">
-          <span>Nom d'affichage (facultatif)</span>
-          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Nom du dossier par défaut" />
+          <span>{t("app.newProject.displayName")}</span>
+          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t("app.newProject.displayNamePlaceholder")} />
         </label>
         <label className="field">
-          <span>Langue des réponses de Claude</span>
+          <span>{t("app.newProject.language")}</span>
           <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option value="">Par défaut (réglage habituel)</option>
+            <option value="">{t("app.newProject.languageDefault")}</option>
             {LANGUAGES.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
             ))}
           </select>
-          <small>Enregistrée dans .claude\settings.local.json du projet.</small>
+          <small>{t("app.newProject.languageHint")}</small>
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={startConversation} onChange={(e) => setStartConversation(e.target.checked)} />
-          Lancer une nouvelle conversation dans ce dossier
+          {t("app.newProject.startConversation")}
         </label>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={props.onClose}>
-            Annuler
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn primary" disabled={!path}>
-            Créer
+            {t("common.create")}
           </button>
         </div>
       </form>

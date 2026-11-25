@@ -4,6 +4,8 @@
 //! à la demande de l'utilisateur. Rien n'est jamais supprimé définitivement.
 
 use crate::config::ArchiveEntry;
+use crate::ui_error::ui_err;
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,8 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Une session modifiée il y a moins de ce délai est peut-être encore ouverte dans Claude.
 const ACTIVE_WINDOW_MS: u64 = 120_000;
 
-/// Préfixe d'erreur reconnu par l'interface pour proposer de forcer l'action.
-pub const ERR_ACTIVE: &str = "SESSION_ACTIVE";
+/// Code d'erreur (voir ui_error.rs) reconnu par l'interface pour proposer de forcer l'action.
+pub const ERR_ACTIVE: &str = "actions.sessionActive";
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -32,7 +34,7 @@ pub fn validate_session_id(id: &str) -> Result<(), String> {
     if !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         Ok(())
     } else {
-        Err(format!("Identifiant de session invalide : {id}"))
+        Err(ui_err("actions.invalidSessionId", json!({ "id": id })))
     }
 }
 
@@ -41,7 +43,7 @@ pub fn validate_project_key(key: &str) -> Result<(), String> {
     if !key.is_empty() && !key.contains(['/', '\\', ':']) && key != "." && key != ".." {
         Ok(())
     } else {
-        Err(format!("Clé de projet invalide : {key}"))
+        Err(ui_err("actions.invalidProjectKey", json!({ "key": key })))
     }
 }
 
@@ -105,7 +107,7 @@ pub fn detect_terminal() -> Terminal {
 /// La fenêtre reste ouverte après la fin de Claude (`-NoExit`).
 pub fn launch_claude(terminal: Terminal, dir: &str, session_id: Option<&str>) -> Result<(), String> {
     if !Path::new(dir).is_dir() {
-        return Err(format!("Le dossier du projet n'existe plus : {dir}"));
+        return Err(ui_err("actions.projectFolderMissing", json!({ "path": dir })));
     }
     let claude_cmd = match session_id {
         Some(id) => {
@@ -143,10 +145,15 @@ pub fn launch_claude(terminal: Terminal, dir: &str, session_id: Option<&str>) ->
         Ok(_) => Ok(()),
         // Si Windows Terminal échoue, on se rabat sur PowerShell.
         Err(_) if terminal == Terminal::WindowsTerminal => {
-            spawn(Terminal::PowerShell).map(|_| ()).map_err(|e| format!("Impossible d'ouvrir un terminal : {e}"))
+            spawn(Terminal::PowerShell).map(|_| ()).map_err(|e| terminal_failed(&e.to_string()))
         }
-        Err(e) => Err(format!("Impossible d'ouvrir un terminal : {e}")),
+        Err(e) => Err(terminal_failed(&e.to_string())),
     }
+}
+
+/// Erreur « Impossible d'ouvrir un terminal », avec le détail technique.
+pub fn terminal_failed(detail: &str) -> String {
+    ui_err("actions.terminalFailed", json!({ "detail": detail }))
 }
 
 /// Entoure un texte d'apostrophes pour un shell POSIX (`'` devient `'\''`).
@@ -182,11 +189,11 @@ pub fn open_mac_terminal(terminal: Terminal, command_line: &str) -> Result<(), S
             .arg(script)
             .arg(command_line)
             .output()
-            .map_err(|e| format!("Impossible d'ouvrir un terminal : {e}"))?;
+            .map_err(|e| terminal_failed(&e.to_string()))?;
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!("Impossible d'ouvrir un terminal : {}", String::from_utf8_lossy(&out.stderr).trim()))
+            Err(terminal_failed(String::from_utf8_lossy(&out.stderr).trim()))
         }
     };
     match terminal {
@@ -198,7 +205,7 @@ pub fn open_mac_terminal(terminal: Terminal, command_line: &str) -> Result<(), S
 /// Ouvre un dossier dans le gestionnaire de fichiers (Explorateur, Finder…).
 pub fn open_folder(dir: &str) -> Result<(), String> {
     if !Path::new(dir).is_dir() {
-        return Err(format!("Dossier introuvable : {dir}"));
+        return Err(ui_err("actions.folderNotFound", json!({ "path": dir })));
     }
     let opener = if cfg!(windows) {
         "explorer.exe"
@@ -217,12 +224,9 @@ pub fn open_folder(dir: &str) -> Result<(), String> {
 /// Déplace un fichier ou un dossier. `rename` d'abord ; si la destination est sur un
 /// autre volume, copie puis suppression de la source (la source n'est retirée qu'une
 /// fois la copie terminée sans erreur).
-fn move_path(from: &Path, to: &Path) -> std::io::Result<()> {
+fn move_path(from: &Path, to: &Path) -> Result<(), MoveError> {
     if to.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!("La destination existe déjà : {}", to.display()),
-        ));
+        return Err(MoveError::Exists(to.to_path_buf()));
     }
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent)?;
@@ -231,7 +235,28 @@ fn move_path(from: &Path, to: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     copy_recursive(from, to)?;
-    if from.is_dir() { fs::remove_dir_all(from) } else { fs::remove_file(from) }
+    Ok(if from.is_dir() { fs::remove_dir_all(from) } else { fs::remove_file(from) }?)
+}
+
+/// Échec d'un déplacement : destination déjà présente, ou erreur système.
+enum MoveError {
+    Exists(PathBuf),
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for MoveError {
+    fn from(e: std::io::Error) -> Self {
+        MoveError::Io(e)
+    }
+}
+
+/// Erreur codée `code` pour un déplacement raté : paramètre `cause` (`exists` avec `path`,
+/// ou `io` avec `detail`).
+fn move_failed(code: &str, e: MoveError) -> String {
+    match e {
+        MoveError::Exists(p) => ui_err(code, json!({ "cause": "exists", "path": p.display().to_string() })),
+        MoveError::Io(e) => ui_err(code, json!({ "cause": "io", "detail": e.to_string() })),
+    }
 }
 
 fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -260,7 +285,7 @@ impl SessionFiles {
         let base = projects_root.join(project_key);
         let file = base.join(format!("{session_id}.jsonl"));
         if !file.is_file() {
-            return Err(format!("Conversation introuvable : {}", file.display()));
+            return Err(ui_err("actions.conversationNotFound", json!({ "path": file.display().to_string() })));
         }
         let dir = Some(base.join(session_id)).filter(|d| d.is_dir());
         Ok(Self { file, dir })
@@ -271,23 +296,21 @@ impl SessionFiles {
         let recent = crate::sessions::file_stamp(&self.file)
             .is_some_and(|(mtime, _)| now_ms().saturating_sub(mtime) < ACTIVE_WINDOW_MS);
         if recent {
-            Err(format!("{ERR_ACTIVE}: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être encore ouverte."))
+            Err(ui_err(ERR_ACTIVE, json!({ "where": "here" })))
         } else {
             Ok(())
         }
     }
 
-    /// Avant d'ouvrir la conversation dans le terminal intégré : refuse (erreur préfixée
-    /// `SESSION_ACTIVE`, que l'interface propose de forcer) si le fichier vient d'être
+    /// Avant d'ouvrir la conversation dans le terminal intégré : refuse (erreur codée
+    /// `ERR_ACTIVE`, que l'interface propose de forcer) si le fichier vient d'être
     /// modifié par un autre programme. `released_at` : moment où l'app a elle-même fermé
     /// son terminal pour cette conversation, s'il y en a eu un.
     pub fn check_not_open_elsewhere(&self, released_at: Option<u64>) -> Result<(), String> {
         let open = crate::sessions::file_stamp(&self.file)
             .is_some_and(|(mtime, _)| may_be_open_elsewhere(mtime, now_ms(), released_at));
         if open {
-            Err(format!(
-                "{ERR_ACTIVE}: cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être ouverte dans Claude Desktop ou dans un autre terminal."
-            ))
+            Err(ui_err(ERR_ACTIVE, json!({ "where": "elsewhere" })))
         } else {
             Ok(())
         }
@@ -324,14 +347,14 @@ pub fn archive(
     entry.archived_at = now_ms();
 
     if dest_file.exists() || dest_dir.as_ref().is_some_and(|d| d.exists()) {
-        return Err("Une archive de cette conversation existe déjà.".into());
+        return Err(ui_err("actions.archiveExists", json!({})));
     }
-    move_path(&files.file, &dest_file).map_err(|e| format!("Archivage impossible : {e}"))?;
+    move_path(&files.file, &dest_file).map_err(|e| move_failed("actions.archiveFailed", e))?;
     if let (Some(src), Some(dst)) = (&files.dir, &dest_dir) {
         if let Err(e) = move_path(src, dst) {
             // On remet le .jsonl en place pour ne pas laisser une session à moitié archivée.
             let _ = move_path(&dest_file, &files.file);
-            return Err(format!("Archivage impossible : {e}"));
+            return Err(move_failed("actions.archiveFailed", e));
         }
     }
     let manifest = serde_json::to_string_pretty(&entry).unwrap_or_default();
@@ -344,16 +367,16 @@ pub fn restore(entry: &ArchiveEntry) -> Result<(), String> {
     let archived_file = PathBuf::from(&entry.archived_file);
     let original_file = PathBuf::from(&entry.original_file);
     if !archived_file.is_file() {
-        return Err(format!("Fichier d'archive introuvable : {}", archived_file.display()));
+        return Err(ui_err("actions.archiveFileMissing", json!({ "path": archived_file.display().to_string() })));
     }
     if original_file.exists() {
-        return Err("Une conversation avec le même identifiant existe déjà à l'emplacement d'origine.".into());
+        return Err(ui_err("actions.restoreConflict", json!({})));
     }
-    move_path(&archived_file, &original_file).map_err(|e| format!("Restauration impossible : {e}"))?;
+    move_path(&archived_file, &original_file).map_err(|e| move_failed("actions.restoreFailed", e))?;
     if let (Some(a), Some(o)) = (&entry.archived_dir, &entry.original_dir) {
         let (a, o) = (PathBuf::from(a), PathBuf::from(o));
         if a.is_dir() && !o.exists() {
-            move_path(&a, &o).map_err(|e| format!("Dossier de la session non restauré : {e}"))?;
+            move_path(&a, &o).map_err(|e| move_failed("actions.sessionDirNotRestored", e))?;
         }
     }
     let _ = fs::remove_file(manifest_path(entry));
@@ -370,7 +393,7 @@ pub fn to_trash(paths: &[PathBuf]) -> Result<(), String> {
     if existing.is_empty() {
         return Ok(());
     }
-    trash::delete_all(existing).map_err(|e| format!("Envoi à la Corbeille impossible : {e}"))
+    trash::delete_all(existing).map_err(|e| ui_err("actions.trashFailed", json!({ "detail": e.to_string() })))
 }
 
 /// Met à la Corbeille une session archivée (fichier, dossier et manifeste).
@@ -419,7 +442,7 @@ mod tests {
 
         let files = SessionFiles::locate(&projects, "C--p", "s1").unwrap();
         // Fichier tout juste écrit : considéré comme actif.
-        assert!(files.check_not_active().unwrap_err().starts_with(ERR_ACTIVE));
+        assert!(files.check_not_active().unwrap_err().contains(ERR_ACTIVE));
 
         let e = archive(&files, &archive_dir, entry("C--p", "s1")).unwrap();
         assert!(!proj.join("s1.jsonl").exists() && !proj.join("s1").exists());
@@ -452,7 +475,7 @@ mod tests {
         fs::create_dir_all(tmp.path().join("k")).unwrap();
         fs::write(tmp.path().join("k").join("s.jsonl"), "{}\n").unwrap();
         let files = SessionFiles::locate(tmp.path(), "k", "s").unwrap();
-        assert!(files.check_not_open_elsewhere(None).unwrap_err().starts_with(ERR_ACTIVE));
+        assert!(files.check_not_open_elsewhere(None).unwrap_err().contains(ERR_ACTIVE));
         assert!(files.check_not_open_elsewhere(Some(now_ms())).is_ok());
     }
 
@@ -466,7 +489,7 @@ mod tests {
         let files = SessionFiles::locate(&projects, "k", "s").unwrap();
         let e = archive(&files, &tmp.path().join("arch"), entry("k", "s")).unwrap();
         fs::write(proj.join("s.jsonl"), "nouveau").unwrap();
-        assert!(restore(&e).is_err());
+        assert!(restore(&e).unwrap_err().contains(r#""uiError":"actions.restoreConflict""#));
         assert_eq!(fs::read_to_string(proj.join("s.jsonl")).unwrap(), "nouveau");
     }
 }

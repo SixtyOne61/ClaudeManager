@@ -11,6 +11,7 @@ import type { SearchFocus } from "./GlobalSearch";
 import type { SuggestionActionHandler } from "./Suggestions";
 import type { Suggestion } from "../suggestions";
 import type { HandoffLineage } from "../handoff";
+import { t as tr } from "../i18n";
 
 /** Une conversation ouverte dans le terminal intégré. */
 export interface OpenTerminal {
@@ -40,9 +41,9 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
       <button
         className={"terminal-tab home" + (active === null ? " active" : "")}
         onClick={() => onSelect(null)}
-        title={home === "hub" ? "Revenir au hub" : "Revenir au projet"}
+        title={home === "hub" ? tr("conversation.tabs.backToHub") : tr("conversation.tabs.backToProject")}
       >
-        {home === "hub" ? <Network size={14} /> : <FolderKanban size={14} />} {home === "hub" ? "Hub" : "Projets"}
+        {home === "hub" ? <Network size={14} /> : <FolderKanban size={14} />} {home === "hub" ? tr("conversation.tabs.hub") : tr("conversation.tabs.projects")}
       </button>
       {terminals.map((t) => (
         <div
@@ -59,7 +60,7 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
           <span className="terminal-tab-title">{t.title}</span>
           <button
             className="icon-btn bare"
-            title="Fermer"
+            title={tr("common.close")}
             onClick={(e) => {
               e.stopPropagation();
               onClose(t);

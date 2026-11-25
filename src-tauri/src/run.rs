@@ -12,6 +12,8 @@
 //! plusieurs lignes s'exécute comme on l'aurait tapé ligne par ligne.
 
 use crate::pty::{normalize_dir, LaunchSpec, Program, PtyInfo, PtyManager};
+use crate::ui_error::ui_err;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
@@ -112,19 +114,15 @@ pub fn shell_argv(shell: Shell, script: &Path, keep_open: bool, powershell: &Pat
             v.extend(["-ExecutionPolicy".into(), "Bypass".into(), "-File".into(), script_s]);
             v
         }
-        Shell::Cmd if !cfg!(windows) => return Err(ERR_CMD_NOT_WINDOWS.into()),
+        Shell::Cmd if !cfg!(windows) => return Err(ui_err("run.cmdNotWindows", json!({}))),
         Shell::Cmd => vec!["cmd.exe".into(), "/d".into(), if keep_open { "/k" } else { "/c" }.into(), script_s],
         Shell::Bash => {
-            let bash = bash.ok_or(ERR_BASH_MISSING)?;
+            let bash = bash.ok_or_else(|| ui_err("run.bashMissing", json!({})))?;
             let script = if cfg!(windows) { forward_slashes(script) } else { script_s };
             vec![bash.to_string_lossy().to_string(), script]
         }
     })
 }
-
-const ERR_BASH_MISSING: &str = "Git Bash est introuvable : installez Git pour Windows (git-scm.com) pour exécuter les commandes bash, ou demandez à Claude la version PowerShell.";
-const ERR_CMD_NOT_WINDOWS: &str = "Les commandes cmd ne s'exécutent que sous Windows : demandez à Claude la version bash.";
-const ERR_PWSH_MISSING: &str = "PowerShell (pwsh) est introuvable : installez-le pour exécuter ce bloc, ou demandez à Claude la version bash.";
 
 /// Cherche un exécutable par son nom dans le PATH.
 fn in_path(name: &str) -> Option<PathBuf> {
@@ -145,7 +143,7 @@ fn find_powershell() -> Option<PathBuf> {
 /// Ligne de commande d'un bloc, avec les shells trouvés sur cette machine.
 fn argv_for(shell: Shell, script: &Path, keep_open: bool) -> Result<Vec<String>, String> {
     let powershell = match shell {
-        Shell::PowerShell => find_powershell().ok_or(ERR_PWSH_MISSING)?,
+        Shell::PowerShell => find_powershell().ok_or_else(|| ui_err("run.pwshMissing", json!({})))?,
         _ => PathBuf::new(),
     };
     shell_argv(shell, script, keep_open, &powershell, find_bash().as_deref())
@@ -182,7 +180,7 @@ fn find_bash() -> Option<PathBuf> {
 /// Dossier des scripts temporaires (vidé de ses vieux scripts au passage).
 fn scripts_dir() -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join("claude-manager-run");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Dossier temporaire inaccessible : {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| ui_err("run.tempDirFailed", json!({ "detail": e.to_string() })))?;
     let now = SystemTime::now();
     for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > SCRIPT_TTL);
@@ -198,28 +196,29 @@ fn validate_run_id(id: &str) -> Result<(), String> {
     if !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         Ok(())
     } else {
-        Err(format!("Identifiant de lancement invalide : {id}"))
+        Err(ui_err("run.invalidId", json!({ "id": id })))
     }
 }
 
 /// Écrit le script d'un bloc et renvoie son shell, son chemin et le dossier normalisé.
 fn prepare(run_id: &str, lang: &str, code: &str, cwd: &str, keep_open: bool) -> Result<(Shell, PathBuf, String), String> {
     validate_run_id(run_id)?;
-    let shell = Shell::from_lang(lang).ok_or_else(|| format!("Langue de bloc non exécutable : « {lang} »"))?;
+    let shell = Shell::from_lang(lang).ok_or_else(|| ui_err("run.unsupportedLang", json!({ "lang": lang })))?;
     let body = script_body(lang, code);
     if body.trim().is_empty() {
-        return Err("Le bloc est vide.".into());
+        return Err(ui_err("run.emptyBlock", json!({})));
     }
     if body.len() > MAX_SCRIPT {
-        return Err("Le bloc est trop long pour être exécuté.".into());
+        return Err(ui_err("run.blockTooLong", json!({})));
     }
     let cwd = normalize_dir(cwd);
     if !Path::new(&cwd).is_dir() {
-        return Err(format!("Le dossier de la conversation n'existe plus : {cwd}"));
+        return Err(crate::pty::folder_missing(&cwd));
     }
     let suffix = if keep_open { "-ext" } else { "" };
     let script = scripts_dir()?.join(format!("{run_id}{suffix}.{}", shell.extension()));
-    std::fs::write(&script, script_file_content(shell, &body, keep_open)).map_err(|e| format!("Écriture du script impossible : {e}"))?;
+    std::fs::write(&script, script_file_content(shell, &body, keep_open))
+        .map_err(|e| ui_err("run.scriptWriteFailed", json!({ "detail": e.to_string() })))?;
     Ok((shell, script, cwd))
 }
 
@@ -250,7 +249,7 @@ fn open_window(terminal: crate::actions::Terminal, cwd: &str, argv: &[String]) -
     } else {
         console()
     };
-    result.map(|_| ()).map_err(|e| format!("Impossible d'ouvrir un terminal : {e}"))
+    result.map(|_| ()).map_err(|e| crate::actions::terminal_failed(&e.to_string()))
 }
 
 #[cfg(test)]

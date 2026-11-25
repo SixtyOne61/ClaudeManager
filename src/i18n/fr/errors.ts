@@ -1,3 +1,52 @@
 // Textes : errors (voir src/i18n/index.ts pour le format).
+// Erreurs codées du backend (voir src-tauri/src/ui_error.rs) : la clé est `error.<code>`.
+// `{detail}` : message technique brut (erreur système, sortie d'un programme), non traduit.
+// `{cause, select, exists {…} other {…}}` : déplacement de fichier raté (voir `move_failed`
+// dans actions.rs).
 
-export default {} as const satisfies Record<string, string>;
+export default {
+  "error.actions.sessionActive":
+    "Cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être {where, select, elsewhere {ouverte dans Claude Desktop ou dans un autre terminal} other {encore ouverte}}.",
+  "error.actions.invalidSessionId": "Identifiant de session invalide : {id}",
+  "error.actions.invalidProjectKey": "Clé de projet invalide : {key}",
+  "error.actions.projectFolderMissing": "Le dossier du projet n'existe plus : {path}",
+  "error.actions.terminalFailed": "Impossible d'ouvrir un terminal : {detail}",
+  "error.actions.folderNotFound": "Dossier introuvable : {path}",
+  "error.actions.conversationNotFound": "Conversation introuvable : {path}",
+  "error.actions.archiveExists": "Une archive de cette conversation existe déjà.",
+  "error.actions.archiveFailed": "Archivage impossible : {cause, select, exists {La destination existe déjà : {path}} other {{detail}}}",
+  "error.actions.archiveFileMissing": "Fichier d'archive introuvable : {path}",
+  "error.actions.restoreConflict": "Une conversation avec le même identifiant existe déjà à l'emplacement d'origine.",
+  "error.actions.restoreFailed": "Restauration impossible : {cause, select, exists {La destination existe déjà : {path}} other {{detail}}}",
+  "error.actions.sessionDirNotRestored": "Dossier de la session non restauré : {cause, select, exists {La destination existe déjà : {path}} other {{detail}}}",
+  "error.actions.trashFailed": "Envoi à la Corbeille impossible : {detail}",
+  "error.archives.notFound": "Archive introuvable dans la configuration.",
+  "error.archives.projectNotArchived": "Ce projet n'est pas archivé.",
+  "error.archives.restoreItemFailed": "« {title} » : {reason, select, actions.archiveFileMissing {Fichier d'archive introuvable : {path}} actions.restoreConflict {Une conversation avec le même identifiant existe déjà à l'emplacement d'origine.} actions.restoreFailed {Restauration impossible : {cause, select, exists {La destination existe déjà : {path}} other {{detail}}}} actions.sessionDirNotRestored {Dossier de la session non restauré : {cause, select, exists {La destination existe déjà : {path}} other {{detail}}}} other {{detail}}}",
+  "error.attachments.fileNotFound": "Fichier introuvable.",
+  "error.config.saveFailed": "Enregistrement de la configuration impossible : {detail}",
+  "error.hubs.notFound": "Ce hub n'existe plus.",
+  "error.hubs.emptyName": "Le nom du hub est vide.",
+  "error.hubs.notArchived": "Ce hub n'est pas archivé.",
+  "error.projects.folderMissing": "Ce dossier n'existe pas : {path}",
+  "error.projectSettings.invalidJson": "{path} n'est pas un JSON valide : {detail}",
+  "error.projectSettings.createDirFailed": "Impossible de créer {path} : {detail}",
+  "error.projectSettings.writeFailed": "Impossible d'écrire {path} : {detail}",
+  "error.pty.invalidWorktreeName": "Nom de worktree invalide : « {name} ». Utilisez des lettres, chiffres, « - », « _ » ou « . » (sans espace, 64 caractères au plus).",
+  "error.pty.claudeMissing": "Claude Code (la commande « claude ») est introuvable.\nInstallez-le (par exemple, {platform, select, windows {dans PowerShell : irm https://claude.ai/install.ps1 | iex} other {dans un terminal : curl -fsSL https://claude.ai/install.sh | bash}} ; voir la documentation de Claude Code), vérifiez que « claude » fonctionne dans un terminal, puis redémarrez Claude Manager.",
+  "error.pty.folderMissing": "Le dossier de la conversation n'existe plus : {path}",
+  "error.pty.emptyCommand": "Commande vide.",
+  "error.pty.openFailed": "Ouverture du terminal impossible : {detail}",
+  "error.pty.claudeLaunchFailed": "Lancement de claude impossible : {detail}",
+  "error.pty.commandLaunchFailed": "Lancement de la commande impossible : {detail}",
+  "error.pty.notOpen": "Ce terminal n'est pas ouvert.",
+  "error.run.bashMissing": "Git Bash est introuvable : installez Git pour Windows (git-scm.com) pour exécuter les commandes bash, ou demandez à Claude la version PowerShell.",
+  "error.run.cmdNotWindows": "Les commandes cmd ne s'exécutent que sous Windows : demandez à Claude la version bash.",
+  "error.run.pwshMissing": "PowerShell (pwsh) est introuvable : installez-le pour exécuter ce bloc, ou demandez à Claude la version bash.",
+  "error.run.tempDirFailed": "Dossier temporaire inaccessible : {detail}",
+  "error.run.invalidId": "Identifiant de lancement invalide : {id}",
+  "error.run.unsupportedLang": "Langue de bloc non exécutable : « {lang} »",
+  "error.run.emptyBlock": "Le bloc est vide.",
+  "error.run.blockTooLong": "Le bloc est trop long pour être exécuté.",
+  "error.run.scriptWriteFailed": "Écriture du script impossible : {detail}",
+} as const satisfies Record<string, string>;

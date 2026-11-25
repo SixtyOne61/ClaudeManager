@@ -25,12 +25,13 @@ import {
 } from "../suggestions";
 import { DEFAULT_HANDOFF_PROMPT, handoffPrompt, setHandoffPrompt } from "../handoff";
 import { Modal } from "./Dialogs";
+import { t } from "../i18n";
 
 /** Onglets des réglages, dans l'ordre de la liste latérale. */
 const SETTINGS_TABS = [
-  { id: "display", label: "Affichage" },
-  { id: "suggestions", label: "Suggestions" },
-  { id: "handoff", label: "Hand off" },
+  { id: "display", labelKey: "settings.tab.display" },
+  { id: "suggestions", labelKey: "settings.tab.suggestions" },
+  { id: "handoff", labelKey: "settings.tab.handoff" },
 ] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 
@@ -39,7 +40,7 @@ const TAB_PREF = "claudeManager.settingsTab";
 function loadTab(): SettingsTab {
   try {
     const v = localStorage.getItem(TAB_PREF);
-    if (SETTINGS_TABS.some((t) => t.id === v)) return v as SettingsTab;
+    if (SETTINGS_TABS.some((tb) => tb.id === v)) return v as SettingsTab;
   } catch {
     /* stockage indisponible */
   }
@@ -88,10 +89,10 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
   };
 
   const [tab, setTab] = useState<SettingsTab>(loadTab);
-  const chooseTab = (t: SettingsTab) => {
-    setTab(t);
+  const chooseTab = (id: SettingsTab) => {
+    setTab(id);
     try {
-      localStorage.setItem(TAB_PREF, t);
+      localStorage.setItem(TAB_PREF, id);
     } catch {
       /* préférence non mémorisée */
     }
@@ -100,7 +101,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
   const panels: Record<SettingsTab, React.ReactNode> = {
     display: (
       <>
-        <h3 className="settings-heading">Affichage</h3>
+        <h3 className="settings-heading">{t("settings.tab.display")}</h3>
         <div className="settings-rule">
           <label className="checkbox">
             <input
@@ -108,16 +109,16 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
               checked={config.showTempProjects}
               onChange={(e) => onChange((c) => ({ ...c, showTempProjects: e.target.checked }))}
             />
-            Afficher les projets temporaires
+            {t("settings.display.showTempProjects")}
           </label>
-          <small className="settings-rule-help">Projets situés dans un dossier temporaire, masqués par défaut dans la barre latérale.</small>
+          <small className="settings-rule-help">{t("settings.display.showTempProjectsHelp")}</small>
         </div>
       </>
     ),
     suggestions: (
       <>
-        <h3 className="settings-heading">Suggestions</h3>
-        <p className="settings-help">L'app propose une bonne pratique quand elle repère une situation (icône 💡). Elle n'agit jamais d'elle-même.</p>
+        <h3 className="settings-heading">{t("settings.tab.suggestions")}</h3>
+        <p className="settings-help">{t("settings.suggestions.help")}</p>
         {Object.entries(SUGGESTION_RULES).map(([id, rule]) => {
           const enabled = isRuleEnabled(config, id);
           return (
@@ -129,7 +130,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
               <small className="settings-rule-help">{rule.description}</small>
               {id === "context" && (
                 <label className="settings-inline">
-                  Seuil :
+                  {t("settings.suggestions.thresholdBefore")}
                   <input
                     type="number"
                     min={CONTEXT_THRESHOLD_MIN}
@@ -140,14 +141,14 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
                     onChange={(e) => setThreshold(e.target.value)}
                     onBlur={commitThreshold}
                   />
-                  % du contexte
+                  {t("settings.suggestions.thresholdAfter")}
                 </label>
               )}
               {id === RULE_STALE && (
                 <>
                   <NumberSetting
-                    before="Inactive depuis plus de"
-                    after="minutes"
+                    before={t("settings.suggestions.staleMinutesBefore")}
+                    after={t("settings.suggestions.staleMinutesAfter")}
                     min={STALE_MINUTES_MIN}
                     max={STALE_MINUTES_MAX}
                     step={5}
@@ -156,8 +157,8 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
                     onCommit={(n) => onChange((c) => setStaleMinutes(c, n))}
                   />
                   <NumberSetting
-                    before="Contexte rempli à"
-                    after="% ou plus"
+                    before={t("settings.suggestions.stalePercentBefore")}
+                    after={t("settings.suggestions.stalePercentAfter")}
                     min={STALE_PERCENT_MIN}
                     max={STALE_PERCENT_MAX}
                     step={5}
@@ -174,9 +175,9 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
     ),
     handoff: (
       <>
-        <h3 className="settings-heading">Hand off</h3>
+        <h3 className="settings-heading">{t("settings.tab.handoff")}</h3>
         <p className="settings-help">
-          Consigne tapée dans la conversation pour lui faire rédiger son résumé de passation. La réponse devient le premier message de la nouvelle conversation.
+          {t("settings.handoff.help")}
         </p>
         <textarea
           className="settings-textarea"
@@ -184,7 +185,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onBlur={commitPrompt}
-          aria-label="Consigne du résumé de passation"
+          aria-label={t("settings.handoff.promptLabel")}
         />
         <div className="settings-inline-actions">
           <button
@@ -196,7 +197,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
               onChange((c) => setHandoffPrompt(c, null));
             }}
           >
-            Rétablir le texte par défaut
+            {t("settings.handoff.resetDefault")}
           </button>
         </div>
       </>
@@ -204,7 +205,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
   };
 
   return (
-    <Modal title="Réglages" onClose={close} className="settings-modal">
+    <Modal title={t("settings.title")} onClose={close} className="settings-modal">
       <form
         className="settings-form"
         onSubmit={(e) => {
@@ -213,17 +214,17 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
         }}
       >
         <div className="settings-body">
-          <nav className="settings-tabs" role="tablist" aria-label="Catégories de réglages">
-            {SETTINGS_TABS.map((t) => (
+          <nav className="settings-tabs" role="tablist" aria-label={t("settings.tabsLabel")}>
+            {SETTINGS_TABS.map((tb) => (
               <button
-                key={t.id}
+                key={tb.id}
                 type="button"
                 role="tab"
-                aria-selected={tab === t.id}
-                className={"settings-tab" + (tab === t.id ? " active" : "")}
-                onClick={() => chooseTab(t.id)}
+                aria-selected={tab === tb.id}
+                className={"settings-tab" + (tab === tb.id ? " active" : "")}
+                onClick={() => chooseTab(tb.id)}
               >
-                {t.label}
+                {t(tb.labelKey)}
               </button>
             ))}
           </nav>
@@ -233,7 +234,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
         </div>
         <div className="modal-actions">
           <button type="submit" className="btn primary">
-            Fermer
+            {t("common.close")}
           </button>
         </div>
       </form>

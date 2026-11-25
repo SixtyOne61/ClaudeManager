@@ -1,7 +1,8 @@
 // Réglages Claude Code propres à un projet, écrits dans `<projet>/.claude/settings.local.json`
 // (réglages personnels du projet, non partagés avec l'équipe).
 
-use serde_json::{Map, Value};
+use crate::ui_error::ui_err;
+use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::Path;
 
@@ -12,13 +13,18 @@ pub fn set_language(project_dir: &Path, language: &str) -> Result<(), String> {
     let file = dir.join("settings.local.json");
     let mut settings: Map<String, Value> = match fs::read_to_string(&file) {
         Ok(text) if !text.trim().is_empty() => serde_json::from_str(&text)
-            .map_err(|e| format!("{} n'est pas un JSON valide : {e}", file.display()))?,
+            .map_err(|e| failed("projectSettings.invalidJson", &file, e))?,
         _ => Map::new(),
     };
     settings.insert("language".into(), Value::String(language.to_string()));
-    fs::create_dir_all(&dir).map_err(|e| format!("Impossible de créer {} : {e}", dir.display()))?;
+    fs::create_dir_all(&dir).map_err(|e| failed("projectSettings.createDirFailed", &dir, e))?;
     let text = serde_json::to_string_pretty(&Value::Object(settings)).unwrap();
-    fs::write(&file, text + "\n").map_err(|e| format!("Impossible d'écrire {} : {e}", file.display()))
+    fs::write(&file, text + "\n").map_err(|e| failed("projectSettings.writeFailed", &file, e))
+}
+
+/// Erreur codée avec le chemin concerné et le détail technique.
+fn failed(code: &str, path: &Path, e: impl std::fmt::Display) -> String {
+    ui_err(code, json!({ "path": path.display().to_string(), "detail": e.to_string() }))
 }
 
 #[cfg(test)]

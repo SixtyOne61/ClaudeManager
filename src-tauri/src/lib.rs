@@ -33,6 +33,8 @@ use config::{AppPaths, ArchiveEntry, Config};
 use notify::{RecursiveMode, Watcher};
 use scanner::{ProjectInfo, Scanner};
 use serde::Serialize;
+use serde_json::json;
+use ui_error::ui_err;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -50,8 +52,25 @@ struct AppState {
 
 impl AppState {
     fn save_config(&self, cfg: &Config) -> Result<(), String> {
-        config::save(&self.paths.config_file, cfg).map_err(|e| format!("Enregistrement de la configuration impossible : {e}"))
+        config::save(&self.paths.config_file, cfg).map_err(|e| ui_err("config.saveFailed", json!({ "detail": e.to_string() })))
     }
+}
+
+/// Erreur d'une conversation restée dans les archives à la restauration d'un projet ou d'un
+/// hub : code `archives.restoreItemFailed`, avec le titre, le code de l'erreur d'origine
+/// (`reason`) et ses paramètres. Une erreur non codée devient le paramètre `detail`.
+fn restore_item_error(title: &str, e: &str) -> String {
+    let coded = serde_json::from_str::<serde_json::Value>(e).ok().filter(|v| v.get("uiError").is_some());
+    let mut params = match coded {
+        Some(v) => {
+            let mut p = v.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
+            p.insert("reason".into(), v["uiError"].clone());
+            p
+        }
+        None => json!({ "reason": "other", "detail": e }).as_object().cloned().unwrap_or_default(),
+    };
+    params.insert("title".into(), title.into());
+    ui_err("archives.restoreItemFailed", serde_json::Value::Object(params))
 }
 
 #[derive(Serialize)]
@@ -190,7 +209,7 @@ fn attachment_preview(state: State<AppState>, path: String, session_id: Option<S
 fn open_attachment(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     if !Path::new(&path).is_file() {
-        return Err("Fichier introuvable.".into());
+        return Err(ui_err("attachments.fileNotFound", json!({})));
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
@@ -304,7 +323,7 @@ fn suggestions_list(app: AppHandle) -> suggestions::Snapshot {
 fn add_project(state: State<AppState>, path: String, language: Option<String>) -> Result<String, String> {
     let p = Path::new(&path);
     if !p.is_absolute() || !p.is_dir() {
-        return Err(format!("Ce dossier n'existe pas : {path}"));
+        return Err(ui_err("projects.folderMissing", json!({ "path": path })));
     }
     if let Some(lang) = language.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
         project_settings::set_language(p, lang)?;
@@ -399,7 +418,7 @@ fn restore_archive(state: State<AppState>, session_id: String) -> Result<Config,
         .iter()
         .find(|a| a.session_id == session_id)
         .cloned()
-        .ok_or("Archive introuvable dans la configuration.")?;
+        .ok_or_else(|| ui_err("archives.notFound", json!({})))?;
     actions::restore(&entry)?;
     cfg.archives.retain(|a| a.session_id != session_id);
     // Conversation d'un projet ou d'un hub archivé, restaurée seule : il revient avec elle.
@@ -442,7 +461,7 @@ fn restore_project(state: State<AppState>, project_key: String) -> Result<Restor
         .get(&project_key)
         .and_then(|p| p.archived.as_ref())
         .map(|a| a.session_ids.clone())
-        .ok_or("Ce projet n'est pas archivé.")?;
+        .ok_or_else(|| ui_err("archives.projectNotArchived", json!({})))?;
     let (mut restored, mut errors) = (0, Vec::new());
     for id in ids {
         let Some(entry) = cfg.archives.iter().find(|a| a.session_id == id).cloned() else { continue };
@@ -451,7 +470,7 @@ fn restore_project(state: State<AppState>, project_key: String) -> Result<Restor
                 cfg.archives.retain(|a| a.session_id != id);
                 restored += 1;
             }
-            Err(e) => errors.push(format!("« {} » : {e}", entry.title)),
+            Err(e) => errors.push(restore_item_error(&entry.title, &e)),
         }
     }
     if let Some(p) = cfg.projects.get_mut(&project_key) {
@@ -660,7 +679,7 @@ fn hub_restore_inner(state: &AppState, hub_id: &str) -> Result<RestoreProjectRes
                 config::detach_from_archived_project(&mut cfg, &id, true);
                 restored += 1;
             }
-            Err(e) => errors.push(format!("« {} » : {e}", entry.title)),
+            Err(e) => errors.push(restore_item_error(&entry.title, &e)),
         }
     }
     hubs::unarchive(&mut cfg, hub_id)?;
@@ -814,6 +833,21 @@ pub fn run_subcommand() -> bool {
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_item_error_keeps_reason_and_params() {
+        let inner = ui_err("actions.archiveFileMissing", json!({ "path": "C:/a.jsonl" }));
+        let v: serde_json::Value = serde_json::from_str(&restore_item_error("Menu", &inner)).unwrap();
+        assert_eq!(v["uiError"], "archives.restoreItemFailed");
+        assert_eq!(v["params"], json!({ "title": "Menu", "reason": "actions.archiveFileMissing", "path": "C:/a.jsonl" }));
+        let v: serde_json::Value = serde_json::from_str(&restore_item_error("Menu", "brut")).unwrap();
+        assert_eq!(v["params"], json!({ "title": "Menu", "reason": "other", "detail": "brut" }));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -20,7 +20,9 @@
 //! Le dossier est toujours normalisé par [`normalize_dir`] avant le lancement.
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use crate::ui_error::ui_err;
 use serde::Serialize;
+use serde_json::json;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -109,9 +111,7 @@ pub fn validate_worktree_name(name: &str) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err(format!(
-            "Nom de worktree invalide : « {name} ». Utilisez des lettres, chiffres, « - », « _ » ou « . » (sans espace, 64 caractères au plus)."
-        ))
+        Err(ui_err("pty.invalidWorktreeName", json!({ "name": name })))
     }
 }
 
@@ -254,17 +254,16 @@ pub fn find_claude() -> Option<PathBuf> {
     fallbacks.into_iter().find(|p| p.is_file())
 }
 
-/// Message affiché quand `claude` est introuvable.
-#[cfg(windows)]
-pub const ERR_CLAUDE_MISSING: &str = "Claude Code (la commande « claude ») est introuvable.\n\
-Installez-le (par exemple, dans PowerShell : irm https://claude.ai/install.ps1 | iex ; \
-voir la documentation de Claude Code), \
-vérifiez que « claude » fonctionne dans un terminal, puis redémarrez Claude Manager.";
-#[cfg(not(windows))]
-pub const ERR_CLAUDE_MISSING: &str = "Claude Code (la commande « claude ») est introuvable.\n\
-Installez-le (par exemple, dans un terminal : curl -fsSL https://claude.ai/install.sh | bash ; \
-voir la documentation de Claude Code), \
-vérifiez que « claude » fonctionne dans un terminal, puis redémarrez Claude Manager.";
+/// Erreur affichée quand `claude` est introuvable : la commande d'installation dépend du
+/// système (`platform` : `windows` ou `other`).
+fn claude_missing() -> String {
+    ui_err("pty.claudeMissing", json!({ "platform": if cfg!(windows) { "windows" } else { "other" } }))
+}
+
+/// Erreur « Le dossier de la conversation n'existe plus » (terminal intégré, blocs exécutés).
+pub fn folder_missing(path: &str) -> String {
+    ui_err("pty.folderMissing", json!({ "path": path }))
+}
 
 /// Décodeur UTF-8 incrémental : une lecture peut couper un caractère en deux, les
 /// octets incomplets sont gardés pour la lecture suivante.
@@ -334,7 +333,7 @@ impl PtyManager {
     pub fn launch(&self, app: &AppHandle, spec: LaunchSpec) -> Result<PtyInfo, String> {
         let cwd = normalize_dir(&spec.cwd);
         if !Path::new(&cwd).is_dir() {
-            return Err(format!("Le dossier de la conversation n'existe plus : {cwd}"));
+            return Err(folder_missing(&cwd));
         }
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(s) = sessions.get(&spec.key).filter(|s| s.running()) {
@@ -343,18 +342,18 @@ impl PtyManager {
         // Suivi de l'état de la conversation (hooks), pour tout lancement de `claude` : reprise ou nouvelle.
         let (argv, is_claude) = match &spec.program {
             Program::Claude(args) => {
-                let claude = find_claude().ok_or(ERR_CLAUDE_MISSING)?;
+                let claude = find_claude().ok_or_else(claude_missing)?;
                 let mut args = args.clone();
                 args.extend(crate::activity::settings_args());
                 (build_argv(&claude, &args), true)
             }
             Program::Raw(argv) if !argv.is_empty() => (argv.clone(), false),
-            Program::Raw(_) => return Err("Commande vide.".into()),
+            Program::Raw(_) => return Err(ui_err("pty.emptyCommand", json!({}))),
         };
 
         let pair = native_pty_system()
             .openpty(PtySize { rows: spec.rows.max(2), cols: spec.cols.max(10), pixel_width: 0, pixel_height: 0 })
-            .map_err(|e| format!("Ouverture du terminal impossible : {e}"))?;
+            .map_err(|e| ui_err("pty.openFailed", json!({ "detail": e.to_string() })))?;
         let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
         cmd.cwd(&cwd);
         // Si l'app a elle-même été lancée depuis Claude Code (développement), ces variables
@@ -377,7 +376,8 @@ impl PtyManager {
             cmd.env("PATH", path);
         }
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| {
-            if is_claude { format!("Lancement de claude impossible : {e}") } else { format!("Lancement de la commande impossible : {e}") }
+            let code = if is_claude { "pty.claudeLaunchFailed" } else { "pty.commandLaunchFailed" };
+            ui_err(code, json!({ "detail": e.to_string() }))
         })?;
         drop(pair.slave);
 
@@ -421,7 +421,7 @@ impl PtyManager {
     /// Envoie du texte (frappes, collage, message) au terminal.
     pub fn write(&self, key: &str, data: &str) -> Result<(), String> {
         let mut map = self.sessions.lock().unwrap();
-        let w = map.get_mut(key).and_then(|s| s.writer.as_mut()).ok_or("Ce terminal n'est pas ouvert.")?;
+        let w = map.get_mut(key).and_then(|s| s.writer.as_mut()).ok_or_else(|| ui_err("pty.notOpen", json!({})))?;
         w.write_all(data.as_bytes()).and_then(|_| w.flush()).map_err(|e| e.to_string())
     }
 

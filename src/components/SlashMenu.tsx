@@ -4,7 +4,8 @@
 // Compléter remplace la saisie par `/nom ` sans envoyer le message.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { cachedSlashCommands, filterSlashCommands, loadSlashCommands, slashQuery, SOURCE_LABEL, type SlashEntry } from "../slashCommands";
+import { cachedSlashCommands, filterSlashCommands, loadSlashCommands, slashArgumentHint, slashDescription, slashQuery, sourceLabel, type SlashEntry } from "../slashCommands";
+import { t } from "../i18n";
 
 /** Au-delà, la liste est coupée (le filtrage reste possible). */
 const MAX_SHOWN = 200;
@@ -115,11 +116,14 @@ function SlashMenu({ matches, selected, loading, onHover, onPick }: MenuProps) {
 
   return (
     <div className="slash-menu">
-      <div className="slash-list" role="listbox" aria-label="Commandes et skills" ref={listRef}>
+      <div className="slash-list" role="listbox" aria-label={t("slash.menu.ariaLabel")} ref={listRef}>
         {matches.length === 0 ? (
-          <div className="slash-empty">{loading ? "Chargement des commandes…" : "Aucune commande ne correspond."}</div>
+          <div className="slash-empty">{loading ? t("slash.menu.loading") : t("slash.menu.noMatch")}</div>
         ) : (
-          matches.map((e, i) => (
+          matches.map((e, i) => {
+            const description = slashDescription(e);
+            const hint = slashArgumentHint(e);
+            return (
             <div
               key={e.name}
               data-index={i}
@@ -135,17 +139,18 @@ function SlashMenu({ matches, selected, loading, onHover, onPick }: MenuProps) {
             >
               <span className="slash-name">
                 /{e.name}
-                {e.argumentHint && <span className="slash-hint"> {e.argumentHint}</span>}
+                {hint && <span className="slash-hint"> {hint}</span>}
               </span>
-              <span className="slash-desc" title={e.description}>
-                {e.description}
+              <span className="slash-desc" title={description}>
+                {description}
               </span>
-              <span className={"slash-source " + e.source}>{SOURCE_LABEL[e.source]}</span>
+              <span className={"slash-source " + e.source}>{sourceLabel(e.source)}</span>
             </div>
-          ))
+            );
+          })
         )}
       </div>
-      <div className="slash-help">↑ ↓ naviguer · Tab ou Entrée compléter · Échap fermer</div>
+      <div className="slash-help">{t("slash.menu.help")}</div>
     </div>
   );
 }

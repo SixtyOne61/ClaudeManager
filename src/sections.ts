@@ -11,10 +11,19 @@
 
 import type { Config, ConversationPrefs, Section, SessionInfo } from "./api";
 import { newId } from "./util";
+import { t } from "./i18n";
 
 /** Identifiant réservé de la section par défaut (jamais supprimée). */
 export const DEFAULT_SECTION_ID = "default";
+/**
+ * Nom enregistré de la section par défaut tant qu'on ne la renomme pas. C'est une valeur de
+ * la configuration, pas un texte affiché : `sectionName` le traduit à l'affichage.
+ */
 export const DEFAULT_SECTION_NAME = "Général";
+
+/** Nom affiché d'une section : la section par défaut jamais renommée prend le nom de la langue courante. */
+export const sectionName = (section: Section): string =>
+  section.id === DEFAULT_SECTION_ID && (!section.name || section.name === DEFAULT_SECTION_NAME) ? t("sidebar.section.defaultName") : section.name;
 
 export const isDefaultSection = (sectionId: string | null | undefined) => !sectionId || sectionId === DEFAULT_SECTION_ID;
 

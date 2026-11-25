@@ -1,6 +1,7 @@
 // Pastille d'activité d'une conversation et compteurs (projet, catégorie).
 // Couleurs propres, indépendantes de la couleur de la conversation.
 
+import { t } from "../i18n";
 import { activityDisplay, activityLabel, type Activity, type ActivityCount } from "../activity";
 
 /**
@@ -22,13 +23,13 @@ export function ActivityCounts({ running, action }: ActivityCount) {
   return (
     <span className="activity-counts">
       {running > 0 && (
-        <span className="activity-count" title={`${running} conversation${running > 1 ? "s" : ""} en cours`}>
+        <span className="activity-count" title={t("app.activity.runningCount", { count: running })}>
           <span className="activity-dot activity-running" />
           {running}
         </span>
       )}
       {action > 0 && (
-        <span className="activity-count" title={`${action} conversation${action > 1 ? "s" : ""} avec une action requise`}>
+        <span className="activity-count" title={t("app.activity.actionCount", { count: action })}>
           <span className="activity-dot activity-action" />
           {action}
         </span>

@@ -12,6 +12,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Check, Copy, Play, RotateCcw, Square, SquareArrowOutUpRight, X } from "lucide-react";
 import { errorMessage } from "../api";
+import { t } from "../i18n";
 import { attachRun, closeRun, launchRun, prepareRun, resizeRun, runExternal, shellLabel, stopRun, useRun, writeRun, type Run } from "../runner";
 
 export interface RunnableBlock {
@@ -56,20 +57,20 @@ function CodeRunner({ block, cwd }: { block: RunnableBlock; cwd: string | null }
   };
 
   const running = run?.state.kind === "running" || run?.state.kind === "pending";
-  const where = disabled ? "Dossier de la conversation inconnu" : `dans ${cwd}`;
+  const where = disabled ? t("tools.runner.cwdUnknown") : t("tools.runner.inCwd", { cwd });
 
   return (
     <>
       <div className="code-tools">
-        <button className="icon-btn bare" title="Copier" onClick={copy}>
+        <button className="icon-btn bare" title={t("tools.runner.copy")} onClick={copy}>
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
-        <button className="icon-btn bare" title={`Exécuter dans un terminal externe (${shell})\n${where}`} onClick={() => runOutside()} disabled={disabled}>
+        <button className="icon-btn bare" title={t("tools.runner.runExternalTitle", { shell, where })} onClick={() => runOutside()} disabled={disabled}>
           <SquareArrowOutUpRight size={13} />
         </button>
         <button
           className="code-run"
-          title={`Exécuter ici (${shell})\n${where}\nClic droit : dans un terminal externe`}
+          title={t("tools.runner.runHereTitle", { shell, where })}
           onClick={runInline}
           onContextMenu={runOutside}
           disabled={disabled || running}
@@ -153,24 +154,24 @@ function RunPanel({ blockId, run, onRerun }: { blockId: string; run: Run; onReru
     <div className="run-panel">
       <div className="run-panel-head">
         <span className={"run-status " + s.kind + (s.kind === "exited" && s.code !== 0 ? " failed" : "")}>
-          {s.kind === "pending" && "Démarrage…"}
-          {s.kind === "running" && "En cours…"}
-          {s.kind === "exited" && (s.code == null ? "Arrêtée" : s.code === 0 ? "Terminée" : `Terminée (code ${s.code})`)}
+          {s.kind === "pending" && t("tools.runner.statusStarting")}
+          {s.kind === "running" && t("tools.runner.statusRunning")}
+          {s.kind === "exited" && (s.code == null ? t("tools.runner.statusStopped") : s.code === 0 ? t("tools.runner.statusDone") : t("tools.runner.statusDoneCode", { code: String(s.code) }))}
           {s.kind === "error" && s.message}
         </span>
         <span className="run-panel-cwd" title={run.cwd}>
           {run.cwd}
         </span>
         {s.kind === "running" ? (
-          <button className="icon-btn bare" title="Arrêter" onClick={() => stopRun(blockId)}>
+          <button className="icon-btn bare" title={t("tools.runner.stop")} onClick={() => stopRun(blockId)}>
             <Square size={12} />
           </button>
         ) : (
-          <button className="icon-btn bare" title="Relancer" onClick={onRerun}>
+          <button className="icon-btn bare" title={t("tools.runner.rerun")} onClick={onRerun}>
             <RotateCcw size={12} />
           </button>
         )}
-        <button className="icon-btn bare" title="Fermer" onClick={() => closeRun(blockId)}>
+        <button className="icon-btn bare" title={t("common.close")} onClick={() => closeRun(blockId)}>
           <X size={12} />
         </button>
       </div>

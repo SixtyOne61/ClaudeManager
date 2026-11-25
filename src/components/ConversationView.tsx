@@ -32,6 +32,9 @@ import { useSlashMenu } from "./SlashMenu";
 import { AttachmentViewer } from "./AttachmentViewer";
 import { CodeRunnerPortal, type RunnableBlock } from "./CodeRunner";
 import { isRunnableLang } from "../runner";
+import { t } from "../i18n";
+import { tSplit } from "../i18n/rich";
+
 
 /** Dossier de la conversation : les commandes des blocs ▶ s'y exécutent. */
 const CwdContext = createContext<string | null>(null);
@@ -111,9 +114,9 @@ export function ConversationView({ data, focus, hidden, cwd = null, sessionId = 
       <CwdContext.Provider value={cwd}>
       <SessionContext.Provider value={sessionId}>
       <div className="conversation-inner">
-        {data.headSkipped && <div className="conv-notice">Début de la conversation non affiché (fichier volumineux) : il reste visible dans le terminal.</div>}
-        {data.exists === false && <div className="conv-empty">Nouvelle conversation : écris ton premier message ci-dessous.</div>}
-        {data.exists && data.entries.length === 0 && <div className="conv-empty">Aucun message pour l'instant.</div>}
+        {data.headSkipped && <div className="conv-notice">{t("conversation.view.headSkipped")}</div>}
+        {data.exists === false && <div className="conv-empty">{t("conversation.view.newConversation")}</div>}
+        {data.exists && data.entries.length === 0 && <div className="conv-empty">{t("conversation.view.noMessages")}</div>}
         {blocks.map((b) => {
           switch (b.kind) {
             case "user":
@@ -128,7 +131,11 @@ export function ConversationView({ data, focus, hidden, cwd = null, sessionId = 
             case "notice":
               return (
                 <div key={b.key} className="conv-notice" data-line={b.entry.line} data-uuid={b.entry.uuid ?? undefined}>
-                  {b.entry.text}
+                  {b.entry.code === "compacted"
+                    ? t("conversation.notice.compacted")
+                    : b.entry.code === "interrupted"
+                      ? t("conversation.notice.interrupted")
+                      : b.entry.text}
                 </div>
               );
             case "message":
@@ -156,12 +163,12 @@ function UserBubble({ entry, replaced, onEdit }: BubbleProps) {
   return (
     <div className={"conv-user" + (replaced ? " replaced" : "")} data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
       {onEdit && (
-        <button className="conv-edit-btn" onClick={onEdit} title="Modifier ce message : l'agent est interrompu et repartira sur la nouvelle version">
+        <button className="conv-edit-btn" onClick={onEdit} title={t("conversation.bubble.editTitle")}>
           <Pencil size={13} />
         </button>
       )}
       <div className="conv-user-col">
-        {replaced && <span className="conv-replaced-label">Remplacé par la version modifiée</span>}
+        {replaced && <span className="conv-replaced-label">{t("conversation.bubble.replaced")}</span>}
         {!entry.command && isGrillAnswer(entry.text) ? (
           <div className="conv-bubble grill-answers">
             <GrillAnswers text={entry.text} />
@@ -187,8 +194,7 @@ function UserText({ text }: { text: string }) {
       {parts.paths.length > 0 && (
         <div className="conv-bubble-attachments">
           {parts.paths.map((p, i) => (
-            <button key={i} type="button" className="conv-attachment clickable" title={`${p}
-Cliquer pour afficher`} onClick={() => setViewing(p)}>
+            <button key={i} type="button" className="conv-attachment clickable" title={t("conversation.attachment.title", { path: p })} onClick={() => setViewing(p)}>
               {isImagePath(p) ? <ImageIcon size={14} /> : <FileIcon size={14} />}
               <span className="conv-attachment-name">{baseName(p)}</span>
             </button>
@@ -288,32 +294,34 @@ function CrossMessage({ entry, result }: { entry: MessageEntry; result?: ToolRes
   const id = peerId && peerId !== self ? peerId : null;
   const title = id && links ? links.titleOf(id) : null;
   const label = title ?? (entry.sent ? entry.peer : (entry.peerName ?? entry.peer));
+  const [before, after] = tSplit(entry.sent ? "conversation.message.sent" : "conversation.message.received", "name");
   return (
     <div className={"conv-message " + (entry.sent ? "sent" : "received")} data-line={entry.line} data-uuid={entry.uuid ?? undefined}>
       <div className="conv-message-head">
         {entry.sent ? <Send size={12} /> : <Inbox size={12} />}
-        <span>{entry.sent ? "Message à" : "Message de"}</span>
+        {before.trim() && <span>{before.trim()}</span>}
         {id && title && links ? (
-          <button className="link-btn" onClick={() => links.open(id)} title={`Ouvrir la conversation « ${title} »`}>
+          <button className="link-btn" onClick={() => links.open(id)} title={t("conversation.message.openPeer", { title })}>
             <em>{label}</em>
           </button>
         ) : (
           <em title={entry.peer}>{label}</em>
         )}
+        {after.trim() && <span>{after.trim()}</span>}
         {result?.isError && (
           <span className="conv-message-error" title={result.text}>
-            non remis
+            {t("conversation.message.notDelivered")}
           </span>
         )}
       </div>
       {entry.summary && (
-        <button className="conv-message-summary" onClick={() => setOpen((o) => !o)} title={open ? "Replier le message" : "Lire le message complet"}>
+        <button className="conv-message-summary" onClick={() => setOpen((o) => !o)} title={open ? t("conversation.message.collapse") : t("conversation.message.expand")}>
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           {entry.summary}
         </button>
       )}
       {open && <div className="conv-message-text markdown" dangerouslySetInnerHTML={{ __html: html }} />}
-      {open && entry.truncated && <div className="conv-message-more">Message tronqué : la suite est visible dans le terminal.</div>}
+      {open && entry.truncated && <div className="conv-message-more">{t("conversation.message.truncated")}</div>}
     </div>
   );
 }
@@ -450,7 +458,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
 
   const pickFiles = async () => {
     try {
-      const r = await openFileDialog({ multiple: true, title: "Joindre des fichiers" });
+      const r = await openFileDialog({ multiple: true, title: t("conversation.input.pickFilesDialog") });
       if (r) addPaths(Array.isArray(r) ? r : [r]);
     } catch {
       /* dialogue annulé ou indisponible */
@@ -475,11 +483,11 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const canSend = !!(text.trim() || attachments.length);
 
   const send = async () => {
-    const t = text.trim();
+    const trimmed = text.trim();
     if (!canSend || !enabled || sending) return;
     setSending(true);
     try {
-      await onSend(composeMessage(t, attachments.map((a) => a.path)));
+      await onSend(composeMessage(trimmed, attachments.map((a) => a.path)));
       draft.current = null;
       setText("");
       setAttachments([]);
@@ -511,15 +519,14 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
     {editing && (
       <div className="conv-edit-banner">
         <Pencil size={13} />
-        <span className="conv-edit-title">Modification du message — l'agent a été interrompu, Entrée pour le relancer.</span>
+        <span className="conv-edit-title">{t("conversation.input.editBanner")}</span>
         {editing.actions > 0 && (
           <span className="conv-edit-warn">
             <TriangleAlert size={12} />
-            {editing.actions === 1 ? "1 action déjà faite ne sera pas annulée" : `${editing.actions} actions déjà faites ne seront pas annulées`}
-            {editing.fileChanges > 0 && ` (dont ${editing.fileChanges === 1 ? "1 modification de fichier" : `${editing.fileChanges} modifications de fichiers`})`}
+            {t("conversation.input.editWarning", { actions: editing.actions, fileChanges: editing.fileChanges })}
           </span>
         )}
-        <button className="btn small ghost" onClick={onCancelEdit} title="Abandonner la modification (Échap)">
+        <button className="btn small ghost" onClick={onCancelEdit} title={t("conversation.input.cancelEditTitle")}>
           <X size={12} />
         </button>
       </div>
@@ -530,12 +537,11 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         <div className="conv-attachments">
           {attachments.map((a) => (
             <span key={a.id} className="conv-attachment" title={a.path}>
-              <span className="conv-attachment-open" onClick={() => setViewing(a.path)} title={`${a.path}
-Cliquer pour afficher`}>
+              <span className="conv-attachment-open" onClick={() => setViewing(a.path)} title={t("conversation.attachment.title", { path: a.path })}>
                 {a.preview ? <img src={a.preview} alt="" /> : <FileIcon size={14} />}
                 <span className="conv-attachment-name">{a.name}</span>
               </span>
-              <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} title="Retirer">
+              <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} title={t("conversation.input.removeAttachment")}>
                 <X size={11} />
               </button>
             </span>
@@ -543,14 +549,14 @@ Cliquer pour afficher`}>
         </div>
       )}
       {viewing && <AttachmentViewer path={viewing} sessionId={sessionId} cwd={cwd} onClose={() => { setViewing(null); ref.current?.focus(); }} />}
-      <button className="btn small" onClick={pickFiles} disabled={!enabled} title="Joindre des fichiers (ou glisser-déposer, Ctrl+V pour une capture)">
+      <button className="btn small" onClick={pickFiles} disabled={!enabled} title={t("conversation.input.attachTitle")}>
         <Paperclip size={13} />
       </button>
       <textarea
         ref={ref}
         rows={1}
         value={text}
-        placeholder={enabled ? "Message à Claude… (Entrée : envoyer, Maj+Entrée : nouvelle ligne)" : "Claude Code ne tourne pas dans ce terminal."}
+        placeholder={enabled ? t("conversation.input.placeholder") : t("conversation.input.placeholderDisabled")}
         disabled={!enabled}
         onChange={(e) => {
           setText(e.target.value);
@@ -559,11 +565,11 @@ Cliquer pour afficher`}>
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />
-      <button className="btn small" onClick={onStop} disabled={!enabled} title="Interrompre l'agent (Échap)">
-        <Square size={12} /> Arrêter
+      <button className="btn small" onClick={onStop} disabled={!enabled} title={t("conversation.input.stopTitle")}>
+        <Square size={12} /> {t("conversation.input.stop")}
       </button>
-      <button className="btn small primary" onClick={send} disabled={!enabled || !canSend || sending} title="Envoyer (Entrée)">
-        <SendHorizontal size={13} /> {editing ? "Relancer" : "Envoyer"}
+      <button className="btn small primary" onClick={send} disabled={!enabled || !canSend || sending} title={t("conversation.input.sendTitle")}>
+        <SendHorizontal size={13} /> {editing ? t("conversation.input.resend") : t("conversation.input.send")}
       </button>
     </div>
     </>

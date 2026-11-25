@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Cpu, ShieldCheck } from "lucide-react";
 import type { ConversationMeta } from "../conversation";
 import { watchPtyOutput, writeToTerminal } from "../pty";
+import { locale, t } from "../i18n";
 
 interface Props {
   sessionId: string;
@@ -63,14 +64,14 @@ export function contextWindow(id: string): number | null {
   }
 }
 
-/** Choix du menu : argument de `/model`, libellé. */
-const MODEL_CHOICES: { arg: string; label: string; family: string | null; oneM: boolean }[] = [
-  { arg: "default", label: "Par défaut", family: null, oneM: false },
-  { arg: "opus", label: "Opus", family: "opus", oneM: false },
-  { arg: "sonnet", label: "Sonnet", family: "sonnet", oneM: false },
-  { arg: "haiku", label: "Haiku", family: "haiku", oneM: false },
-  { arg: "opus[1m]", label: "Opus (1M de contexte)", family: "opus", oneM: true },
-  { arg: "sonnet[1m]", label: "Sonnet (1M de contexte)", family: "sonnet", oneM: true },
+/** Choix du menu : argument de `/model`, libellé (lu à l'affichage). */
+const MODEL_CHOICES: { arg: string; label: () => string; family: string | null; oneM: boolean }[] = [
+  { arg: "default", label: () => t("conversation.footer.modelDefault"), family: null, oneM: false },
+  { arg: "opus", label: () => "Opus", family: "opus", oneM: false },
+  { arg: "sonnet", label: () => "Sonnet", family: "sonnet", oneM: false },
+  { arg: "haiku", label: () => "Haiku", family: "haiku", oneM: false },
+  { arg: "opus[1m]", label: () => t("conversation.footer.modelOpus1m"), family: "opus", oneM: true },
+  { arg: "sonnet[1m]", label: () => t("conversation.footer.modelSonnet1m"), family: "sonnet", oneM: true },
 ];
 
 /** « Sonnet 5.5 (1M context) » → « claude-sonnet-5-5[1m] » (pour la fenêtre de contexte). */
@@ -98,14 +99,24 @@ function currentModel(meta: ConversationMeta): { id: string; name: string } | nu
 // ---- Mode de permission ----------------------------------------------------------------
 
 /** Modes de Claude Code (https://code.claude.com/docs/en/permissions) : libellé et couleur. */
-const MODES: Record<string, { label: string; tone: string; hint: string }> = {
-  default: { label: "Normal", tone: "normal", hint: "Claude Code demande la permission avant d'agir." },
-  acceptEdits: { label: "Accepter les modifications", tone: "edits", hint: "Les modifications de fichiers sont acceptées sans demander." },
-  plan: { label: "Plan", tone: "plan", hint: "Claude Code explore et propose un plan, sans rien modifier." },
-  auto: { label: "Auto", tone: "auto", hint: "Un classifieur valide les actions sans danger, les autres sont demandées ou refusées." },
-  bypassPermissions: { label: "Contourner les permissions", tone: "danger", hint: "Aucune permission n'est demandée : toutes les actions sont exécutées." },
-  dontAsk: { label: "Ne pas demander", tone: "dontask", hint: "Les actions non autorisées d'avance sont refusées sans demander." },
-};
+function modeInfo(id: string): { label: string; tone: string; hint: string } | null {
+  switch (id) {
+    case "default":
+      return { label: t("conversation.footer.mode.default"), tone: "normal", hint: t("conversation.footer.mode.default.hint") };
+    case "acceptEdits":
+      return { label: t("conversation.footer.mode.acceptEdits"), tone: "edits", hint: t("conversation.footer.mode.acceptEdits.hint") };
+    case "plan":
+      return { label: t("conversation.footer.mode.plan"), tone: "plan", hint: t("conversation.footer.mode.plan.hint") };
+    case "auto":
+      return { label: t("conversation.footer.mode.auto"), tone: "auto", hint: t("conversation.footer.mode.auto.hint") };
+    case "bypassPermissions":
+      return { label: t("conversation.footer.mode.bypassPermissions"), tone: "danger", hint: t("conversation.footer.mode.bypassPermissions.hint") };
+    case "dontAsk":
+      return { label: t("conversation.footer.mode.dontAsk"), tone: "dontask", hint: t("conversation.footer.mode.dontAsk.hint") };
+    default:
+      return null;
+  }
+}
 
 /** Indicateur affiché par Claude Code sous sa zone de saisie → mode. */
 const INDICATORS: [RegExp, string][] = [
@@ -143,11 +154,11 @@ export function modeFromTerminal(text: string): string | null {
 
 const nbsp = " ";
 function tokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}${nbsp}M`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString(locale(), { maximumFractionDigits: 1 })}${nbsp}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}${nbsp}k`;
   return String(n);
 }
-const exact = (n: number) => n.toLocaleString("fr-FR");
+const exact = (n: number) => n.toLocaleString(locale());
 
 // ---- Composant -------------------------------------------------------------------------
 
@@ -192,7 +203,7 @@ export function ConversationFooter({ sessionId, meta, headSkipped, enabled, onCo
 
   const terminalMode = fromTerminal && fromTerminal.line === meta.permissionModeLine ? fromTerminal.mode : null;
   const modeId = terminalMode ?? meta.permissionMode;
-  const mode = modeId ? MODES[modeId] ?? { label: modeId, tone: "normal", hint: "" } : null;
+  const mode = modeId ? modeInfo(modeId) ?? { label: modeId, tone: "normal", hint: "" } : null;
 
   const cycleMode = () => {
     cycleAt.current = Date.now();
@@ -233,14 +244,14 @@ export function ConversationFooter({ sessionId, meta, headSkipped, enabled, onCo
 
   const contextTitle = usage
     ? [
-        `Contexte utilisé (dernière réponse) : ${exact(used!)} jetons`,
-        `  · entrée hors cache : ${exact(usage.inputTokens)}`,
-        `  · écrits dans le cache : ${exact(usage.cacheCreationInputTokens)}`,
-        `  · lus depuis le cache : ${exact(usage.cacheReadInputTokens)}`,
-        ctxWindow ? `Fenêtre de contexte du modèle : ${exact(ctxWindow)} jetons` : "Fenêtre de contexte du modèle inconnue",
-        `Jetons produits dans la conversation : ${exact(meta.outputTotal)}${headSkipped ? " (partie affichée seulement)" : ""}`,
+        t("conversation.footer.contextUsed", { tokens: exact(used!) }),
+        t("conversation.footer.contextInput", { tokens: exact(usage.inputTokens) }),
+        t("conversation.footer.contextCacheWrite", { tokens: exact(usage.cacheCreationInputTokens) }),
+        t("conversation.footer.contextCacheRead", { tokens: exact(usage.cacheReadInputTokens) }),
+        ctxWindow ? t("conversation.footer.contextWindow", { tokens: exact(ctxWindow) }) : t("conversation.footer.contextWindowUnknown"),
+        t(headSkipped ? "conversation.footer.outputTotalPartial" : "conversation.footer.outputTotal", { tokens: exact(meta.outputTotal) }),
       ].join("\n")
-    : "Pas encore de réponse de l'agent.";
+    : t("conversation.footer.noReply");
 
   if (!model && !mode && !usage) return null;
 
@@ -251,10 +262,9 @@ export function ConversationFooter({ sessionId, meta, headSkipped, enabled, onCo
           className="conv-footer-item conv-footer-model"
           disabled={!enabled}
           onClick={() => setMenuOpen((o) => !o)}
-          title={model ? `Modèle : ${model.id}
-Cliquer pour en changer` : "Changer de modèle"}
+          title={model ? t("conversation.footer.modelTitle", { id: model.id }) : t("conversation.footer.changeModel")}
         >
-          <Cpu size={12} /> {model?.name ?? "Modèle"}
+          <Cpu size={12} /> {model?.name ?? t("conversation.footer.model")}
         </button>
         {menuOpen && (
           <div className="popover menu conv-model-popover">
@@ -262,7 +272,7 @@ Cliquer pour en changer` : "Changer de modèle"}
               const current = c.family != null && c.family === currentFamily && c.oneM === currentOneM;
               return (
                 <button key={c.arg} className="menu-item" onClick={() => chooseModel(c.arg)}>
-                  <span className="conv-model-check">{current && <Check size={13} />}</span> {c.label}
+                  <span className="conv-model-check">{current && <Check size={13} />}</span> {c.label()}
                 </button>
               );
             })}
@@ -275,11 +285,17 @@ Cliquer pour en changer` : "Changer de modèle"}
         onClick={cycleMode}
         title={
           pending
-            ? `Mode précédent : ${mode?.label ?? "inconnu"}. Le nouveau mode n'a pas été reconnu dans le terminal : il s'affichera au prochain message.\nCliquer pour passer au mode suivant (Maj+Tab)`
-            : `${mode ? `Mode : ${mode.label}${mode.hint ? ` — ${mode.hint}` : ""}${terminalMode ? "\n(lu dans le terminal)" : ""}\n` : ""}Cliquer pour passer au mode suivant (Maj+Tab)`
+            ? [t("conversation.footer.modePendingTitle", { label: mode?.label ?? t("conversation.footer.modeUnknownLower") }), t("conversation.footer.modeCycle")].join("\n")
+            : [
+                ...(mode
+                  ? [mode.hint ? t("conversation.footer.modeTitleWithHint", { label: mode.label, hint: mode.hint }) : t("conversation.footer.modeTitle", { label: mode.label })]
+                  : []),
+                ...(mode && terminalMode ? [t("conversation.footer.modeFromTerminal")] : []),
+                t("conversation.footer.modeCycle"),
+              ].join("\n")
         }
       >
-        <ShieldCheck size={12} /> {pending ? "Mode changé — visible au prochain message" : (mode?.label ?? "Mode inconnu")}
+        <ShieldCheck size={12} /> {pending ? t("conversation.footer.modePending") : (mode?.label ?? t("conversation.footer.modeUnknown"))}
       </button>
       <span className="conv-footer-spacer" />
       {used != null && (
@@ -289,8 +305,9 @@ Cliquer pour en changer` : "Changer de modèle"}
               <span style={{ width: `${Math.max(2, ratio * 100)}%` }} />
             </span>
           )}
-          {tokens(used)}
-          {ctxWindow ? ` / ${tokens(ctxWindow)} (${Math.round(ratio! * 100)}${nbsp}%)` : " jetons"}
+          {ctxWindow
+            ? t("conversation.footer.tokensOfWindow", { used: tokens(used), window: tokens(ctxWindow), percent: Math.round(ratio! * 100) })
+            : t("conversation.footer.tokens", { used: tokens(used) })}
         </span>
       )}
     </div>

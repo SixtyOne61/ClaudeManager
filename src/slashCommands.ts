@@ -2,6 +2,7 @@
 // lecture auprès du backend avec un cache par conversation, et filtrage de ce qui est tapé.
 
 import { invoke } from "@tauri-apps/api/core";
+import { hasKey, t } from "./i18n";
 
 export type SlashSource = "builtin" | "user" | "project" | "plugin";
 
@@ -14,12 +15,31 @@ export interface SlashEntry {
 }
 
 /** Libellé du badge de provenance. */
-export const SOURCE_LABEL: Record<SlashSource, string> = {
-  builtin: "intégrée",
-  user: "utilisateur",
-  project: "projet",
-  plugin: "plugin",
-};
+export function sourceLabel(source: SlashSource): string {
+  switch (source) {
+    case "builtin":
+      return t("slash.source.builtin");
+    case "user":
+      return t("slash.source.user");
+    case "project":
+      return t("slash.source.project");
+    case "plugin":
+      return t("slash.source.plugin");
+  }
+}
+
+/** Description affichée : celle du catalogue pour une commande intégrée connue, sinon celle reçue. */
+export function slashDescription(e: SlashEntry): string {
+  const key = "slash.builtin." + e.name;
+  return e.source === "builtin" && hasKey(key) ? t(key) : e.description;
+}
+
+/** Indication d'arguments affichée : celle du catalogue pour une commande intégrée connue, sinon celle reçue. */
+export function slashArgumentHint(e: SlashEntry): string | null {
+  if (e.argumentHint == null) return null;
+  const key = "slash.builtin." + e.name + ".hint";
+  return e.source === "builtin" && hasKey(key) ? t(key) : e.argumentHint;
+}
 
 /** Dernière liste connue, par dossier (et conversation) : affichée tout de suite à l'ouverture. */
 const cache = new Map<string, SlashEntry[]>();

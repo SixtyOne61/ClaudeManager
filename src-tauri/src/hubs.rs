@@ -16,6 +16,8 @@
 //!   premier message liste les autres membres ([`HandoffContext`], voir handoff.rs).
 
 use crate::config::{Config, Hub, HubArchive, HubMember, HubRole};
+use crate::ui_error::ui_err;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -25,7 +27,12 @@ pub fn find<'a>(cfg: &'a Config, hub_id: &str) -> Option<&'a Hub> {
 }
 
 fn find_mut<'a>(cfg: &'a mut Config, hub_id: &str) -> Result<&'a mut Hub, String> {
-    cfg.hubs.iter_mut().find(|h| h.id == hub_id).ok_or_else(|| "Ce hub n'existe plus.".to_string())
+    cfg.hubs.iter_mut().find(|h| h.id == hub_id).ok_or_else(not_found)
+}
+
+/// Erreur « Ce hub n'existe plus. ».
+fn not_found() -> String {
+    ui_err("hubs.notFound", json!({}))
 }
 
 /// Hub d'une conversation, avec son rôle.
@@ -38,7 +45,7 @@ pub fn hub_of<'a>(cfg: &'a Config, conversation_id: &str) -> Option<(&'a Hub, Hu
 fn clean_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Le nom du hub est vide.".into());
+        return Err(ui_err("hubs.emptyName", json!({})));
     }
     Ok(name.to_string())
 }
@@ -72,7 +79,7 @@ pub fn delete(cfg: &mut Config, hub_id: &str) -> Result<(), String> {
     let before = cfg.hubs.len();
     cfg.hubs.retain(|h| h.id != hub_id);
     if cfg.hubs.len() == before {
-        return Err("Ce hub n'existe plus.".into());
+        return Err(not_found());
     }
     Ok(())
 }
@@ -113,8 +120,8 @@ pub fn mark_archived(cfg: &mut Config, hub_id: &str, session_ids: Vec<String>, a
 
 /// Conversations archivées avec un hub archivé, à restaurer avec lui.
 pub fn archived_ids(cfg: &Config, hub_id: &str) -> Result<Vec<String>, String> {
-    let hub = find(cfg, hub_id).ok_or("Ce hub n'existe plus.")?;
-    hub.archived.as_ref().map(|a| a.session_ids.clone()).ok_or_else(|| "Ce hub n'est pas archivé.".into())
+    let hub = find(cfg, hub_id).ok_or_else(not_found)?;
+    hub.archived.as_ref().map(|a| a.session_ids.clone()).ok_or_else(|| ui_err("hubs.notArchived", json!({})))
 }
 
 /// Le hub revient dans la barre latérale (ses conversations ont été restaurées).

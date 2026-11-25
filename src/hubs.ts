@@ -11,19 +11,33 @@
 // - coordinatorOf(hub)         coordinateur du hub, s'il en a un
 // - defaultRole(hub)           rôle d'une conversation ajoutée par glisser-déposer
 // - sortedMembers(hub)         membres, coordinateur en tête
-// - HUB_ROLES, roleLabel()     libellés des rôles
+// - HUB_ROLES, roleLabel()     libellés des rôles (roleHint() : leur explication)
 // - executorFirstMessage()     premier message d'un exécutant lancé avec « + Exécutant »
 
 import type { Config, Hub, HubMember, HubRole } from "./api";
+import { t, type MessageKey } from "./i18n";
 
 /** Rôles, dans l'ordre des choix proposés. */
 export const HUB_ROLES: HubRole[] = ["coordinateur", "executant", "pair"];
 
-const ROLE_LABELS: Record<HubRole, string> = { coordinateur: "Coordinateur", executant: "Exécutant", pair: "Pair" };
+const ROLE_LABELS: Record<HubRole, MessageKey> = { coordinateur: "hubs.role.coordinateur", executant: "hubs.role.executant", pair: "hubs.role.pair" };
+
+const ROLE_HINTS: Record<HubRole, MessageKey> = {
+  coordinateur: "hubs.role.hint.coordinateur",
+  executant: "hubs.role.hint.executant",
+  pair: "hubs.role.hint.pair",
+};
 
 /** Libellé d'un rôle (« Coordinateur », « Exécutant », « Pair »). */
 export function roleLabel(role: HubRole): string {
-  return ROLE_LABELS[role] ?? role;
+  const key = ROLE_LABELS[role];
+  return key ? t(key) : role;
+}
+
+/** Explication courte d'un rôle (fenêtre « Ajouter à un hub… »). */
+export function roleHint(role: HubRole): string {
+  const key = ROLE_HINTS[role];
+  return key ? t(key) : "";
 }
 
 /** Hubs affichés dans la barre latérale, dans l'ordre enregistré. */
@@ -62,12 +76,12 @@ export function sortedMembers(hub: Hub): HubMember[] {
 
 /** Info-bulle de l'icône 🔗 d'une conversation membre. */
 export function hubHint(hub: Hub, role: HubRole): string {
-  return `Hub « ${hub.name} » · ${roleLabel(role)}` + (hub.archived ? " (archivé)" : "");
+  return t("hubs.link.hint", { name: hub.name, role: roleLabel(role), archived: hub.archived ? "yes" : "no" });
 }
 
 /** Explication du bouton « + Exécutant » grisé (hub sans coordinateur) ; null : disponible. */
 export function executorBlocker(hub: Hub): string | null {
-  return coordinatorOf(hub) ? null : "Désignez d'abord un coordinateur : c'est à lui que l'exécutant rendra compte";
+  return coordinatorOf(hub) ? null : t("hubs.executor.blocker");
 }
 
 /**

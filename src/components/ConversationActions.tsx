@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { Action, DiffLine } from "../conversation";
+import { t } from "../i18n";
 
 /** Lignes affichées d'un résultat ou d'une différence replié. */
 const FOLD_LINES = 12;
@@ -61,29 +62,29 @@ function toolDisplay(name: string, title: string): ToolDisplay {
   switch (name) {
     case "Bash":
     case "PowerShell":
-      return plain("Commande", SquareTerminal);
+      return plain(t("conversation.actions.command"), SquareTerminal);
     case "Read":
     case "NotebookRead":
-      return file("Lecture", FileText);
+      return file(t("conversation.actions.read"), FileText);
     case "Edit":
     case "MultiEdit":
     case "NotebookEdit":
-      return file("Modification", FilePen);
+      return file(t("conversation.actions.edit"), FilePen);
     case "Write":
-      return file("Écriture", FilePlus);
+      return file(t("conversation.actions.write"), FilePlus);
     case "Grep":
     case "Glob":
-      return plain("Recherche", Search);
+      return plain(t("conversation.actions.search"), Search);
     case "WebFetch":
     case "WebSearch":
-      return plain("Web", Globe);
+      return plain(t("conversation.actions.web"), Globe);
     case "Task":
     case "Agent":
-      return plain("Sous-agent", Bot);
+      return plain(t("conversation.actions.subagent"), Bot);
     case "Skill":
-      return plain("Compétence", Sparkles);
+      return plain(t("conversation.actions.skill"), Sparkles);
     case "TodoWrite":
-      return plain("Tâches", ListTodo);
+      return plain(t("conversation.actions.todos"), ListTodo);
   }
   // Outils MCP et inconnus : le titre est le JSON des paramètres, gardé pour les détails.
   const mcp = mcpName(name);
@@ -126,13 +127,13 @@ export const ActionGroup = memo(function ActionGroup({ actions }: { actions: Act
   const first = actions[0].tool;
   return (
     <div className={"action-group" + (open ? " open" : "")} data-line={first.line} data-uuid={first.uuid ?? undefined}>
-      <button className="action-row action-head" onClick={() => setOpen(!open)} title={open ? "Replier les actions" : "Afficher les actions"}>
+      <button className="action-row action-head" onClick={() => setOpen(!open)} title={open ? t("conversation.actions.collapseGroup") : t("conversation.actions.expandGroup")}>
         {open ? <ChevronDown size={13} className="action-chevron" /> : <ChevronRight size={13} className="action-chevron" />}
-        {actions.length > 1 && <span className="action-count">{actions.length} actions · dernière :</span>}
+        {actions.length > 1 && <span className="action-count">{t("conversation.actions.countLast", { count: actions.length })}</span>}
         <ActionLine action={last} display={displays[displays.length - 1]} />
         {errors > 0 && (
-          <span className="action-errors" title="Une action au moins a échoué">
-            <AlertCircle size={12} /> {errors > 1 ? `${errors} erreurs` : "erreur"}
+          <span className="action-errors" title={t("conversation.actions.failedTitle")}>
+            <AlertCircle size={12} /> {t("conversation.actions.errors", { count: errors })}
           </span>
         )}
       </button>
@@ -169,11 +170,11 @@ function ActionDetails({ action, display }: { action: Action; display: ToolDispl
   const hideResult = tool.diff != null && result != null && !result.isError;
   return (
     <div className="action-details">
-      {tool.detail && <div className="action-detail">{tool.detail}</div>}
+      {tool.detail && <div className="action-detail">{toolDetail(tool.name, tool.detail)}</div>}
       {display.input && <pre className="action-input">{display.input}</pre>}
       {tool.diff && <DiffView lines={tool.diff} truncated={tool.diffTruncated} />}
       {result && !hideResult && <FoldedText text={result.text} truncated={result.truncated} startFolded={isRead} error={result.isError} />}
-      {!result && <div className="action-detail">En cours…</div>}
+      {!result && <div className="action-detail">{t("conversation.actions.running")}</div>}
     </div>
   );
 }
@@ -196,7 +197,11 @@ function DiffView({ lines, truncated }: { lines: DiffLine[]; truncated: boolean 
       )}
       {long && (
         <button className="fold-btn" onClick={() => setOpen(!open)}>
-          {open ? "Replier" : `Afficher tout (${lines.length} lignes${truncated ? ", tronqué" : ""})`}
+          {open
+            ? t("common.collapse")
+            : truncated
+              ? t("conversation.actions.showAllTruncated", { count: lines.length })
+              : t("conversation.actions.showAll", { count: lines.length })}
         </button>
       )}
     </div>
@@ -211,7 +216,7 @@ function FoldedText({ text, truncated, startFolded, error }: { text: string; tru
   if (startFolded && !open) {
     return (
       <button className="fold-btn standalone" onClick={() => setOpen(true)}>
-        <ChevronRight size={13} /> Afficher le contenu ({lines.length} lignes)
+        <ChevronRight size={13} /> {t("conversation.actions.showContent", { count: lines.length })}
       </button>
     );
   }
@@ -223,16 +228,22 @@ function FoldedText({ text, truncated, startFolded, error }: { text: string; tru
         <button className="fold-btn" onClick={() => setOpen(!open)}>
           {open ? (
             <>
-              <ChevronDown size={13} /> Replier
+              <ChevronDown size={13} /> {t("common.collapse")}
             </>
           ) : (
             <>
-              <ChevronRight size={13} /> Afficher tout ({lines.length} lignes)
+              <ChevronRight size={13} /> {t("conversation.actions.showAll", { count: lines.length })}
             </>
           )}
         </button>
       )}
-      {open && truncated && <div className="tool-truncated">Résultat tronqué : la suite est visible dans le terminal.</div>}
+      {open && truncated && <div className="tool-truncated">{t("conversation.actions.resultTruncated")}</div>}
     </div>
   );
+}
+
+/** Détail d'un outil ; celui de TodoWrite (« N tâche(s) », écrit par le backend) dans la langue de l'interface. */
+function toolDetail(name: string, detail: string): string {
+  const n = name === "TodoWrite" ? parseInt(detail, 10) : NaN;
+  return Number.isFinite(n) ? t("conversation.actions.todoCount", { count: n }) : detail;
 }

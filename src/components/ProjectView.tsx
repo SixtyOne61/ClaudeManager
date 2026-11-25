@@ -56,11 +56,13 @@ import {
   projectSections,
   putConversationInSection,
   renameSection,
+  sectionName,
   setConversationColor,
   setSectionCollapsed,
   setSectionColor,
   storedSectionId,
 } from "../sections";
+import { t } from "../i18n";
 import { ColorPicker } from "./ColorPicker";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
 import { TextPrompt, WorktreePrompt } from "./Dialogs";
@@ -139,7 +141,7 @@ export function ProjectView(props: Props) {
     }
     let cancelled = false;
     setSearching(true);
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       api
         .searchSessions(p.key, query)
         .then((ids) => !cancelled && setDeepHits(new Set(ids)))
@@ -148,7 +150,7 @@ export function ProjectView(props: Props) {
     }, 350);
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deep, query, p.key]);
@@ -192,7 +194,7 @@ export function ProjectView(props: Props) {
   const [sectionDialog, setSectionDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const groups = useMemo(() => groupBySection(config, p.key, sessions), [config, p.key, sessions]);
-  const defaultName = defaultSection(config, p.key).name;
+  const defaultName = sectionName(defaultSection(config, p.key));
   /** Projet sans aucune conversation ni autre section : un message plutôt qu'une section vide. */
   const empty = sessions.length === 0 && groups.sections.length === 1;
   const filtering = query.trim().length > 0;
@@ -320,8 +322,8 @@ export function ProjectView(props: Props) {
       return;
     }
     // Conversations masquées (recherche) : on abandonne.
-    const t = window.setTimeout(() => setReveal(null), 1500);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => setReveal(null), 1500);
+    return () => window.clearTimeout(timer);
   }, [reveal, groups]);
 
   /** Couleur commune des conversations sélectionnées (aucune si elles diffèrent). */
@@ -378,9 +380,10 @@ export function ProjectView(props: Props) {
 
   const confirmDeleteSection = async (section: Section) => {
     const n = section.conversationIds.length;
+    const name = sectionName(section);
     const ok = await ask(
-      `Supprimer la section « ${section.name} » ?` + (n ? `\nSes conversations reviendront dans « ${defaultName} ».` : ""),
-      { title: "Supprimer la section", kind: "warning", okLabel: "Supprimer", cancelLabel: "Annuler" },
+      n ? t("sidebar.section.deleteConfirmMove", { name, defaultName }) : t("sidebar.section.deleteConfirm", { name }),
+      { title: t("sidebar.section.deleteTitle"), kind: "warning", okLabel: t("common.delete"), cancelLabel: t("common.cancel") },
     );
     if (ok) change((c) => deleteSection(c, p.key, section.id));
   };
@@ -419,43 +422,43 @@ export function ProjectView(props: Props) {
       <header className="project-header" style={colorStyle(color)}>
         <div className="project-title">
           <h2>{projectName(p, config)}</h2>
-          <button className="icon-btn" title="Renommer (nom d'affichage)" onClick={props.onRename}>
+          <button className="icon-btn" title={t("project.header.rename")} onClick={props.onRename}>
             <Pencil size={15} />
           </button>
         </div>
         <button
           className="project-path"
-          title={isMac ? "Ouvrir dans le Finder" : "Ouvrir dans l'Explorateur"}
+          title={isMac ? t("project.header.openInFinder") : t("project.header.openInExplorer")}
           disabled={!canLaunch}
           onClick={() => p.path && api.openFolder(p.path).catch((e) => props.onError(errorMessage(e)))}
         >
-          <FolderOpen size={13} /> {p.path ?? "Chemin inconnu"}
+          <FolderOpen size={13} /> {p.path ?? t("project.header.unknownPath")}
         </button>
         <div className="project-actions">
           <button
             className="btn primary"
             disabled={!canLaunch}
             onClick={() => props.onNew(null)}
-            title={`Lance « claude » dans le terminal intégré (rangée dans « ${defaultName} »)`}
+            title={t("project.header.newConversationHint", { section: defaultName })}
           >
-            <MessageSquarePlus size={15} /> Nouvelle conversation
+            <MessageSquarePlus size={15} /> {t("project.header.newConversation")}
           </button>
           {isGit && (
             <button
               className="btn ghost"
               disabled={!canLaunch}
               onClick={() => setWorktreeFor({ sectionId: null })}
-              title="Nouvelle conversation dans un nouveau worktree : copie de travail séparée (claude --worktree)"
+              title={t("project.header.newWorktreeHint")}
             >
-              <GitBranchPlus size={14} /> Dans un nouveau worktree
+              <GitBranchPlus size={14} /> {t("project.header.newWorktree")}
             </button>
           )}
-          <button className="btn ghost" disabled={!canLaunch} onClick={() => props.onLaunch()} title={`Ouvre ${props.terminal} et lance « claude »`}>
-            <ExternalLink size={14} /> Nouveau dans un terminal externe
+          <button className="btn ghost" disabled={!canLaunch} onClick={() => props.onLaunch()} title={t("project.header.externalTerminalHint", { terminal: props.terminal })}>
+            <ExternalLink size={14} /> {t("project.header.externalTerminal")}
           </button>
-          <ColorPicker value={color} onChange={props.onColor} title="Couleur" />
-          <select className="select" value={categoryId} onChange={(e) => props.onMove(e.target.value || null)} title="Catégorie">
-            <option value="">Non classés</option>
+          <ColorPicker value={color} onChange={props.onColor} title={t("common.color")} />
+          <select className="select" value={categoryId} onChange={(e) => props.onMove(e.target.value || null)} title={t("project.header.category")}>
+            <option value="">{t("sidebar.projects.uncategorized")}</option>
             {config.categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -465,13 +468,13 @@ export function ProjectView(props: Props) {
           <button
             className="btn ghost"
             onClick={props.onArchiveProject}
-            title="Archive le projet et toutes ses conversations : il disparaît de la barre latérale et se restaure depuis les Archives (le dossier n'est pas touché)"
+            title={t("project.header.archiveHint")}
           >
-            <Archive size={14} /> Archiver le projet
+            <Archive size={14} /> {t("project.header.archive")}
           </button>
           {p.sessions.length === 0 && (
-            <button className="btn ghost" onClick={props.onForget} title="Retire ce projet de la liste (le dossier n'est pas touché)">
-              <X size={14} /> Retirer de la liste
+            <button className="btn ghost" onClick={props.onForget} title={t("project.header.forgetHint")}>
+              <X size={14} /> {t("project.header.forget")}
             </button>
           )}
         </div>
@@ -479,38 +482,38 @@ export function ProjectView(props: Props) {
 
       {!p.exists && (
         <div className="banner warn">
-          <TriangleAlert size={15} /> Le dossier de ce projet est introuvable : impossible de lancer Claude depuis ici.
+          <TriangleAlert size={15} /> {t("project.missingFolder")}
         </div>
       )}
 
       <div className="search-bar">
         <Search size={15} />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher une conversation…" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("project.search.placeholder")} />
         {query && (
-          <button className="icon-btn" onClick={() => setQuery("")} title="Effacer">
+          <button className="icon-btn" onClick={() => setQuery("")} title={t("common.clear")}>
             <X size={14} />
           </button>
         )}
-        <label className={"toggle" + (deep ? " on" : "")} title="Cherche aussi dans le texte de tous les messages">
+        <label className={"toggle" + (deep ? " on" : "")} title={t("project.search.inContentHint")}>
           <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
-          <FileSearch size={14} /> Dans le contenu {searching && "…"}
+          <FileSearch size={14} /> {t("project.search.inContent")} {searching && "…"}
         </label>
         <button
           className="icon-btn"
           disabled={displayed.length === 0 || allDisplayedSelected}
           onClick={selectAll}
-          title={`Tout sélectionner (conversations affichées) — ou ${modKey}+clic, Maj+clic sur les conversations`}
+          title={t("project.search.selectAllHint", { mod: modKey })}
         >
           <ListChecks size={15} />
         </button>
-        <button className="btn small" onClick={() => setSectionDialog({ kind: "new" })} title="Regrouper des conversations de ce projet">
-          <ListPlus size={14} /> Section
+        <button className="btn small" onClick={() => setSectionDialog({ kind: "new" })} title={t("sidebar.section.addHint")}>
+          <ListPlus size={14} /> {t("sidebar.section.add")}
         </button>
       </div>
 
       <div className="session-list">
         {empty && (
-          <div className="empty">{p.sessions.length === 0 ? "Aucune conversation dans ce projet." : "Aucune conversation ne correspond à la recherche."}</div>
+          <div className="empty">{p.sessions.length === 0 ? t("project.list.empty") : t("project.list.noMatch")}</div>
         )}
         <DndContext
           sensors={sensors}
@@ -561,12 +564,12 @@ export function ProjectView(props: Props) {
             {draggedSession && (
               <div className="session-row overlay" style={colorStyle(conversationColor(config, draggedSession.id))}>
                 <div className="session-title">{draggedSession.title}</div>
-                {draggingSelection && <span className="badge drag-count">{draggedCount} conversations</span>}
+                {draggingSelection && <span className="badge drag-count">{t("project.drag.count", { count: draggedCount })}</span>}
               </div>
             )}
             {draggedSection && (
               <div className="section overlay" style={colorStyle(draggedSection.color)}>
-                <div className="section-header">{draggedSection.name}</div>
+                <div className="section-header">{sectionName(draggedSection)}</div>
               </div>
             )}
           </DragOverlay>
@@ -576,13 +579,13 @@ export function ProjectView(props: Props) {
       {selecting && (
         <div className="selection-bar">
           <span className="selection-count">
-            {selectedSessions.length} sélectionnée{selectedSessions.length > 1 ? "s" : ""}
+            {t("project.selection.count", { count: selectedSessions.length })}
           </span>
-          <button className="btn small ghost" disabled={allDisplayedSelected} onClick={selectAll} title="Sélectionne toutes les conversations affichées">
-            Tout sélectionner
+          <button className="btn small ghost" disabled={allDisplayedSelected} onClick={selectAll} title={t("project.selection.selectAllHint")}>
+            {t("project.selection.selectAll")}
           </button>
-          <button className="btn small ghost" onClick={clearSelection} title="Échap">
-            Tout désélectionner
+          <button className="btn small ghost" onClick={clearSelection} title={t("project.selection.clearHint")}>
+            {t("project.selection.clear")}
           </button>
           <span className="selection-spacer" />
           <SectionMenu
@@ -593,13 +596,13 @@ export function ProjectView(props: Props) {
           <ColorPicker
             value={selectionColor}
             onChange={(color) => change((c) => selectedSessions.reduce((cfg, s) => setConversationColor(cfg, s.id, color), c))}
-            title="Couleur"
+            title={t("common.color")}
           />
           <button className="btn small" onClick={() => bulk(props.onArchiveMany)}>
-            <Archive size={13} /> Archiver
+            <Archive size={13} /> {t("common.archive")}
           </button>
           <button className="btn small danger" onClick={() => bulk(props.onTrashMany)}>
-            <Trash2 size={13} /> Corbeille
+            <Trash2 size={13} /> {t("common.trash")}
           </button>
         </div>
       )}
@@ -616,8 +619,8 @@ export function ProjectView(props: Props) {
       )}
       {sectionDialog?.kind === "new" && (
         <TextPrompt
-          title="Nouvelle section"
-          label="Nom"
+          title={t("sidebar.section.newTitle")}
+          label={t("common.name")}
           onClose={() => setSectionDialog(null)}
           onSubmit={(name) => {
             change((c) => addSection(c, p.key, name));
@@ -627,8 +630,8 @@ export function ProjectView(props: Props) {
       )}
       {sectionForSelection && (
         <TextPrompt
-          title="Nouvelle section"
-          label="Nom"
+          title={t("sidebar.section.newTitle")}
+          label={t("common.name")}
           onClose={() => setSectionForSelection(false)}
           onSubmit={(name) => {
             const ids = selectedSessions.map((s) => s.id);
@@ -646,9 +649,9 @@ export function ProjectView(props: Props) {
       )}
       {sectionDialog?.kind === "rename" && (
         <TextPrompt
-          title="Renommer la section"
-          label="Nom"
-          initial={sectionDialog.section.name}
+          title={t("sidebar.section.renameTitle")}
+          label={t("common.name")}
+          initial={sectionName(sectionDialog.section)}
           onClose={() => setSectionDialog(null)}
           onSubmit={(name) => {
             change((c) => renameSection(c, p.key, sectionDialog.section.id, name));
@@ -705,30 +708,30 @@ function SectionBlock(props: {
       >
         <GripVertical size={14} className="grip" />
         {props.onSelectAll && <SectionCheck state={props.selectState} onToggle={props.onSelectAll} onPointerDown={stop} />}
-        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? "Déplier" : "Replier"}>
+        <button className="icon-btn bare" onPointerDown={stop} onClick={props.onToggle} title={section.collapsed ? t("common.expand") : t("common.collapse")}>
           {section.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
         <span className="section-name" onDoubleClick={props.onRename}>
-          {section.name}
+          {sectionName(section)}
         </span>
         <span className="count">{props.count}</span>
         <span className="hover-actions" onPointerDown={stop}>
           {props.onNew && (
-            <button className="icon-btn" title="Nouvelle conversation dans cette section (terminal intégré)" onClick={props.onNew}>
+            <button className="icon-btn" title={t("sidebar.section.newConversation")} onClick={props.onNew}>
               <Plus size={13} />
             </button>
           )}
           {props.onNewWorktree && (
-            <button className="icon-btn" title="Nouvelle conversation dans un nouveau worktree, dans cette section" onClick={props.onNewWorktree}>
+            <button className="icon-btn" title={t("project.section.newWorktree")} onClick={props.onNewWorktree}>
               <GitBranchPlus size={13} />
             </button>
           )}
-          <button className="icon-btn" title="Renommer" onClick={props.onRename}>
+          <button className="icon-btn" title={t("common.rename")} onClick={props.onRename}>
             <Pencil size={13} />
           </button>
-          <ColorPicker compact value={section.color} onChange={props.onColor} title="Couleur de la section" />
+          <ColorPicker compact value={section.color} onChange={props.onColor} title={t("sidebar.section.color")} />
           {props.onDelete && (
-            <button className="icon-btn" title="Supprimer la section" onClick={props.onDelete}>
+            <button className="icon-btn" title={t("sidebar.section.deleteTitle")} onClick={props.onDelete}>
               <Trash2 size={13} />
             </button>
           )}
@@ -736,7 +739,7 @@ function SectionBlock(props: {
       </div>
       <div ref={zone.setNodeRef} className="section-body">
         {!section.collapsed && props.children}
-        {!section.collapsed && props.count === 0 && <div className="empty-zone">Déposez des conversations ici</div>}
+        {!section.collapsed && props.count === 0 && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
       </div>
     </section>
   );
@@ -755,7 +758,7 @@ function SectionCheck(props: { state: "none" | "some" | "all"; onToggle: () => v
       className="section-check"
       checked={props.state === "all"}
       readOnly
-      title={props.state === "all" ? "Désélectionner les conversations de la section" : "Sélectionner toutes les conversations de la section"}
+      title={props.state === "all" ? t("project.section.deselectAll") : t("project.section.selectAll")}
       onPointerDown={props.onPointerDown}
       onClick={(e) => {
         e.stopPropagation();
@@ -792,18 +795,18 @@ function SectionMenu(props: { sections: Section[]; onPick: (sectionId: string | 
   return (
     <div className="color-picker" ref={ref}>
       <button className="btn small" onClick={() => setOpen((o) => !o)}>
-        <FolderInput size={13} /> Ranger dans une section…
+        <FolderInput size={13} /> {t("project.sectionMenu.moveTo")}
       </button>
       {open && (
         <div className="popover menu">
           {props.sections.map((s) => (
             <button key={s.id} className="menu-item" onClick={() => pick(() => props.onPick(s.id))}>
-              <span className="swatch-dot" style={{ background: s.color ?? "transparent" }} /> {s.name}
+              <span className="swatch-dot" style={{ background: s.color ?? "transparent" }} /> {sectionName(s)}
             </button>
           ))}
           <div className="menu-separator" />
           <button className="menu-item" onClick={() => pick(props.onNew)}>
-            <Plus size={13} /> Nouvelle section…
+            <Plus size={13} /> {t("project.sectionMenu.newSection")}
           </button>
         </div>
       )}
@@ -869,7 +872,7 @@ function SessionRow(props: {
           className="session-check"
           checked={props.selected}
           readOnly
-          title={`Sélectionner (${modKey}+clic, Maj+clic pour une plage)`}
+          title={t("project.session.selectHint", { mod: modKey })}
           onPointerDown={stop}
           onClick={(e) => {
             e.stopPropagation();
@@ -887,34 +890,33 @@ function SessionRow(props: {
         </div>
         {s.provisional ? (
           <div className="session-meta">
-            <span>Pas encore de message : envoyez-en un dans le terminal intégré</span>
+            <span>{t("project.session.provisional")}</span>
             {s.worktree && (
-              <span className="badge worktree" title={`Nouveau worktree : ${s.worktree.path}`}>
-                <GitBranch size={11} /> worktree {s.worktree.name}
+              <span className="badge worktree" title={t("project.session.newWorktreeHint", { path: s.worktree.path })}>
+                <GitBranch size={11} /> {t("project.session.worktree", { name: s.worktree.name })}
               </span>
             )}
             <span className="session-id">{s.id.slice(0, 8)}</span>
           </div>
         ) : (
         <div className="session-meta">
-          <span title={`Créée le ${formatDate(s.createdAt)}`}>{formatDate(s.updatedAt)}</span>
+          <span title={t("project.session.createdAt", { date: formatDate(s.createdAt) })}>{formatDate(s.updatedAt)}</span>
           <span className="dot">·</span>
           <span>{relativeDate(s.updatedAt)}</span>
           <span className="dot">·</span>
-          <span>
-            {s.messageCount} message{s.messageCount > 1 ? "s" : ""}
-          </span>
+          <span>{t("project.session.messages", { count: s.messageCount })}</span>
           {s.worktree && (
             <span
               className={"badge worktree" + (s.worktree.exists ? "" : " gone")}
-              title={s.worktree.exists ? s.worktree.path : `Ce worktree n'existe plus : ${s.worktree.path}`}
+              title={s.worktree.exists ? s.worktree.path : t("project.session.worktreeGoneHint", { path: s.worktree.path })}
             >
-              <GitBranch size={11} /> {s.worktree.exists ? `worktree ${s.worktree.name}` : `worktree supprimé (${s.worktree.name})`}
+              <GitBranch size={11} />{" "}
+              {s.worktree.exists ? t("project.session.worktree", { name: s.worktree.name }) : t("project.session.worktreeGone", { name: s.worktree.name })}
             </span>
           )}
           {s.skippedLines > 0 && (
-            <span className="warn" title="Lignes illisibles ignorées dans le fichier">
-              · {s.skippedLines} ligne(s) ignorée(s)
+            <span className="warn" title={t("project.session.skippedLinesHint")}>
+              · {t("project.session.skippedLines", { count: s.skippedLines })}
             </span>
           )}
           <span className="session-id">{s.id.slice(0, 8)}</span>
@@ -923,20 +925,20 @@ function SessionRow(props: {
       </div>
       {/* Les clics des boutons ne remontent pas à la ligne (sinon la conversation s'ouvrirait deux fois). */}
       <div className="session-actions" onPointerDown={stop} onClick={(e) => e.stopPropagation()}>
-        <button className="btn small primary" disabled={!canLaunch} onClick={props.onOpen} title="claude --resume, dans le terminal intégré">
-          <Play size={13} /> Reprendre
+        <button className="btn small primary" disabled={!canLaunch} onClick={props.onOpen} title={t("project.session.resumeHint")}>
+          <Play size={13} /> {t("project.session.resume")}
         </button>
         {/* Sans fichier, rien d'autre n'est possible : reprise externe, archive, Corbeille. */}
         {!s.provisional && (
         <>
-        <button className="icon-btn" disabled={!canLaunch} onClick={props.onLaunch} title={`Ouvrir dans un terminal externe (${props.terminal})`}>
+        <button className="icon-btn" disabled={!canLaunch} onClick={props.onLaunch} title={t("project.session.externalTerminal", { terminal: props.terminal })}>
           <ExternalLink size={15} />
         </button>
-        <ColorPicker compact value={props.color} onChange={props.onColor} title="Couleur de la conversation" />
+        <ColorPicker compact value={props.color} onChange={props.onColor} title={t("project.session.color")} />
         <button
           className="icon-btn"
           disabled={!!handoffReason}
-          title={handoffReason ? `Hand off\n${handoffReason}` : "Hand off : passer le relais à une nouvelle conversation, avec un résumé de passation"}
+          title={handoffReason ? t("project.session.handoffBlocked", { reason: handoffReason }) : t("project.session.handoffHint")}
           onClick={props.onHandoff}
         >
           <Handshake size={15} />
@@ -944,10 +946,10 @@ function SessionRow(props: {
         <button className="icon-btn" title={hubButtonTitle(props.config, s.id)} onClick={props.onAddToHub}>
           <Link2 size={15} />
         </button>
-        <button className="icon-btn" title="Archiver" onClick={props.onArchive}>
+        <button className="icon-btn" title={t("common.archive")} onClick={props.onArchive}>
           <Archive size={15} />
         </button>
-        <button className="icon-btn danger" title="Mettre à la Corbeille" onClick={props.onTrash}>
+        <button className="icon-btn danger" title={t("project.session.trash")} onClick={props.onTrash}>
           <Trash2 size={15} />
         </button>
         </>
@@ -960,5 +962,5 @@ function SessionRow(props: {
 /** Info-bulle du bouton « Ajouter à un hub… » (hub et rôle actuels, le cas échéant). */
 function hubButtonTitle(config: Config, sessionId: string): string {
   const found = hubOf(config, sessionId);
-  return found ? `Ajouter à un hub…\n${hubHint(found.hub, found.role)} : changer de hub ou de rôle, ou l'en retirer` : "Ajouter à un hub…";
+  return found ? t("project.hub.change", { hint: hubHint(found.hub, found.role) }) : t("project.hub.add");
 }

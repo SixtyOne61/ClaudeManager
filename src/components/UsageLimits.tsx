@@ -6,27 +6,24 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, EVT_USAGE_LIMITS, type LimitWindow, type UsageLimits as Limits } from "../api";
+import { locale, t } from "../i18n";
 
-const TOOLTIP =
-  "Limites d'utilisation de ton forfait Claude (Pro, Max), telles que Claude Code les reçoit.\n" +
-  "Les chiffres ne se mettent à jour que pendant qu'une conversation tourne dans l'app.";
-
-/** « 14:30 » le jour même, « lun. 11:00 » sinon (heure locale). */
+/** « 14:30 » le jour même, « lun. 11:00 » sinon (heure locale, langue de l'interface). */
 export function formatReset(epochS: number, now = new Date()): string {
   const d = new Date(epochS * 1000);
-  const time = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
   if (d.toDateString() === now.toDateString()) return time;
-  const day = d.toLocaleDateString("fr-FR", { weekday: "short" });
+  const day = d.toLocaleDateString(locale(), { weekday: "short" });
   return `${day} ${time}`;
 }
 
 /** « à l'instant », « il y a 5 min », « il y a 2 h », « il y a 3 j ». */
 export function formatAge(atMs: number, nowMs = Date.now()): string {
   const s = Math.max(0, (nowMs - atMs) / 1000);
-  if (s < 60) return "à l'instant";
-  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
-  if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`;
-  return `il y a ${Math.floor(s / 86400)} j`;
+  if (s < 60) return t("common.justNow");
+  if (s < 3600) return t("app.limits.minutesAgo", { count: Math.floor(s / 60) });
+  if (s < 86400) return t("app.limits.hoursAgo", { count: Math.floor(s / 3600) });
+  return t("app.limits.daysAgo", { count: Math.floor(s / 86400) });
 }
 
 /** Couleur de la barre : vert sous 70 %, orange de 70 à 90 %, rouge à partir de 90 %. */
@@ -56,13 +53,13 @@ function LimitBar({
     <div className="limit">
       <div className="limit-text">
         <span className="limit-line">
-          <span className="limit-label">{label} :</span> {shown} %
-          <span className="limit-reset"> · {expired ? "remis à zéro" : formatReset(w.resetsAt, new Date(nowMs))}</span>
+          <span className="limit-label">{t("app.limits.label", { label })}</span> {t("app.limits.percent", { pct: shown })}
+          <span className="limit-reset"> · {expired ? t("app.limits.reset") : formatReset(w.resetsAt, new Date(nowMs))}</span>
         </span>
         {theo !== null && (
           <button
             className="limit-plus"
-            title="Comparer avec la consommation théorique (linéaire sur la semaine)"
+            title={t("app.limits.compareTooltip")}
             onClick={() => setOpen((o) => !o)}
           >
             {open ? "−" : "+"}
@@ -77,7 +74,11 @@ function LimitBar({
       </div>
       {open && theo !== null && (
         <div className={`limit-compare ${diff > 0 ? "over" : "under"}`}>
-          Théorique : {Math.round(theo)} % · {diff > 0 ? `surconsommation de ${diff} pts` : diff < 0 ? `${-diff} pts de marge` : "pile dans le rythme"}
+          {diff > 0
+            ? t("app.limits.over", { pct: Math.round(theo), diff })
+            : diff < 0
+              ? t("app.limits.under", { pct: Math.round(theo), diff: -diff })
+              : t("app.limits.even", { pct: Math.round(theo) })}
         </div>
       )}
     </div>
@@ -105,15 +106,15 @@ export function UsageLimits() {
 
   const hasData = limits && (limits.fiveHour || limits.sevenDay);
   return (
-    <div className="usage-limits" title={TOOLTIP}>
+    <div className="usage-limits" title={t("app.limits.tooltip")}>
       {hasData ? (
         <>
-          {limits.fiveHour && <LimitBar label="5 h" w={limits.fiveHour} nowMs={nowMs} />}
-          {limits.sevenDay && <LimitBar label="Semaine" w={limits.sevenDay} nowMs={nowMs} compare />}
-          <div className="limit-age">mis à jour {formatAge(limits.at, nowMs)}</div>
+          {limits.fiveHour && <LimitBar label={t("app.limits.fiveHours")} w={limits.fiveHour} nowMs={nowMs} />}
+          {limits.sevenDay && <LimitBar label={t("app.limits.week")} w={limits.sevenDay} nowMs={nowMs} compare />}
+          <div className="limit-age">{t("app.limits.updated", { age: formatAge(limits.at, nowMs) })}</div>
         </>
       ) : (
-        <div className="limit-empty">Lance une conversation pour voir tes limites</div>
+        <div className="limit-empty">{t("app.limits.empty")}</div>
       )}
     </div>
   );

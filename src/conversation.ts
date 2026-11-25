@@ -34,7 +34,7 @@ export type ConversationEntry =
       diffTruncated: boolean;
     }
   | { kind: "toolResult"; line: number; toolUseId: string; text: string; isError: boolean; truncated: boolean }
-  | { kind: "notice"; line: number; uuid: string | null; text: string }
+  | { kind: "notice"; line: number; uuid: string | null; text: string; /** Notice de l'app, affichée dans la langue de l'interface. */ code?: "compacted" | "interrupted" }
   | {
       /** Message entre conversations (voir src/messages.ts) : envoyé (`SendMessage`) ou reçu. */
       kind: "message";

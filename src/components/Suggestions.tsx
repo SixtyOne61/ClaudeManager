@@ -6,6 +6,7 @@ import { useContext } from "react";
 import { X } from "lucide-react";
 import { SUGGESTION_RULES, suggestionHint, suggestionsOf, useSuggestions, type Suggestion } from "../suggestions";
 import { ConversationLinksContext } from "../messages";
+import { t } from "../i18n";
 
 /** Icône 💡 (sans compteur). `title` : info-bulle. */
 export function SuggestionIcon({ title }: { title: string }) {
@@ -49,7 +50,7 @@ export function SuggestionBanners({ sessionId, onDismiss, actions }: BannersProp
       {shown.map((s) => {
         const rule = SUGGESTION_RULES[s.rule];
         const handler = rule.action ? actions?.[rule.action.id] : undefined;
-        const unavailable = !handler ? "Pas encore disponible dans cette version" : handler.disabledReason ?? null;
+        const unavailable = !handler ? t("suggestions.banner.unavailable") : handler.disabledReason ?? null;
         return (
           <div key={`${s.rule}:${s.key}`} className="suggestion-banner" role="status">
             <span className="suggestion-banner-icon" aria-hidden>
@@ -58,15 +59,15 @@ export function SuggestionBanners({ sessionId, onDismiss, actions }: BannersProp
             <span className="suggestion-banner-text">{rule.text!(s, ctx)}</span>
             {rule.action && (
               <button className="btn small primary" disabled={!!unavailable} title={unavailable ?? undefined} onClick={() => handler?.run(s)}>
-                {typeof rule.action.label === "function" ? rule.action.label(s) : rule.action.label}
+                {rule.action.label(s)}
               </button>
             )}
             <button
               className="btn small ghost"
               onClick={() => onDismiss(s)}
-              title={rule.dismissHint ?? "Masquer cette suggestion pour cette conversation (elle reviendra si la situation s'aggrave)"}
+              title={rule.dismissHint ?? t("suggestions.banner.dismissHint")}
             >
-              <X size={12} /> Ignorer
+              <X size={12} /> {t("suggestions.banner.dismiss")}
             </button>
           </div>
         );

@@ -8,6 +8,8 @@ import { colorStyle, formatDate } from "../util";
 import { conversationColor } from "../sections";
 import { useScrollToFocus, type SearchFocus } from "./GlobalSearch";
 import type { HandoffLineage } from "../handoff";
+import { t } from "../i18n";
+import { tRich } from "../i18n/rich";
 
 interface Props {
   config: Config;
@@ -49,16 +51,14 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
     <main className="main">
       <header className="project-header">
         <div className="project-title">
-          <h2>Archives</h2>
+          <h2>{t("app.archives.title")}</h2>
         </div>
-        <p className="muted">
-          Les conversations archivées sont rangées dans <code>%APPDATA%\claude-manager\archive</code> et n'apparaissent plus dans Claude Code.
-        </p>
+        <p className="muted">{tRich("app.archives.intro", {}, { path: <code>%APPDATA%\claude-manager\archive</code> })}</p>
       </header>
       <div className="session-list">
         {projects.length > 0 && (
           <>
-            <h3 className="archives-heading">Projets archivés</h3>
+            <h3 className="archives-heading">{t("app.archives.projects")}</h3>
             {projects.map((p) => (
               <div key={p.key} className={"session-row" + (p.prefs.color ? " colored" : "")} style={colorStyle(p.prefs.color)}>
                 <div className="session-main">
@@ -66,9 +66,9 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
                     <FolderArchive size={14} className="archives-project-icon" /> {p.name}
                   </div>
                   <div className="session-meta">
-                    <span>archivé le {formatDate(new Date(p.archived.archivedAt).toISOString())}</span>
+                    <span>{t("app.archives.archivedOnMasc", { date: formatDate(new Date(p.archived.archivedAt).toISOString()) })}</span>
                     <span className="dot">·</span>
-                    <span>{p.count > 0 ? `${p.count} conversation${p.count > 1 ? "s" : ""}` : "aucune conversation"}</span>
+                    <span>{t("app.archives.conversationCount", { count: p.count })}</span>
                     {p.prefs.path && (
                       <>
                         <span className="dot">·</span>
@@ -81,9 +81,9 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
                   <button
                     className="btn small primary"
                     onClick={() => onRestoreProject(p.key, p.name)}
-                    title="Remet le projet dans la barre latérale, avec les conversations archivées avec lui"
+                    title={t("app.archives.restoreProjectTooltip")}
                   >
-                    <ArchiveRestore size={13} /> Restaurer le projet
+                    <ArchiveRestore size={13} /> {t("app.archives.restoreProject")}
                   </button>
                 </div>
               </div>
@@ -92,7 +92,7 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
         )}
         {hubs.length > 0 && (
           <>
-            <h3 className="archives-heading">Hubs archivés</h3>
+            <h3 className="archives-heading">{t("app.archives.hubs")}</h3>
             {hubs.map((h) => {
               const count = h.archived!.sessionIds.filter((id) => archivedIds.has(id)).length;
               return (
@@ -100,18 +100,18 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
                   <div className="session-main">
                     <div className="session-title">🔗 {h.name}</div>
                     <div className="session-meta">
-                      <span>archivé le {formatDate(new Date(h.archived!.archivedAt).toISOString())}</span>
+                      <span>{t("app.archives.archivedOnMasc", { date: formatDate(new Date(h.archived!.archivedAt).toISOString()) })}</span>
                       <span className="dot">·</span>
-                      <span>{count > 0 ? `${count} conversation${count > 1 ? "s" : ""}` : "aucune conversation"}</span>
+                      <span>{t("app.archives.conversationCount", { count })}</span>
                     </div>
                   </div>
                   <div className="session-actions">
                     <button
                       className="btn small primary"
                       onClick={() => onRestoreHub(h)}
-                      title="Remet le hub dans la barre latérale, avec les conversations archivées avec lui"
+                      title={t("app.archives.restoreHubTooltip")}
                     >
-                      <ArchiveRestore size={13} /> Restaurer le hub
+                      <ArchiveRestore size={13} /> {t("app.archives.restoreHub")}
                     </button>
                   </div>
                 </div>
@@ -119,8 +119,8 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
             })}
           </>
         )}
-        {(projects.length > 0 || hubs.length > 0) && <h3 className="archives-heading">Conversations archivées</h3>}
-        {archives.length === 0 && <div className="empty">Aucune conversation archivée.</div>}
+        {(projects.length > 0 || hubs.length > 0) && <h3 className="archives-heading">{t("app.archives.conversations")}</h3>}
+        {archives.length === 0 && <div className="empty">{t("app.archives.empty")}</div>}
         {archives.map((a) => {
           const lineage = lineageOf?.(a.sessionId);
           return (
@@ -129,24 +129,24 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
                 <div className="session-title">{a.title}</div>
                 <div className="session-meta">
                   <span className="tag">{projectLabel(a)}</span>
-                  <span>archivée le {formatDate(new Date(a.archivedAt).toISOString())}</span>
+                  <span>{t("app.archives.archivedOnFem", { date: formatDate(new Date(a.archivedAt).toISOString()) })}</span>
                   <span className="dot">·</span>
-                  <span>dernière activité {formatDate(a.updatedAt)}</span>
+                  <span>{t("app.archives.lastActivity", { date: formatDate(a.updatedAt) })}</span>
                   <span className="dot">·</span>
-                  <span>{a.messageCount} messages</span>
+                  <span>{t("app.archives.messageCount", { count: a.messageCount })}</span>
                   {lineage?.parent && (
                     <>
                       <span className="dot">·</span>
-                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title="Ouvrir la conversation d'origine de ce hand off">
-                        <ArrowLeft size={11} /> Suite de <em>{lineage.parent.title}</em>
+                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.parent!.id)} title={t("app.archives.parentTooltip")}>
+                        <ArrowLeft size={11} /> {tRich("app.archives.parent", {}, { title: <em>{lineage.parent.title}</em> })}
                       </button>
                     </>
                   )}
                   {lineage?.successor && (
                     <>
                       <span className="dot">·</span>
-                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title="Ouvrir la conversation qui a pris le relais">
-                        Suite : <em>{lineage.successor.title}</em> <ArrowRight size={11} />
+                      <button className="link-btn" onClick={() => onOpenConversation?.(lineage.successor!.id)} title={t("app.archives.successorTooltip")}>
+                        {tRich("app.archives.successor", {}, { title: <em>{lineage.successor.title}</em> })} <ArrowRight size={11} />
                       </button>
                     </>
                   )}
@@ -154,9 +154,9 @@ export function ArchivesView({ config, onRestore, onTrash, onRestoreProject, onR
               </div>
               <div className="session-actions">
                 <button className="btn small primary" onClick={() => onRestore(a)}>
-                  <ArchiveRestore size={13} /> Restaurer
+                  <ArchiveRestore size={13} /> {t("common.restore")}
                 </button>
-                <button className="icon-btn danger" title="Mettre à la Corbeille" onClick={() => onTrash(a)}>
+                <button className="icon-btn danger" title={t("app.moveToTrash")} onClick={() => onTrash(a)}>
                   <Trash2 size={15} />
                 </button>
               </div>

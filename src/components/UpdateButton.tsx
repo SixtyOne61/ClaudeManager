@@ -10,6 +10,7 @@ import { ask, message } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { Download, RefreshCw } from "lucide-react";
 import { errorMessage } from "../api";
+import { t } from "../i18n";
 
 type State = { kind: "idle" } | { kind: "checking" } | { kind: "downloading"; percent: number | null };
 
@@ -26,15 +27,15 @@ export function UpdateButton() {
     try {
       const update = await check();
       if (!update) {
-        await message(`Vous utilisez la dernière version${version ? ` (${version})` : ""}.`, { title: "Mises à jour" });
+        await message(version ? t("app.update.upToDateVersion", { version }) : t("app.update.upToDate"), { title: t("app.update.title") });
         return;
       }
       const notes = update.body?.trim() ? `\n\n${update.body.trim()}` : "";
-      const ok = await ask(
-        `La version ${update.version} est disponible (actuelle : ${update.currentVersion}).${notes}\n\n` +
-          "Télécharger et installer maintenant ? L'application se fermera pendant l'installation.",
-        { title: "Mise à jour disponible", okLabel: "Installer", cancelLabel: "Plus tard" },
-      );
+      const ok = await ask(t("app.update.available", { version: update.version, current: update.currentVersion, notes }), {
+        title: t("app.update.availableTitle"),
+        okLabel: t("app.update.install"),
+        cancelLabel: t("app.update.later"),
+      });
       if (!ok) return;
 
       let total = 0;
@@ -48,8 +49,8 @@ export function UpdateButton() {
         }
       });
     } catch (e) {
-      await message(`Impossible de vérifier ou d'installer la mise à jour :\n${errorMessage(e)}`, {
-        title: "Mises à jour",
+      await message(t("app.update.failed", { message: errorMessage(e) }), {
+        title: t("app.update.title"),
         kind: "error",
       });
     } finally {
@@ -60,13 +61,15 @@ export function UpdateButton() {
   const busy = state.kind !== "idle";
   const label =
     state.kind === "checking"
-      ? "Vérification…"
+      ? t("app.update.checking")
       : state.kind === "downloading"
-        ? `Téléchargement${state.percent !== null ? ` ${state.percent} %` : "…"}`
-        : "Vérifier les mises à jour";
+        ? state.percent !== null
+          ? t("app.update.downloadingPercent", { percent: state.percent })
+          : t("app.update.downloading")
+        : t("app.update.check");
 
   return (
-    <button className="nav-item small" onClick={run} disabled={busy} title="Interroge GitHub pour savoir si une nouvelle version existe">
+    <button className="nav-item small" onClick={run} disabled={busy} title={t("app.update.checkTooltip")}>
       {state.kind === "downloading" ? <Download size={14} /> : <RefreshCw size={14} className={busy ? "spin" : ""} />}
       {label}
       {version && <span className="count">v{version}</span>}

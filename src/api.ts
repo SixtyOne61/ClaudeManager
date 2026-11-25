@@ -279,11 +279,22 @@ export interface UsageLimits {
 /** Évènement émis quand `limits.json` change (charge utile : UsageLimits). */
 export const EVT_USAGE_LIMITS = "usage-limits";
 
-/** Erreur renvoyée quand une session a été modifiée il y a peu (peut-être ouverte). */
-export const ERR_ACTIVE = "SESSION_ACTIVE";
+/** Code de l'erreur renvoyée quand une session a été modifiée il y a peu (peut-être ouverte). */
+export const ERR_ACTIVE = "actions.sessionActive";
+
+/** L'erreur est l'erreur codée `code` du backend (voir `uiErrorText`). */
+export function isUiError(e: unknown, code: string): boolean {
+  const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+  if (!raw.startsWith('{"uiError"')) return false;
+  try {
+    return (JSON.parse(raw) as { uiError?: string }).uiError === code;
+  } catch {
+    return false;
+  }
+}
 
 export const api = {
-  scan: () => invoke<ScanResult>("scan"),
+  scan: () => invoke<ScanResult>("scan").then(localizeScan),
   searchSessions: (projectKey: string, query: string) =>
     invoke<string[]>("search_sessions", { projectKey, query }),
   searchAll: (query: string) => invoke<SearchResult>("search_all", { query }),
@@ -376,4 +387,11 @@ export function uiErrorText(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Titre de repli d'une conversation sans titre (« Session 1a2b3c4d », écrit par le backend) dans la langue de l'interface. */
+function localizeScan(r: ScanResult): ScanResult {
+  for (const p of r.projects)
+    for (const s of p.sessions) if (s.titleSource === "none") s.title = t("app.session.fallbackTitle", { id: s.id.slice(0, 8) });
+  return r;
 }

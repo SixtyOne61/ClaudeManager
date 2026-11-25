@@ -14,8 +14,10 @@ import { useActivities } from "../activity";
 import { roleLabel, sortedMembers } from "../hubs";
 import { messageHeadline, useHubThread, type HubMessage, type HubPeer } from "../messages";
 import { renderMarkdown } from "../markdown";
+import { tRich } from "../i18n/rich";
 import { ActivityDot } from "./Activity";
 import { HubHeaderActions, HubMemberControls, memberInfo, type HubActions } from "./Hubs";
+import { t } from "../i18n";
 import { ConversationSuggestionIcon } from "./Suggestions";
 
 interface Props {
@@ -49,13 +51,12 @@ export function HubView({ hub, config, projects, titleOf, actions }: Props) {
           </div>
         </div>
         <p className="muted">
-          Hub de {hub.members.length} conversation{hub.members.length > 1 ? "s" : ""}. Les messages sont ceux que les conversations s'envoient avec la
-          messagerie de Claude Code (outil <code>SendMessage</code>).
+          {tRich("hubs.view.intro", { count: hub.members.length }, { tool: <code>SendMessage</code> })}
         </p>
       </header>
       <div className="session-list hub-view-body">
-        <h3 className="archives-heading">Conversations</h3>
-        {hub.members.length === 0 && <p className="muted">Aucune conversation : « Ajouter à un hub… » sur une conversation.</p>}
+        <h3 className="archives-heading">{t("hubs.view.conversations")}</h3>
+        {hub.members.length === 0 && <p className="muted">{t("hubs.view.empty")}</p>}
         {sortedMembers(hub).map((m) => {
           const info = memberInfo(config, projects, m.conversationId);
           const title = info.session?.title ?? info.archived?.title ?? titleOf(m.conversationId);
@@ -65,12 +66,12 @@ export function HubView({ hub, config, projects, titleOf, actions }: Props) {
               key={m.conversationId}
               className={"session-row hub-view-member" + (title ? "" : " gone")}
               onClick={() => open(m.conversationId)}
-              title={info.session?.firstPrompt ?? "Ouvrir la conversation"}
+              title={info.session?.firstPrompt ?? t("hubs.view.openConversation")}
             >
               <ActivityDot activity={activities.get(m.conversationId)} />
               <div className="session-main">
                 <div className="session-title">
-                  {title ?? "Conversation introuvable"}
+                  {title ?? t("hubs.member.notFound")}
                   <ConversationSuggestionIcon sessionId={m.conversationId} />
                 </div>
                 <div className="session-meta">
@@ -79,7 +80,7 @@ export function HubView({ hub, config, projects, titleOf, actions }: Props) {
                       {projectName(info.project, config)}
                     </span>
                   ) : info.archived ? (
-                    <span>archivée</span>
+                    <span>{t("hubs.member.archived")}</span>
                   ) : null}
                   {date && (
                     <>
@@ -98,16 +99,16 @@ export function HubView({ hub, config, projects, titleOf, actions }: Props) {
         })}
 
         <h3 className="archives-heading hub-thread-heading">
-          <button className="icon-btn bare" onClick={() => setThreadOpen((o) => !o)} title={threadOpen ? "Replier" : "Déplier"}>
+          <button className="icon-btn bare" onClick={() => setThreadOpen((o) => !o)} title={threadOpen ? t("common.collapse") : t("common.expand")}>
             {threadOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
-          Messages {thread && thread.length > 0 && <span className="count">{thread.length}</span>}
+          {t("hubs.view.messages")} {thread && thread.length > 0 && <span className="count">{thread.length}</span>}
         </h3>
         {threadOpen &&
           (thread === null ? (
-            <p className="muted">Lecture des messages…</p>
+            <p className="muted">{t("hubs.view.loading")}</p>
           ) : thread.length === 0 ? (
-            <p className="muted">Aucun message entre ces conversations pour l'instant.</p>
+            <p className="muted">{t("hubs.view.noMessages")}</p>
           ) : (
             <div className="hub-thread">
               {thread.map((m, i) => (
@@ -128,7 +129,7 @@ function PeerName({ peer, titleOf, onOpen }: { peer: HubPeer; titleOf: Props["ti
     return (
       <button
         className="link-btn hub-peer"
-        title={`Ouvrir la conversation « ${title} »`}
+        title={t("hubs.view.openConversationNamed", { title })}
         onClick={(e) => {
           e.stopPropagation();
           onOpen(id);
@@ -139,7 +140,7 @@ function PeerName({ peer, titleOf, onOpen }: { peer: HubPeer; titleOf: Props["ti
     );
   }
   return (
-    <span className="hub-peer unknown" title="Conversation inconnue (nom de messagerie)">
+    <span className="hub-peer unknown" title={t("hubs.view.unknownPeer")}>
       {peer.name}
     </span>
   );
@@ -150,7 +151,7 @@ function HubThreadItem({ message, titleOf, onOpen }: { message: HubMessage; titl
   const html = useMemo(() => (open ? renderMarkdown(message.text) : ""), [open, message.text]);
   return (
     <div className={"hub-message" + (open ? " open" : "")}>
-      <div className="hub-message-row" onClick={() => setOpen((o) => !o)} title={open ? "Replier" : "Lire le message complet"}>
+      <div className="hub-message-row" onClick={() => setOpen((o) => !o)} title={open ? t("common.collapse") : t("hubs.view.readFull")}>
         {open ? <ChevronDown size={13} className="action-chevron" /> : <ChevronRight size={13} className="action-chevron" />}
         <PeerName peer={message.from} titleOf={titleOf} onOpen={onOpen} />
         <ArrowRight size={12} className="hub-message-arrow" />

@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Check, MessageSquareText, PenLine, SendHorizontal, Square, X } from "lucide-react";
 import { modKey } from "../util";
+import { t, type MessageKey } from "../i18n";
 import { renderMarkdown, renderMarkdownInline } from "../markdown";
 import { ANSWER_LINE, formatAnswers, getDraft, isAnswered, parseGrill, setDraft, type Answer, type Choice, type Draft, type PendingRound } from "../grill";
 
@@ -20,7 +21,7 @@ export function grillHtml(text: string): string | null {
       `<section class="grill-card" data-grill-n="${q.n}">` +
       `<div class="grill-card-head"><span class="grill-num">Q${q.n}</span><span class="grill-title">${renderMarkdownInline(q.title)}</span></div>` +
       (q.body ? `<div class="grill-card-body">${renderMarkdown(q.body)}</div>` : "") +
-      (q.recommendation ? `<div class="grill-reco"><span class="grill-reco-label">Recommandé</span>${renderMarkdown(q.recommendation)}</div>` : "") +
+      (q.recommendation ? `<div class="grill-reco"><span class="grill-reco-label">${t("tools.grill.recommended")}</span>${renderMarkdown(q.recommendation)}</div>` : "") +
       `</section>`,
   );
   return (round.intro ? renderMarkdown(round.intro) : "") + cards.join("") + (round.outro ? renderMarkdown(round.outro) : "");
@@ -73,7 +74,7 @@ export function GrillAnswers({ text }: { text: string }) {
       {lines.map((l, i) =>
         l.n != null ? (
           <div key={i} className="grill-answer-line">
-            <button className="grill-chip" title={`Voir la question Q${l.n}`} onClick={(e) => scrollToQuestion(e.currentTarget, l.n!)}>
+            <button className="grill-chip" title={t("tools.grill.seeQuestion", { n: l.n })} onClick={(e) => scrollToQuestion(e.currentTarget, l.n!)}>
               Q{l.n}
             </button>
             <span>{l.text}</span>
@@ -116,9 +117,9 @@ export function GrillBackBar({ count, onBack }: { count: number; onBack: () => v
   return (
     <div className="grill-back">
       <MessageSquareText size={13} />
-      <span>{count > 1 ? `${count} questions en attente` : "1 question en attente"}</span>
+      <span>{t("tools.grill.pendingCount", { count })}</span>
       <button className="link-btn" onClick={onBack}>
-        Revenir au formulaire de réponse
+        {t("tools.grill.backToForm")}
       </button>
     </div>
   );
@@ -136,10 +137,10 @@ interface FormProps {
   autoFocus: boolean;
 }
 
-const CHOICES: { choice: Choice; label: string; icon: typeof Check; title: string }[] = [
-  { choice: "yes", label: "D'accord", icon: Check, title: "Accepter la recommandation (répond « Oui »)" },
-  { choice: "no", label: "Non", icon: X, title: "Refuser la recommandation (précision facultative)" },
-  { choice: "other", label: "Autre réponse", icon: PenLine, title: "Écrire sa propre réponse" },
+const CHOICES: { choice: Choice; label: MessageKey; icon: typeof Check; title: MessageKey }[] = [
+  { choice: "yes", label: "tools.grill.choiceYes", icon: Check, title: "tools.grill.choiceYesTitle" },
+  { choice: "no", label: "tools.grill.choiceNo", icon: X, title: "tools.grill.choiceNoTitle" },
+  { choice: "other", label: "tools.grill.choiceOther", icon: PenLine, title: "tools.grill.choiceOtherTitle" },
 ];
 
 export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeText, autoFocus }: FormProps) {
@@ -204,10 +205,10 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
       <div className="grill-form-head">
         <MessageSquareText size={14} />
         <span className="grill-form-title">
-          {round.questions.length > 1 ? `${round.questions.length} questions` : "1 question"} · {answered}/{round.questions.length} répondue{answered > 1 ? "s" : ""}
+          {t("tools.grill.formTitle", { total: round.questions.length, answered })}
         </span>
-        <button className="link-btn" onClick={onFreeText} title="Voir la conversation et répondre dans la zone de saisie habituelle (les réponses déjà données sont gardées)">
-          Voir la conversation / répondre en texte libre
+        <button className="link-btn" onClick={onFreeText} title={t("tools.grill.freeTextTitle")}>
+          {t("tools.grill.freeText")}
         </button>
       </div>
       <div className="grill-list">
@@ -228,7 +229,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
               {q.body && <div className="grill-q-body markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(q.body) }} />}
               {hasReco && (
                 <div className="grill-reco">
-                  <span className="grill-reco-label">Recommandé</span>
+                  <span className="grill-reco-label">{t("tools.grill.recommended")}</span>
                   <div className="markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(q.recommendation!) }} />
                 </div>
               )}
@@ -238,10 +239,10 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
                     <button
                       key={c.choice}
                       className={"btn small grill-choice" + (choice === c.choice ? " selected " + c.choice : "")}
-                      title={c.title}
+                      title={t(c.title)}
                       onClick={(e) => choose(q.n, c.choice, hasReco, e.currentTarget)}
                     >
-                      <c.icon size={12} /> {c.label}
+                      <c.icon size={12} /> {t(c.label)}
                     </button>
                   ))}
                 </div>
@@ -250,7 +251,7 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
                 <AutoTextarea
                   className="grill-q-text"
                   value={a?.text ?? ""}
-                  placeholder={choice === "no" ? "Pourquoi, ou quoi à la place (facultatif)" : "Ta réponse"}
+                  placeholder={choice === "no" ? t("tools.grill.whyPlaceholder") : t("tools.grill.answerPlaceholder")}
                   onChange={(text) => setAnswer(q.n, { choice: choice as Choice, text })}
                 />
               )}
@@ -260,17 +261,17 @@ export function GrillForm({ sessionId, pending, enabled, onSend, onStop, onFreeT
         {round.outro && <div className="grill-text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(round.outro) }} />}
       </div>
       <div className="grill-form-foot">
-        <AutoTextarea className="grill-comment" value={draft.comment} placeholder="Commentaire général (facultatif)" onChange={(comment) => update({ ...draft, comment })} />
-        <button className="btn small" onClick={onStop} disabled={!enabled} title="Interrompre l'agent (Échap)">
-          <Square size={12} /> Arrêter
+        <AutoTextarea className="grill-comment" value={draft.comment} placeholder={t("tools.grill.commentPlaceholder")} onChange={(comment) => update({ ...draft, comment })} />
+        <button className="btn small" onClick={onStop} disabled={!enabled} title={t("tools.grill.stopTitle")}>
+          <Square size={12} /> {t("tools.grill.stop")}
         </button>
         <button
           className="btn small primary grill-send"
           onClick={send}
           disabled={!enabled || !complete || sending}
-          title={complete ? `Envoyer les réponses (${modKey}+Entrée)` : "Réponds à chaque question pour envoyer"}
+          title={complete ? t("tools.grill.sendTitle", { shortcut: modKey }) : t("tools.grill.sendIncomplete")}
         >
-          <SendHorizontal size={13} /> Envoyer
+          <SendHorizontal size={13} /> {t("tools.grill.send")}
         </button>
       </div>
     </div>

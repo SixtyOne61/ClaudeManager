@@ -22,13 +22,15 @@ import { useSyncExternalStore } from "react";
 import { api, errorMessage, type Config, type HandoffSummary } from "./api";
 import { activityDisplay, getActivity, subscribeActivity, useActivities, type Activity } from "./activity";
 import { sendInterrupt, sendMessage } from "./conversation";
+import { t } from "./i18n";
 
-/** Consigne par défaut du résumé de passation (modifiable dans les réglages). */
+/** Consigne par défaut du résumé de passation (modifiable dans les réglages). Envoyée à la
+ *  conversation : non traduite. */
 export const DEFAULT_HANDOFF_PROMPT =
   "Rédige un résumé de passation pour une nouvelle conversation qui reprendra ce travail sans voir celle-ci : objectif, état actuel, décisions prises et pourquoi, fichiers touchés, points en suspens, prochaines étapes. Réponds uniquement par ce résumé, en Markdown.";
 
 /** Explication du bouton Hand off grisé. */
-export const HANDOFF_UNAVAILABLE = "Disponible quand l'agent a fini son tour";
+export const handoffUnavailable = () => t("handoff.blocker.unavailable");
 
 /** Consigne du résumé de passation : celle des réglages, sinon le texte par défaut. */
 export function handoffPrompt(cfg: Config): string {
@@ -37,8 +39,8 @@ export function handoffPrompt(cfg: Config): string {
 
 /** Change la consigne (null, vide ou texte par défaut : retour au texte par défaut). */
 export function setHandoffPrompt(cfg: Config, text: string | null): Config {
-  const t = text?.trim();
-  return { ...cfg, handoffPrompt: t && t !== DEFAULT_HANDOFF_PROMPT ? t : null };
+  const trimmed = text?.trim();
+  return { ...cfg, handoffPrompt: trimmed && trimmed !== DEFAULT_HANDOFF_PROMPT ? trimmed : null };
 }
 
 /** Suite d'une conversation, si elle a passé le relais. */
@@ -114,10 +116,10 @@ export function cancelHandoff(sessionId: string) {
 
 /** Raison pour laquelle Hand off est indisponible (null : disponible). */
 export function handoffBlocker(a: Activity | null | undefined, phase: HandoffPhase | null): string | null {
-  if (phase) return "Hand off en cours…";
+  if (phase) return t("handoff.blocker.running");
   // « À toi » : fin de tour, ou conversation démarrée (mais pas juste lancée : Claude Code
   // n'a peut-être pas encore fini de démarrer).
-  if (activityDisplay(a) !== "yours" || (a?.kind === "start" && a.event === "Launch")) return HANDOFF_UNAVAILABLE;
+  if (activityDisplay(a) !== "yours" || (a?.kind === "start" && a.event === "Launch")) return handoffUnavailable();
   return null;
 }
 
@@ -180,7 +182,7 @@ export async function requestSummary(sessionId: string, cwd: string | null, prom
     await sendMessage(sessionId, prompt);
   } catch (e) {
     abort.abort();
-    return fail(`Hand off impossible : ${errorMessage(e)}`);
+    return fail(t("handoff.failed.impossible", { error: errorMessage(e) }));
   }
   const outcome = await turn;
   if (outcome === "cancelled") {
@@ -189,8 +191,8 @@ export async function requestSummary(sessionId: string, cwd: string | null, prom
     endHandoff(sessionId);
     return { kind: "cancelled" };
   }
-  if (outcome === "closed") return fail("Hand off annulé : le terminal de la conversation s'est fermé.");
-  if (outcome === "error") return fail("Hand off annulé : une erreur a interrompu la rédaction du résumé de passation.");
+  if (outcome === "closed") return fail(t("handoff.failed.terminalClosed"));
+  if (outcome === "error") return fail(t("handoff.failed.turnError"));
   for (let i = 0; i < READ_ATTEMPTS; i++) {
     if (abort.signal.aborted) {
       endHandoff(sessionId);
@@ -203,11 +205,11 @@ export async function requestSummary(sessionId: string, cwd: string | null, prom
         return { kind: "ok", summary };
       }
     } catch (e) {
-      return fail(`Hand off impossible : ${errorMessage(e)}`);
+      return fail(t("handoff.failed.impossible", { error: errorMessage(e) }));
     }
     await sleep(READ_RETRY_MS);
   }
-  return fail("Hand off annulé : la réponse de l'agent est vide, aucune conversation n'a été créée.");
+  return fail(t("handoff.failed.emptySummary"));
 }
 
 /** Délai maximal de démarrage de Claude Code dans la suite. */

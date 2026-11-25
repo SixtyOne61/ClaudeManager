@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Palette, X } from "lucide-react";
 import { PRESET_COLORS } from "../util";
+import { t } from "../i18n";
 
 interface Props {
   value: string | null | undefined;
@@ -12,7 +13,7 @@ interface Props {
   compact?: boolean;
 }
 
-export function ColorPicker({ value, onChange, title = "Couleur", compact }: Props) {
+export function ColorPicker({ value, onChange, title = t("common.color"), compact }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -67,9 +68,9 @@ export function ColorPicker({ value, onChange, title = "Couleur", compact }: Pro
             ))}
           </div>
           <div className="popover-row">
-            <label className="custom-color" title="Couleur libre">
+            <label className="custom-color" title={t("app.color.custom")}>
               <input type="color" value={value ?? "#7c3aed"} onChange={(e) => onChange(e.target.value)} />
-              Couleur libre
+              {t("app.color.custom")}
             </label>
             <button
               className="btn ghost small"
@@ -78,7 +79,7 @@ export function ColorPicker({ value, onChange, title = "Couleur", compact }: Pro
                 setOpen(false);
               }}
             >
-              <X size={12} /> Aucune
+              <X size={12} /> {t("app.color.none")}
             </button>
           </div>
         </div>
