@@ -15,6 +15,7 @@ mod context;
 mod conversation;
 mod handoff;
 mod hubs;
+mod languages;
 mod limits;
 mod messages;
 mod project_settings;
@@ -881,6 +882,8 @@ pub fn run() {
         .manage(messages::ExchangeTracker::default())
         // Dernier remplissage du contexte de chaque conversation (voir context.rs).
         .manage(context::ContextStore::load(&app_dir))
+        // Langues traduites et appels `claude -p` (voir languages.rs).
+        .manage(languages::LanguageStore::new(&app_dir))
         .on_window_event(pty::on_window_event)
         .setup(|app| {
             // Restes d'une fermeture brutale (plantage, arrêt forcé).
@@ -924,6 +927,12 @@ pub fn run() {
             hub_remove_member,
             hub_mark_archived,
             hub_restore,
+            languages::commands::languages_list,
+            languages::commands::language_read,
+            languages::commands::language_write,
+            languages::commands::language_delete,
+            languages::commands::claude_ask,
+            languages::commands::claude_cancel,
             hub_messages,
             messaging_directory,
             messaging_name,

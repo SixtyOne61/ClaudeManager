@@ -185,10 +185,27 @@ function parseOptions(s: string): Map<string, string> {
 }
 
 /** Noms des variables d'un texte (contrôle des traductions : elles doivent garder les mêmes). */
-export function variablesOf(pattern: string): Set<string> {
-  const names = new Set<string>();
-  const re = /\{\s*([A-Za-z_][\w]*)\s*[,}]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(pattern))) names.add(m[1]);
+export function variablesOf(pattern: string, names = new Set<string>()): Set<string> {
+  // Même parcours que `format` : le texte des branches de `plural` / `select` n'est pas une
+  // variable (`one {erreur}`), mais peut en contenir.
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === "'" && (pattern[i + 1] === "{" || pattern[i + 1] === "}") && pattern[i + 2] === "'") {
+      i += 3;
+    } else if (c === "{") {
+      const end = matching(pattern, i);
+      const body = pattern.slice(i + 1, end);
+      const comma = body.indexOf(",");
+      if (comma < 0) names.add(body.trim());
+      else {
+        names.add(body.slice(0, comma).trim());
+        const rest = body.slice(comma + 1);
+        const comma2 = rest.indexOf(",");
+        if (comma2 >= 0) for (const branch of parseOptions(rest.slice(comma2 + 1)).values()) variablesOf(branch, names);
+      }
+      i = end + 1;
+    } else i++;
+  }
   return names;
 }

@@ -1,6 +1,6 @@
 # Traduction via `claude -p` et onglet Langue
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 05
 
 ## Ce qu'on veut
@@ -31,3 +31,12 @@ Choisir la langue de l'interface en la tapant. L'app la fait traduire par Claude
 - Essai réel : traduire en anglais, changer de langue, relancer l'app, modifier un texte du catalogue et vérifier que seul lui est retraduit.
 
 ## Comments
+
+Fait :
+- Rust `languages.rs` : fichiers `%APPDATA%\claude-manager\languages\<code>.json` (code BCP 47 vérifié, sert de nom de fichier), commandes `languages_list`, `language_read`, `language_write` (écriture atomique), `language_delete`, `claude_ask` (async, annulable par `claude_cancel`). `claude -p --model sonnet --output-format json --no-session-persistence --tools "" --strict-mcp-config --disable-slash-commands --system-prompt-file …`, lancé depuis `%TEMP%\claude-manager-translate` : aucune session enregistrée (vérifié), pas de CLAUDE.md lu. `--bare` écarté : il n'accepte qu'une clé d'API, pas l'abonnement. Champ `language` dans `Config`.
+- `src/i18n/translate.ts` : `identifyLanguage` (refuse les langues de fiction et le charabia : « azerty », « klingon » ; accepte « espéranto »), `startTranslation` (textes manquants ou dont l'empreinte FNV du français a changé, lots de 70, 3 en parallèle, enregistrement après chaque lot donc reprise possible, langue affichée rafraîchie au fil des lots), `cancelTranslation`, `applyLanguage`, `pendingCount`. Contrôle `validTranslation` : mêmes variables que le français (parcours ICU réel : le texte d'une branche n'est pas une variable) et texte lisible, sinon le texte reste en français. Consigne avec le glossaire (`GLOSSARY.md?raw`).
+- Onglet « Langue » (`LanguageSettings.tsx`) : français intégré + langues traduites (choix, suppression), textes en attente avec « Traduire maintenant », champ « Autre langue… » + « Traduire », progression et « Annuler » ; la langue est choisie automatiquement à la fin si tout s'est bien passé. La traduction continue si la fenêtre est fermée.
+- Démarrage (`App.tsx`) : langue appliquée, puis complétée en arrière-plan une fois par lancement si des textes manquent.
+- Tests Rust : codes de langue, liste des langues, lecture de la réponse de `claude -p`.
+
+Essais réels : 66 textes parmi les plus délicats (pluriels, choix) traduits en anglais en 18 s, tous valides après correction de `variablesOf` ; identification « anglais » → `en` English, « pt-BR » → Português (Brasil), « chinois traditionnel » → `zh-Hant`. Pas encore fait : une traduction complète depuis l'app.

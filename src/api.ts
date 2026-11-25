@@ -219,6 +219,15 @@ export interface Config {
   handoffPrompt?: string | null;
   /** Hubs, dans l'ordre d'affichage (absent dans un vieux fichier). Gérés par le backend : commandes `hub*`. */
   hubs?: Hub[];
+  /** Langue de l'interface (code BCP 47) ; absente ou null : français (voir src/i18n/translate.ts). */
+  language?: string | null;
+}
+
+/** Langue traduite enregistrée (voir languages.rs). */
+export interface LanguageInfo {
+  code: string;
+  /** Nom dans la langue elle-même (« English »). */
+  name: string;
 }
 
 /** Extrait d'un message découpé autour du mot trouvé. */
@@ -359,6 +368,14 @@ export const api = {
   hubMarkArchived: (hubId: string, sessionIds: string[]) => invoke<Config>("hub_mark_archived", { hubId, sessionIds }),
   /** Restaure un hub archivé et les conversations archivées avec lui. */
   hubRestore: (hubId: string) => invoke<RestoreProjectResult>("hub_restore", { hubId }),
+  // Langues de l'interface (voir src/i18n/translate.ts et languages.rs).
+  languagesList: () => invoke<LanguageInfo[]>("languages_list"),
+  languageRead: (code: string) => invoke<unknown>("language_read", { code }),
+  languageWrite: (code: string, data: unknown) => invoke<void>("language_write", { code, data }),
+  languageDelete: (code: string) => invoke<void>("language_delete", { code }),
+  /** `claude -p` (abonnement de l'utilisateur) ; `job` permet de l'arrêter avec `claudeCancel`. */
+  claudeAsk: (job: string, model: string, system: string, prompt: string) => invoke<string>("claude_ask", { job, model, system, prompt }),
+  claudeCancel: (job: string) => invoke<void>("claude_cancel", { job }),
   /** Dernières limites d'utilisation connues (null : aucune encore). */
   usageLimits: () => invoke<UsageLimits | null>("usage_limits"),
 };

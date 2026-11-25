@@ -239,6 +239,9 @@ pub struct Config {
     /// Hubs, dans l'ordre d'affichage. Gérés uniquement par le backend (voir hubs.rs) ; un
     /// membre est gardé tant que sa conversation existe (sur le disque ou dans les archives).
     pub hubs: Vec<Hub>,
+    /// Langue de l'interface (code BCP 47) ; `None` : français, la langue intégrée. Les textes
+    /// traduits sont dans `languages\<code>.json` (voir languages.rs).
+    pub language: Option<String>,
 }
 
 impl Default for Config {
@@ -254,6 +257,7 @@ impl Default for Config {
             handoff_links: HashMap::new(),
             handoff_prompt: None,
             hubs: Vec::new(),
+            language: None,
         }
     }
 }

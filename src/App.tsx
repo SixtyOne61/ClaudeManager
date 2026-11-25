@@ -58,6 +58,7 @@ import {
   type HandoffLineage,
 } from "./handoff";
 import { t, useLanguage } from "./i18n";
+import { applyLanguage, pendingCount, startTranslation, translationRunning } from "./i18n/translate";
 
 /** Titre provisoire d'une nouvelle conversation, en attendant celui de son fichier. */
 const newConversationTitle = () => t("app.newConversationTitle");
@@ -90,6 +91,22 @@ export default function App() {
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
+
+  // Langue de l'interface (voir src/i18n/translate.ts) : chargée au démarrage et à chaque choix
+  // dans les réglages. Une langue dont des textes manquent ou ont changé (nouvelle version de
+  // l'app) est complétée en arrière-plan, une fois par lancement ; en attendant, ces textes
+  // s'affichent en français.
+  const languageCode = config?.language ?? null;
+  const configLoaded = config !== null;
+  const languageCompleted = useRef(new Set<string>());
+  useEffect(() => {
+    if (!configLoaded) return;
+    applyLanguage(languageCode).then(async () => {
+      if (!languageCode || languageCompleted.current.has(languageCode) || translationRunning()) return;
+      languageCompleted.current.add(languageCode);
+      if ((await pendingCount(languageCode)) > 0) await startTranslation(languageCode, languageCode);
+    }).catch(() => {});
+  }, [languageCode, configLoaded]);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; error?: boolean }[]>([]);

@@ -5,6 +5,12 @@
 // dans actions.rs).
 
 export default {
+  "error.languages.invalidCode": "Code de langue invalide : {code}",
+  "error.languages.badResponse": "Réponse inattendue de Claude : {detail}",
+  "error.languages.claudeFailed": "Claude n'a pas pu répondre : {detail}",
+  "error.languages.saveFailed": "Impossible d'enregistrer la traduction : {detail}",
+  "error.languages.deleteFailed": "Impossible de supprimer la langue : {detail}",
+  "error.languages.cancelled": "Traduction annulée.",
   "error.actions.sessionActive":
     "Cette conversation a été modifiée il y a moins de 2 minutes, elle est peut-être {where, select, elsewhere {ouverte dans Claude Desktop ou dans un autre terminal} other {encore ouverte}}.",
   "error.actions.invalidSessionId": "Identifiant de session invalide : {id}",

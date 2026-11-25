@@ -738,6 +738,21 @@ button.conv-footer-item:disabled { cursor: default; opacity: .6; }
   .settings-body { flex-direction: column; }
   .settings-tabs { width: auto; flex-direction: row; border-right: none; border-bottom: 1px solid var(--border); }
 }
+.language-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.language-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; }
+.language-row:hover { background: var(--bg-elev-2); }
+.language-row.active { background: var(--bg-elev-2); }
+.language-row .checkbox { flex: 1; min-width: 0; }
+.language-name { font-weight: 500; }
+.language-hint { color: var(--text-muted); font-size: 11.5px; margin-left: 6px; }
+.language-pending { flex-direction: row; align-items: center; gap: 10px; font-size: 12.5px; }
+.language-add { display: flex; gap: 8px; align-items: center; }
+.language-add input { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-elev-2); outline: none; }
+.language-add input:focus { border-color: var(--accent); }
+.language-note { display: block; padding-left: 0; margin-top: 6px; }
+.language-error { color: #e5534b; font-size: 12.5px; margin-top: 8px; }
+.language-job { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; flex-wrap: wrap; }
+.language-job progress { flex: 1; min-width: 120px; accent-color: var(--accent); }
 .settings-heading { margin: 0 0 4px; font-size: 14px; }
 .settings-help { margin: 0 0 12px; font-size: 12.5px; color: var(--text-muted); }
 .settings-rule { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }

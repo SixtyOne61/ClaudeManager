@@ -25,6 +25,7 @@ import {
 } from "../suggestions";
 import { DEFAULT_HANDOFF_PROMPT, handoffPrompt, setHandoffPrompt } from "../handoff";
 import { Modal } from "./Dialogs";
+import { LanguageSettings } from "./LanguageSettings";
 import { t } from "../i18n";
 
 /** Onglets des réglages, dans l'ordre de la liste latérale. */
@@ -32,6 +33,7 @@ const SETTINGS_TABS = [
   { id: "display", labelKey: "settings.tab.display" },
   { id: "suggestions", labelKey: "settings.tab.suggestions" },
   { id: "handoff", labelKey: "settings.tab.handoff" },
+  { id: "language", labelKey: "settings.tab.language" },
 ] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 
@@ -99,6 +101,7 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
   };
 
   const panels: Record<SettingsTab, React.ReactNode> = {
+    language: <LanguageSettings config={config} onChange={onChange} />,
     display: (
       <>
         <h3 className="settings-heading">{t("settings.tab.display")}</h3>

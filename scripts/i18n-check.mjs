@@ -39,8 +39,8 @@ for (const file of readdirSync(catalogDir).filter((f) => f.endsWith(".ts"))) {
 function sources(dir) {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
-    if (statSync(p).isDirectory()) return p.endsWith(join("src", "i18n")) ? [] : sources(p);
-    return /\.(ts|tsx)$/.test(f) ? [p] : [];
+    if (statSync(p).isDirectory()) return p.endsWith(join("i18n", "fr")) ? [] : sources(p);
+    return /\.(ts|tsx)$/.test(f) && !p.endsWith(join("i18n", "fr.ts")) ? [p] : [];
   });
 }
 const code = sources(join(root, "src")).map((p) => readFileSync(p, "utf8")).join("\n");
