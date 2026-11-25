@@ -102,6 +102,8 @@ export interface RestoreProjectResult {
 export interface Section {
   id: string;
   name: string;
+  /** Section qui contient celle-ci (absent : premier niveau). Profondeur illimitée. */
+  parentId?: string | null;
   color: string | null;
   /** Conversations de la section ; une conversation archivée y reste. */
   conversationIds: string[];

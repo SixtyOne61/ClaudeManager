@@ -51,6 +51,8 @@ import {
   conversationColor,
   defaultSection,
   deleteSection,
+  expandSection,
+  fallbackSection,
   groupBySection,
   moveSection,
   projectSections,
@@ -61,6 +63,7 @@ import {
   setSectionCollapsed,
   setSectionColor,
   storedSectionId,
+  type SectionNode,
 } from "../sections";
 import { t } from "../i18n";
 import { ColorPicker } from "./ColorPicker";
@@ -191,7 +194,8 @@ export function ProjectView(props: Props) {
 
   // ---- Sections -------------------------------------------------------------------------
 
-  const [sectionDialog, setSectionDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
+  /** `parentId` : section qui reçoit la nouvelle section (null = premier niveau). */
+  const [sectionDialog, setSectionDialog] = useState<{ kind: "new"; parentId: string | null } | { kind: "rename"; section: Section } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const groups = useMemo(() => groupBySection(config, p.key, sessions), [config, p.key, sessions]);
   const defaultName = sectionName(defaultSection(config, p.key));
@@ -225,7 +229,7 @@ export function ProjectView(props: Props) {
 
   /** Conversations sélectionnables, dans l'ordre affiché (sections repliées exclues). */
   const displayed = useMemo(
-    () => groups.sections.flatMap((g) => (g.section.collapsed ? [] : g.sessions)).filter((s) => !s.provisional),
+    () => groups.sections.flatMap((g) => (g.hidden || g.section.collapsed ? [] : g.sessions)).filter((s) => !s.provisional),
     [groups],
   );
   const allDisplayedSelected = displayed.length > 0 && displayed.every((s) => selected.has(s.id));
@@ -294,8 +298,8 @@ export function ProjectView(props: Props) {
    */
   const putInSection = (cfg: Config, sectionId: string | null, ids: string[]) => {
     const next = ids.reduce((c, id) => putConversationInSection(c, p.key, storedSectionId(sectionId), id), cfg);
-    const target = projectSections(next, p.key).find((s) => s.id === (sectionId ?? DEFAULT_SECTION_ID));
-    return target?.collapsed ? setSectionCollapsed(next, p.key, target.id, false) : next;
+    // La section et ses ancêtres sont dépliées.
+    return expandSection(next, p.key, sectionId ?? DEFAULT_SECTION_ID);
   };
 
   /**
@@ -340,18 +344,25 @@ export function ProjectView(props: Props) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   /**
-   * Détection de la cible : une section glissée vise les autres sections ; une conversation
-   * glissée vise une zone de dépôt (corps d'une section), sinon un en-tête.
+   * Détection de la cible : une section glissée vise les sections du même niveau ; une
+   * conversation glissée vise une zone de dépôt (corps d'une section), sinon un en-tête. Les
+   * sections étant imbriquées, la plus petite zone sous le pointeur (la plus profonde) gagne.
    */
   const collision: CollisionDetection = (args) => {
+    const parentOf = (id: string | number) => groups.sections.find((g) => "s:" + g.section.id === String(id))?.parentId ?? null;
     if (String(args.active.id).startsWith("s:")) {
-      const secs = args.droppableContainers.filter((c) => String(c.id).startsWith("s:"));
+      const level = parentOf(args.active.id);
+      const secs = args.droppableContainers.filter((c) => String(c.id).startsWith("s:") && parentOf(c.id) === level);
       return closestCenter({ ...args, droppableContainers: secs });
     }
+    const area = (id: string | number) => {
+      const r = args.droppableRects.get(id);
+      return r ? r.width * r.height : Infinity;
+    };
     const hits = pointerWithin(args);
     for (const prefix of ["zone:", "s:"]) {
       const hit = hits.filter((h) => String(h.id).startsWith(prefix));
-      if (hit.length) return hit;
+      if (hit.length) return hit.sort((a, b) => area(a.id) - area(b.id));
     }
     return [];
   };
@@ -378,11 +389,19 @@ export function ProjectView(props: Props) {
   /** Conversations déplacées en glissant `id` : toute la sélection si elle en fait partie. */
   const draggedIds = (id: string) => (selected.has(id) && selecting ? selectedSessions.map((s) => s.id) : [id]);
 
-  const confirmDeleteSection = async (section: Section) => {
+  const confirmDeleteSection = async (node: SectionNode) => {
+    const { section } = node;
     const n = section.conversationIds.length;
     const name = sectionName(section);
+    const target = sectionName(fallbackSection(config, p.key, section.id));
+    const message =
+      node.children.length > 0
+        ? t("sidebar.section.deleteConfirmNested", { name, target })
+        : n
+          ? t("sidebar.section.deleteConfirmMove", { name, defaultName: target })
+          : t("sidebar.section.deleteConfirm", { name });
     const ok = await ask(
-      n ? t("sidebar.section.deleteConfirmMove", { name, defaultName }) : t("sidebar.section.deleteConfirm", { name }),
+      message,
       { title: t("sidebar.section.deleteTitle"), kind: "warning", okLabel: t("common.delete"), cancelLabel: t("common.cancel") },
     );
     if (ok) change((c) => deleteSection(c, p.key, section.id));
@@ -416,6 +435,57 @@ export function ProjectView(props: Props) {
       onAddToHub={() => props.onAddToHub(s)}
     />
   );
+
+  /** Conversations d'une section et de toutes ses sous-sections. */
+  const subtreeSessions = (node: SectionNode): SessionInfo[] => [...node.sessions, ...node.children.flatMap(subtreeSessions)];
+
+  /** Une section, ses conversations puis ses sous-sections (récursif, profondeur illimitée). */
+  const renderSection = (node: SectionNode): React.ReactNode => {
+    const { section } = node;
+    // Recherche en cours ou projet vide : les sections sans conversation (sous-sections comprises) sont masquées.
+    if ((filtering || empty) && node.total === 0) return null;
+    const all = subtreeSessions(node);
+    return (
+      <SectionBlock
+        key={section.id}
+        section={section}
+        count={node.total}
+        empty={node.sessions.length === 0 && node.children.length === 0}
+        selectState={sectionSelectState(all)}
+        selecting={selecting}
+        onSelectAll={sectionSelectable(all).length ? () => toggleSection(all) : undefined}
+        onToggle={() => change((c) => setSectionCollapsed(c, p.key, section.id, !section.collapsed))}
+        onRename={() => setSectionDialog({ kind: "rename", section })}
+        onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDeleteSection(node)}
+        onColor={(color) => change((c) => setSectionColor(c, p.key, section.id, color))}
+        onAddSub={() => setSectionDialog({ kind: "new", parentId: section.id })}
+        onNew={
+          canLaunch
+            ? () => {
+                // Section repliée : dépliée pour voir la nouvelle conversation.
+                change((c) => expandSection(c, p.key, section.id));
+                props.onNew(storedSectionId(section.id));
+              }
+            : undefined
+        }
+        onNewWorktree={
+          canLaunch && isGit
+            ? () => {
+                change((c) => expandSection(c, p.key, section.id));
+                setWorktreeFor({ sectionId: storedSectionId(section.id) });
+              }
+            : undefined
+        }
+      >
+        {node.sessions.map(row)}
+        {node.children.length > 0 && (
+          <SortableContext items={node.children.map((n) => "s:" + n.section.id)} strategy={verticalListSortingStrategy}>
+            {node.children.map(renderSection)}
+          </SortableContext>
+        )}
+      </SectionBlock>
+    );
+  };
 
   return (
     <main className="main">
@@ -506,7 +576,7 @@ export function ProjectView(props: Props) {
         >
           <ListChecks size={15} />
         </button>
-        <button className="btn small" onClick={() => setSectionDialog({ kind: "new" })} title={t("sidebar.section.addHint")}>
+        <button className="btn small" onClick={() => setSectionDialog({ kind: "new", parentId: null })} title={t("sidebar.section.addHint")}>
           <ListPlus size={14} /> {t("sidebar.section.add")}
         </button>
       </div>
@@ -522,42 +592,8 @@ export function ProjectView(props: Props) {
           onDragEnd={onDragEnd}
           onDragCancel={() => setDragId(null)}
         >
-          <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
-            {groups.sections.map(({ section, sessions: list }) =>
-              (filtering || empty) && list.length === 0 ? null : (
-                <SectionBlock
-                  key={section.id}
-                  section={section}
-                  count={list.length}
-                  selectState={sectionSelectState(list)}
-                  selecting={selecting}
-                  onSelectAll={sectionSelectable(list).length ? () => toggleSection(list) : undefined}
-                  onToggle={() => change((c) => setSectionCollapsed(c, p.key, section.id, !section.collapsed))}
-                  onRename={() => setSectionDialog({ kind: "rename", section })}
-                  onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDeleteSection(section)}
-                  onColor={(color) => change((c) => setSectionColor(c, p.key, section.id, color))}
-                  onNew={
-                    canLaunch
-                      ? () => {
-                          // Section repliée : dépliée pour voir la nouvelle conversation.
-                          if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
-                          props.onNew(storedSectionId(section.id));
-                        }
-                      : undefined
-                  }
-                  onNewWorktree={
-                    canLaunch && isGit
-                      ? () => {
-                          if (section.collapsed) change((c) => setSectionCollapsed(c, p.key, section.id, false));
-                          setWorktreeFor({ sectionId: storedSectionId(section.id) });
-                        }
-                      : undefined
-                  }
-                >
-                  {list.map(row)}
-                </SectionBlock>
-              ),
-            )}
+          <SortableContext items={groups.roots.map((n) => "s:" + n.section.id)} strategy={verticalListSortingStrategy}>
+            {groups.roots.map(renderSection)}
           </SortableContext>
 
           <DragOverlay dropAnimation={null}>
@@ -589,7 +625,7 @@ export function ProjectView(props: Props) {
           </button>
           <span className="selection-spacer" />
           <SectionMenu
-            sections={projectSections(config, p.key)}
+            sections={groups.sections}
             onPick={(sectionId) => moveTo(storedSectionId(sectionId), selectedSessions.map((s) => s.id), "center")}
             onNew={() => setSectionForSelection(true)}
           />
@@ -619,11 +655,11 @@ export function ProjectView(props: Props) {
       )}
       {sectionDialog?.kind === "new" && (
         <TextPrompt
-          title={t("sidebar.section.newTitle")}
+          title={sectionDialog.parentId ? t("sidebar.section.newSubTitle") : t("sidebar.section.newTitle")}
           label={t("common.name")}
           onClose={() => setSectionDialog(null)}
           onSubmit={(name) => {
-            change((c) => addSection(c, p.key, name));
+            change((c) => addSection(c, p.key, name, sectionDialog.parentId));
             setSectionDialog(null);
           }}
         />
@@ -665,8 +701,11 @@ export function ProjectView(props: Props) {
 
 function SectionBlock(props: {
   section: Section;
+  /** Conversations de la section et de ses sous-sections. */
   count: number;
-  /** Conversations de la section dans la sélection : aucune, une partie, toutes. */
+  /** Ni conversation ni sous-section : affiche l'invitation à déposer. */
+  empty: boolean;
+  /** Conversations de la section (sous-sections comprises) dans la sélection : aucune, une partie, toutes. */
   selectState: "none" | "some" | "all";
   /** Une sélection existe : la case reste visible. */
   selecting: boolean;
@@ -677,6 +716,8 @@ function SectionBlock(props: {
   /** Absent pour la section par défaut, qui ne se supprime pas. */
   onDelete?: () => void;
   onColor: (c: string | null) => void;
+  /** Nouvelle sous-section. */
+  onAddSub: () => void;
   /** Nouvelle conversation dans cette section (absent si le projet ne peut pas lancer Claude). */
   onNew?: () => void;
   /** Idem, dans un nouveau worktree (absent si le projet n'est pas un dépôt git). */
@@ -726,6 +767,9 @@ function SectionBlock(props: {
               <GitBranchPlus size={13} />
             </button>
           )}
+          <button className="icon-btn" title={t("sidebar.section.addSub")} onClick={props.onAddSub}>
+            <ListPlus size={13} />
+          </button>
           <button className="icon-btn" title={t("common.rename")} onClick={props.onRename}>
             <Pencil size={13} />
           </button>
@@ -739,7 +783,7 @@ function SectionBlock(props: {
       </div>
       <div ref={zone.setNodeRef} className="section-body">
         {!section.collapsed && props.children}
-        {!section.collapsed && props.count === 0 && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
+        {!section.collapsed && props.empty && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
       </div>
     </section>
   );
@@ -769,7 +813,7 @@ function SectionCheck(props: { state: "none" | "some" | "all"; onToggle: () => v
 }
 
 /** Menu « Ranger dans une section… » de la barre de sélection. */
-function SectionMenu(props: { sections: Section[]; onPick: (sectionId: string | null) => void; onNew: () => void }) {
+function SectionMenu(props: { sections: SectionNode[]; onPick: (sectionId: string | null) => void; onNew: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -799,8 +843,8 @@ function SectionMenu(props: { sections: Section[]; onPick: (sectionId: string | 
       </button>
       {open && (
         <div className="popover menu">
-          {props.sections.map((s) => (
-            <button key={s.id} className="menu-item" onClick={() => pick(() => props.onPick(s.id))}>
+          {props.sections.map(({ section: s, depth }) => (
+            <button key={s.id} className="menu-item" style={{ paddingLeft: 10 + depth * 14 }} onClick={() => pick(() => props.onPick(s.id))}>
               <span className="swatch-dot" style={{ background: s.color ?? "transparent" }} /> {sectionName(s)}
             </button>
           ))}

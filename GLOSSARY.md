@@ -13,7 +13,7 @@ Un regroupement de projets choisi par l'utilisateur, propre à Claude Manager.
 _Éviter_ : groupe, dossier
 
 **Section** :
-Un regroupement de conversations à l'intérieur d'un projet, choisi par l'utilisateur et propre à Claude Manager.
+Un regroupement de conversations à l'intérieur d'un projet, choisi par l'utilisateur et propre à Claude Manager. Une section peut en contenir d'autres (**sous-sections**), sans limite de profondeur ; une conversation reste rangée dans une seule section.
 _Éviter_ : sous-catégorie, dossier, groupe
 
 **Couleur** :

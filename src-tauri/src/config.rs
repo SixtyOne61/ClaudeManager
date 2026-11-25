@@ -69,12 +69,19 @@ pub struct ProjectArchive {
     pub session_ids: Vec<String>,
 }
 
-/// Une section : regroupement de conversations à l'intérieur d'un projet (pas d'imbrication).
+/// Une section : regroupement de conversations à l'intérieur d'un projet. Les sections
+/// s'imbriquent sans limite de profondeur : la liste reste à plat, `parent_id` désigne la
+/// section qui contient celle-ci (absent : au premier niveau).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Section {
     pub id: String,
     pub name: String,
+    /// Section parente, ou `None` au premier niveau. Un parent inconnu ou un cycle est lu
+    /// comme « premier niveau » par l'interface (voir `groupBySection`). La section par
+    /// défaut est toujours au premier niveau.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
     /// Couleur de fond (`#rrggbb`), ou `None` pour la couleur par défaut.
     pub color: Option<String>,
     /// Identifiants des conversations de la section. Une conversation archivée y reste,
@@ -471,14 +478,25 @@ mod tests {
             color: Some("#2563eb".into()),
             conversation_ids: vec!["a".into(), "b".into()],
             collapsed: true,
+            ..Default::default()
+        });
+        // Sous-section : le parent est écrit ; une section de premier niveau n'écrit rien.
+        cfg.projects.get_mut("C--p").unwrap().sections.push(Section {
+            id: "sub".into(),
+            name: "API".into(),
+            parent_id: Some("sec".into()),
+            ..Default::default()
         });
         cfg.conversations.insert("a".into(), ConversationPrefs { color: Some("#dc2626".into()), ..Default::default() });
         save(&p, &cfg).unwrap();
         let text = fs::read_to_string(&p).unwrap();
         assert!(text.contains("\"conversationIds\"") && text.contains("\"conversations\""));
+        assert_eq!(text.matches("\"parentId\"").count(), 1);
         let back = load(&p);
         let s = &back.projects["C--p"].sections[0];
         assert_eq!((s.name.as_str(), s.collapsed, s.conversation_ids.len()), ("Backend", true, 2));
+        assert_eq!(s.parent_id, None);
+        assert_eq!(back.projects["C--p"].sections[1].parent_id.as_deref(), Some("sec"));
         assert_eq!(back.conversations["a"].color.as_deref(), Some("#dc2626"));
     }
 

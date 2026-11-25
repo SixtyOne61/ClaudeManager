@@ -47,17 +47,18 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   DEFAULT_SECTION_ID,
   addSection,
-  defaultSection,
   deleteSection,
+  expandSection,
+  fallbackSection,
   groupBySection,
   moveSection,
-  projectSections,
   putConversationInSection,
   renameSection,
   sectionName,
   setSectionCollapsed,
   setSectionColor,
   storedSectionId,
+  type SectionNode,
 } from "../sections";
 import { t } from "../i18n";
 import { TextPrompt } from "./Dialogs";
@@ -533,7 +534,8 @@ function ConversationsPanel(props: {
   onConfigChange: (change: (c: Config) => Config) => void;
 }) {
   const { project, config } = props;
-  const [dialog, setDialog] = useState<{ kind: "new" } | { kind: "rename"; section: Section } | null>(null);
+  /** `parentId` : section qui reçoit la nouvelle section (null = premier niveau). */
+  const [dialog, setDialog] = useState<{ kind: "new"; parentId: string | null } | { kind: "rename"; section: Section } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   // Un petit déplacement est nécessaire avant de commencer à glisser : les clics restent des clics.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -542,11 +544,13 @@ function ConversationsPanel(props: {
   const groups = groupBySection(config, project.key, list);
   const change = props.onConfigChange;
 
-  const confirmDelete = async (section: Section) => {
-    const message = t("sidebar.section.deleteConfirmMove", {
-      name: sectionName(section),
-      defaultName: sectionName(defaultSection(config, project.key)),
-    });
+  const confirmDelete = async (node: SectionNode) => {
+    const { section } = node;
+    const target = sectionName(fallbackSection(config, project.key, section.id));
+    const message =
+      node.children.length > 0
+        ? t("sidebar.section.deleteConfirmNested", { name: sectionName(section), target })
+        : t("sidebar.section.deleteConfirmMove", { name: sectionName(section), defaultName: target });
     const ok = await ask(message, {
       title: t("sidebar.section.deleteTitle"),
       kind: "warning",
@@ -557,18 +561,25 @@ function ConversationsPanel(props: {
   };
 
   /**
-   * Détection de la cible : une section glissée vise les autres sections ; une conversation
-   * glissée vise une zone de dépôt (corps d'une section), sinon un en-tête.
+   * Détection de la cible : une section glissée vise les sections du même niveau ; une
+   * conversation glissée vise une zone de dépôt (corps d'une section), sinon un en-tête. Les
+   * sections étant imbriquées, la plus petite zone sous le pointeur (la plus profonde) gagne.
    */
   const collision: CollisionDetection = (args) => {
+    const parentOf = (id: string | number) => groups.sections.find((g) => "s:" + g.section.id === String(id))?.parentId ?? null;
     if (String(args.active.id).startsWith("s:")) {
-      const secs = args.droppableContainers.filter((c) => String(c.id).startsWith("s:"));
+      const level = parentOf(args.active.id);
+      const secs = args.droppableContainers.filter((c) => String(c.id).startsWith("s:") && parentOf(c.id) === level);
       return closestCenter({ ...args, droppableContainers: secs });
     }
+    const area = (id: string | number) => {
+      const r = args.droppableRects.get(id);
+      return r ? r.width * r.height : Infinity;
+    };
     const hits = pointerWithin(args);
     for (const prefix of ["zone:", "s:"]) {
       const hit = hits.filter((h) => String(h.id).startsWith(prefix));
-      if (hit.length) return hit;
+      if (hit.length) return hit.sort((a, b) => area(a.id) - area(b.id));
     }
     return [];
   };
@@ -587,12 +598,8 @@ function ConversationsPanel(props: {
     const id = a.slice(2);
     const current = groups.sections.find((g) => g.sessions.some((s) => s.id === id))?.section.id ?? DEFAULT_SECTION_ID;
     if (current === target) return;
-    change((c) => {
-      const next = putConversationInSection(c, project.key, storedSectionId(target), id);
-      const sec = projectSections(next, project.key).find((s) => s.id === target);
-      // Section repliée : dépliée pour voir la conversation arriver.
-      return sec?.collapsed ? setSectionCollapsed(next, project.key, sec.id, false) : next;
-    });
+    // Section repliée (ou dans une section repliée) : dépliée pour voir la conversation arriver.
+    change((c) => expandSection(putConversationInSection(c, project.key, storedSectionId(target), id), project.key, target));
   };
 
   const convRow = (s: SessionInfo) => (
@@ -610,6 +617,39 @@ function ConversationsPanel(props: {
   const draggedSession = dragId?.startsWith("v:") ? list.find((s) => s.id === dragId.slice(2)) : undefined;
   const draggedSection = dragId?.startsWith("s:") ? groups.sections.find((g) => g.section.id === dragId.slice(2))?.section : undefined;
 
+  /** Une section, ses conversations puis ses sous-sections (récursif, profondeur illimitée). */
+  const renderSection = (node: SectionNode): React.ReactNode => {
+    const { section, sessions } = node;
+    return (
+      <SectionBlock
+        key={section.id}
+        section={section}
+        count={node.total}
+        empty={sessions.length === 0 && node.children.length === 0}
+        onToggle={() => change((c) => setSectionCollapsed(c, project.key, section.id, !section.collapsed))}
+        onRename={() => setDialog({ kind: "rename", section })}
+        onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDelete(node)}
+        onColor={(color) => change((c) => setSectionColor(c, project.key, section.id, color))}
+        onAddSub={() => setDialog({ kind: "new", parentId: section.id })}
+        onNew={
+          project.path
+            ? () => {
+                change((c) => expandSection(c, project.key, section.id));
+                props.onNew(project, storedSectionId(section.id));
+              }
+            : undefined
+        }
+      >
+        {sessions.map(convRow)}
+        {node.children.length > 0 && (
+          <SortableContext items={node.children.map((n) => "s:" + n.section.id)} strategy={verticalListSortingStrategy}>
+            {node.children.map(renderSection)}
+          </SortableContext>
+        )}
+      </SectionBlock>
+    );
+  };
+
   const projectColor = config.projects[project.key]?.color;
   return (
     <>
@@ -618,36 +658,19 @@ function ConversationsPanel(props: {
         <span className="count">{list.length}</span>
       </div>
       <div className="sidebar-toolbar">
-        <button className="btn small" onClick={() => setDialog({ kind: "new" })} title={t("sidebar.section.addHint")}>
+        <button className="btn small" onClick={() => setDialog({ kind: "new", parentId: null })} title={t("sidebar.section.addHint")}>
           <ListPlus size={14} /> {t("sidebar.section.add")}
         </button>
       </div>
       <div className="sidebar-scroll">
         <DndContext sensors={sensors} collisionDetection={collision} onDragStart={(e) => setDragId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
           {list.length === 0 && <div className="empty-zone">{t("sidebar.conversations.empty")}</div>}
-          <SortableContext items={groups.sections.map((g) => "s:" + g.section.id)} strategy={verticalListSortingStrategy}>
-            {groups.sections.map(({ section, sessions }) => (
-              <SectionBlock
-                key={section.id}
-                section={section}
-                count={sessions.length}
-                onToggle={() => change((c) => setSectionCollapsed(c, project.key, section.id, !section.collapsed))}
-                onRename={() => setDialog({ kind: "rename", section })}
-                onDelete={section.id === DEFAULT_SECTION_ID ? undefined : () => confirmDelete(section)}
-                onColor={(color) => change((c) => setSectionColor(c, project.key, section.id, color))}
-                onNew={
-                  project.path
-                    ? () => {
-                        if (section.collapsed) change((c) => setSectionCollapsed(c, project.key, section.id, false));
-                        props.onNew(project, storedSectionId(section.id));
-                      }
-                    : undefined
-                }
-              >
-                {sessions.map(convRow)}
-              </SectionBlock>
-            ))}
-          </SortableContext>
+          {/* Largeur minimale selon la profondeur : au-delà de la barre, défilement horizontal plutôt que des noms écrasés. */}
+          <div style={{ minWidth: 220 + Math.max(0, ...groups.sections.map((g) => g.depth)) * 12 }}>
+            <SortableContext items={groups.roots.map((n) => "s:" + n.section.id)} strategy={verticalListSortingStrategy}>
+              {groups.roots.map(renderSection)}
+            </SortableContext>
+          </div>
           <DragOverlay dropAnimation={null}>
             {draggedSession && (
               <div className="project-row overlay" style={colorStyle(config.conversations[draggedSession.id]?.color)}>
@@ -664,11 +687,11 @@ function ConversationsPanel(props: {
       </div>
       {dialog?.kind === "new" && (
         <TextPrompt
-          title={t("sidebar.section.newTitle")}
+          title={dialog.parentId ? t("sidebar.section.newSubTitle") : t("sidebar.section.newTitle")}
           label={t("common.name")}
           onClose={() => setDialog(null)}
           onSubmit={(name) => {
-            change((c) => addSection(c, project.key, name));
+            change((c) => addSection(c, project.key, name, dialog.parentId));
             setDialog(null);
           }}
         />
@@ -722,12 +745,17 @@ function ConversationRow(props: {
 /** Section réordonnable, qui reçoit des conversations. */
 function SectionBlock(props: {
   section: Section;
+  /** Conversations de la section et de ses sous-sections. */
   count: number;
+  /** Ni conversation ni sous-section : affiche l'invitation à déposer. */
+  empty: boolean;
   onToggle: () => void;
   onRename: () => void;
   /** Absent pour la section par défaut, qui ne se supprime pas. */
   onDelete?: () => void;
   onColor: (c: string | null) => void;
+  /** Nouvelle sous-section. */
+  onAddSub: () => void;
   onNew?: () => void;
   children: React.ReactNode;
 }) {
@@ -763,6 +791,9 @@ function SectionBlock(props: {
               <Plus size={13} />
             </button>
           )}
+          <button className="icon-btn" title={t("sidebar.section.addSub")} onClick={props.onAddSub}>
+            <ListPlus size={13} />
+          </button>
           <button className="icon-btn" title={t("common.rename")} onClick={props.onRename}>
             <Pencil size={13} />
           </button>
@@ -776,7 +807,7 @@ function SectionBlock(props: {
       </div>
       <div ref={zone.setNodeRef} className="category-body">
         {!section.collapsed && props.children}
-        {!section.collapsed && props.count === 0 && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
+        {!section.collapsed && props.empty && <div className="empty-zone">{t("sidebar.section.dropConversations")}</div>}
       </div>
     </section>
   );

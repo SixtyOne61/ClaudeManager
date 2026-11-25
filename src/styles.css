@@ -228,6 +228,9 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .section-header:hover .section-check, .section-header.selecting .section-check { visibility: visible; }
 .section-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-body { padding: 0 4px 4px; min-height: 8px; }
+/* Sous-sections : décalées et plus discrètes que leur parent, à toute profondeur. */
+.section-body > .section { margin: 6px 0 4px 8px; background: transparent; }
+.category-body > .category { margin: 4px 0 2px 6px; background: transparent; border-color: var(--border); }
 .section .session-row { margin: 2px 0; }
 
 /* ---------- Sélection multiple de conversations ---------- */

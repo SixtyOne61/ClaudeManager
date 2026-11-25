@@ -6,6 +6,11 @@
 // section par défaut n'est listée nulle part (`sectionId = null`) : l'entrée réservée
 // `DEFAULT_SECTION_ID` de la liste des sections ne garde que son nom, sa couleur, son repli et
 // sa position, et sa liste de conversations reste vide. Absente d'un projet, elle est en tête.
+// Les sections s'imbriquent sans limite de profondeur : la liste des sections d'un projet reste
+// à plat, `parentId` désigne la section qui contient celle-ci. Un parent inconnu ou un cycle
+// est lu comme « premier niveau » (`sectionParents`). Une conversation reste rangée dans une
+// seule section, à n'importe quel niveau.
+//
 // Les identifiants qui n'existent plus sont retirés par le backend (voir `prune_conversations`
 // dans config.rs) ; l'affichage ignore de toute façon les identifiants inconnus.
 
@@ -56,9 +61,50 @@ function patchSection(cfg: Config, projectKey: string, sectionId: string, patch:
   );
 }
 
-export function addSection(cfg: Config, projectKey: string, name: string): Config {
+/**
+ * Section parente effective de chaque section (`null` = premier niveau). Un parent inconnu,
+ * la section par défaut (toujours au premier niveau) ou un cycle donnent `null`.
+ */
+export function sectionParents(sections: Section[]): Map<string, string | null> {
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const declared = (s: Section): string | null =>
+    s.id !== DEFAULT_SECTION_ID && s.parentId && s.parentId !== s.id && byId.has(s.parentId) ? s.parentId : null;
+  const parents = new Map<string, string | null>();
+  for (const s of sections) {
+    // On remonte les parents : si on revient sur une section déjà vue, c'est un cycle et la
+    // section remonte au premier niveau.
+    const seen = new Set([s.id]);
+    let cursor = declared(s);
+    let cycle = false;
+    while (cursor) {
+      if (seen.has(cursor)) {
+        cycle = true;
+        break;
+      }
+      seen.add(cursor);
+      cursor = declared(byId.get(cursor)!);
+    }
+    parents.set(s.id, cycle ? null : declared(s));
+  }
+  return parents;
+}
+
+/** Nouvelle section, au premier niveau ou dans `parentId` (sous-section, dépliée pour la voir). */
+export function addSection(cfg: Config, projectKey: string, name: string, parentId: string | null = null): Config {
   const section: Section = { id: newId(), name, color: null, conversationIds: [], collapsed: false };
-  return withSections(cfg, projectKey, [...projectSections(cfg, projectKey), section]);
+  if (parentId) section.parentId = parentId;
+  const next = withSections(cfg, projectKey, [...projectSections(cfg, projectKey), section]);
+  return parentId ? expandSection(next, projectKey, parentId) : next;
+}
+
+/** Déplie une section et toutes ses ancêtres, pour que son contenu soit visible. */
+export function expandSection(cfg: Config, projectKey: string, sectionId: string): Config {
+  const sections = projectSections(cfg, projectKey);
+  const parents = sectionParents(sections);
+  const chain = new Set<string>();
+  for (let id: string | null = sectionId; id; id = parents.get(id) ?? null) chain.add(id);
+  if (!sections.some((s) => chain.has(s.id) && s.collapsed)) return cfg;
+  return withSections(cfg, projectKey, sections.map((s) => (chain.has(s.id) && s.collapsed ? { ...s, collapsed: false } : s)));
 }
 
 export const renameSection = (cfg: Config, projectKey: string, sectionId: string, name: string) =>
@@ -70,13 +116,48 @@ export const setSectionColor = (cfg: Config, projectKey: string, sectionId: stri
 export const setSectionCollapsed = (cfg: Config, projectKey: string, sectionId: string, collapsed: boolean) =>
   patchSection(cfg, projectKey, sectionId, { collapsed });
 
-/** Supprime une section ; ses conversations retournent dans la section par défaut, qui ne se supprime pas. */
-export const deleteSection = (cfg: Config, projectKey: string, sectionId: string) =>
-  sectionId === DEFAULT_SECTION_ID ? cfg : withSections(cfg, projectKey, projectSections(cfg, projectKey).filter((s) => s.id !== sectionId));
+/**
+ * Section qui reçoit les conversations et les sous-sections d'une section supprimée : sa
+ * section parente, ou la section par défaut au premier niveau.
+ */
+export function fallbackSection(cfg: Config, projectKey: string, sectionId: string): Section {
+  const sections = projectSections(cfg, projectKey);
+  const parentId = sectionParents(sections).get(sectionId);
+  return sections.find((s) => s.id === parentId) ?? sections.find((s) => s.id === DEFAULT_SECTION_ID)!;
+}
 
-/** Déplace une section à la place d'une autre. */
+/**
+ * Supprime une section : ses conversations et ses sous-sections remontent dans sa section
+ * parente (la section par défaut au premier niveau). La section par défaut ne se supprime pas.
+ */
+export function deleteSection(cfg: Config, projectKey: string, sectionId: string): Config {
+  if (sectionId === DEFAULT_SECTION_ID) return cfg;
+  const sections = projectSections(cfg, projectKey);
+  const removed = sections.find((s) => s.id === sectionId);
+  if (!removed) return cfg;
+  const parent = sectionParents(sections).get(sectionId) ?? null;
+  const rest = sections
+    .filter((s) => s.id !== sectionId)
+    .map((s) => {
+      let next = s;
+      if (s.parentId === sectionId) next = { ...next, parentId: parent };
+      // Au premier niveau, les conversations retournent dans la section par défaut (non listées).
+      if (s.id === parent && parent !== DEFAULT_SECTION_ID) {
+        next = { ...next, conversationIds: [...next.conversationIds, ...removed.conversationIds] };
+      }
+      return next;
+    });
+  return withSections(cfg, projectKey, rest);
+}
+
+/**
+ * Déplace une section à la place d'une autre du même niveau (même section parente) ;
+ * sans effet entre deux niveaux différents.
+ */
 export function moveSection(cfg: Config, projectKey: string, sectionId: string, overId: string): Config {
   const list = [...projectSections(cfg, projectKey)];
+  const parents = sectionParents(list);
+  if (parents.get(sectionId) !== parents.get(overId)) return cfg;
   const from = list.findIndex((s) => s.id === sectionId);
   const to = list.findIndex((s) => s.id === overId);
   if (from < 0 || to < 0 || from === to) return cfg;
@@ -121,17 +202,67 @@ export function sectionOf(cfg: Config, projectKey: string, conversationId: strin
   return projectSections(cfg, projectKey).find((s) => s.conversationIds.includes(conversationId)) ?? null;
 }
 
+/** Une section dans l'arbre d'un projet, avec ses conversations propres. */
+export interface SectionNode {
+  section: Section;
+  /** Conversations rangées directement dans cette section. */
+  sessions: SessionInfo[];
+  /** Niveau d'imbrication : 0 au premier niveau. */
+  depth: number;
+  /** Section parente effective (`null` au premier niveau). */
+  parentId: string | null;
+  /** Sous-sections directes, dans l'ordre d'affichage. */
+  children: SectionNode[];
+  /** Conversations de la section et de toutes ses descendantes. */
+  total: number;
+  /** Cachée par le repli d'une section ancêtre. */
+  hidden: boolean;
+}
+
 /**
  * Répartit des conversations entre les sections, dans l'ordre d'affichage ; la section par
  * défaut reçoit celles qui ne sont rangées nulle part. L'ordre des conversations (le plus
  * récent d'abord) est conservé dans chaque groupe.
+ *
+ * `roots` est l'arbre ; `sections` le même arbre parcouru en profondeur (une section avant
+ * ses sous-sections), pour les usages qui n'ont pas besoin de la structure.
  */
 export function groupBySection(cfg: Config, projectKey: string, sessions: SessionInfo[]) {
-  const sections = projectSections(cfg, projectKey);
+  const list = projectSections(cfg, projectKey);
   const owner = new Map<string, string>();
-  for (const s of sections) for (const id of s.conversationIds) if (!owner.has(id)) owner.set(id, s.id);
+  for (const s of list) for (const id of s.conversationIds) if (!owner.has(id)) owner.set(id, s.id);
   const ownerOf = (id: string) => owner.get(id) ?? DEFAULT_SECTION_ID;
-  return { sections: sections.map((section) => ({ section, sessions: sessions.filter((s) => ownerOf(s.id) === section.id) })) };
+  const parents = sectionParents(list);
+  const nodes = new Map<string, SectionNode>();
+  for (const section of list) {
+    nodes.set(section.id, {
+      section,
+      sessions: sessions.filter((s) => ownerOf(s.id) === section.id),
+      depth: 0,
+      parentId: parents.get(section.id) ?? null,
+      children: [],
+      total: 0,
+      hidden: false,
+    });
+  }
+  const roots: SectionNode[] = [];
+  for (const section of list) {
+    const node = nodes.get(section.id)!;
+    (node.parentId ? nodes.get(node.parentId)!.children : roots).push(node);
+  }
+  const flat: SectionNode[] = [];
+  const walk = (node: SectionNode, depth: number, hidden: boolean) => {
+    node.depth = depth;
+    node.hidden = hidden;
+    flat.push(node);
+    node.total = node.sessions.length;
+    for (const child of node.children) {
+      walk(child, depth + 1, hidden || node.section.collapsed);
+      node.total += child.total;
+    }
+  };
+  for (const root of roots) walk(root, 0, false);
+  return { roots, sections: flat };
 }
 
 // ---- Préférences par conversation -----------------------------------------------------
