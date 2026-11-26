@@ -235,6 +235,8 @@ pub struct Config {
     /// Gérée uniquement par le backend (archiver / restaurer).
     pub archives: Vec<ArchiveEntry>,
     pub show_temp_projects: bool,
+    /// Onglets des conversations ouvertes regroupés par hub ou par projet (activé par défaut).
+    pub group_tabs: bool,
     /// Réglages des suggestions (voir suggestions.rs).
     pub suggestions: SuggestionSettings,
     /// Hand off : suite de chaque parente, par identifiant de la parente. Gérée uniquement
@@ -260,6 +262,7 @@ impl Default for Config {
             conversations: HashMap::new(),
             archives: Vec::new(),
             show_temp_projects: false,
+            group_tabs: true,
             suggestions: SuggestionSettings::default(),
             handoff_links: HashMap::new(),
             handoff_prompt: None,
@@ -446,6 +449,8 @@ mod tests {
         assert_eq!(cfg.archives[0].session_id, "s1");
         assert_eq!(cfg.archives[0].archived_at, 5);
         assert!(cfg.show_temp_projects);
+        // Réglage absent d'un vieux fichier : onglets regroupés.
+        assert!(cfg.group_tabs);
 
         // Enregistrée puis relue au nouveau format : identique.
         save(&p, &cfg).unwrap();

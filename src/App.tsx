@@ -26,7 +26,7 @@ import { ArchivesView } from "./components/ArchivesView";
 import { GlobalSearch, type SearchFocus } from "./components/GlobalSearch";
 import { NewProjectDialog, TextPrompt, WorktreeOfferDialog } from "./components/Dialogs";
 import { newId, projectName, worktreePath } from "./util";
-import { TerminalStack, TerminalTabBar, type OpenTerminal } from "./components/TerminalTabs";
+import { TerminalStack, TerminalTabBar, type OpenTerminal, type TabInfo } from "./components/TerminalTabs";
 import { HubView } from "./components/HubView";
 import { ConversationLinksContext, messagesApi } from "./messages";
 import { isTerminalRunning, killTerminal, ptyApi, startInNewWorktree, worktreeNameError } from "./pty";
@@ -45,7 +45,7 @@ import {
 } from "./suggestions";
 import { SettingsDialog } from "./components/Settings";
 import { ExecutorDialog, HubDialog, type ExecutorRequest, type HubActions, type HubChoice } from "./components/Hubs";
-import { activeHubs, coordinatorOf, defaultRole, executorBlocker, executorFirstMessage } from "./hubs";
+import { activeHubs, coordinatorOf, defaultRole, executorBlocker, executorFirstMessage, hubOf } from "./hubs";
 import {
   endHandoff,
   handoffBlocker,
@@ -498,10 +498,20 @@ export default function App() {
     if (tab.isNew) await dropIfEmpty(tab.sessionId);
   };
 
-  /** Onglets avec le titre à jour (le vrai titre remplace « Nouvelle conversation »). */
-  const tabs = terminals.map((t) => {
-    const title = [...projects.values()].flatMap((p) => p.sessions).find((s) => s.id === t.sessionId)?.title;
-    return title && title !== t.title ? { ...t, title } : t;
+  /**
+   * Onglets avec le titre à jour (le vrai titre remplace « Nouvelle conversation ») et, si le
+   * réglage est activé, leur groupe : le hub (non archivé) de la conversation, sinon son projet.
+   */
+  const tabs: TabInfo[] = terminals.map((t) => {
+    const p = [...projects.values()].find((x) => x.sessions.some((s) => s.id === t.sessionId));
+    const title = p?.sessions.find((s) => s.id === t.sessionId)?.title;
+    const tab: TabInfo = title && title !== t.title ? { ...t, title } : t;
+    if (config?.groupTabs === false) return tab;
+    const hub = config ? hubOf(config, t.sessionId)?.hub : undefined;
+    if (hub && !hub.archived) return { ...tab, group: { key: `hub:${hub.id}`, kind: "hub", name: hub.name, color: hub.color } };
+    if (p) return { ...tab, group: { key: `project:${p.key}`, kind: "project", name: projectName(p, config), color: config?.projects[p.key]?.color ?? null } };
+    const folder = t.cwd.split(/[\\/]/).filter(Boolean).pop() ?? t.cwd;
+    return { ...tab, group: { key: `cwd:${t.cwd}`, kind: "project", name: folder, color: null } };
   });
 
   // ---- Hand off (voir src/handoff.ts) ----------------------------------------------------

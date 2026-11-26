@@ -357,6 +357,17 @@ span.session-check { visibility: hidden !important; }
 .terminal-tab.active { background: var(--bg); border-color: var(--border); color: var(--text); }
 .terminal-tab.home { padding-right: 10px; }
 .terminal-tab-title { overflow: hidden; text-overflow: ellipsis; }
+/* Groupe d'onglets (hub ou projet) : nom en tête, filet de la couleur du hub ou du projet. */
+.terminal-tab-group {
+  display: flex; align-items: flex-end; gap: 2px; flex: none; padding-left: 6px; margin-left: 4px;
+  border-left: 2px solid var(--group-color, var(--border));
+}
+.terminal-tab-group-label {
+  display: inline-flex; align-items: center; gap: 4px; align-self: center; max-width: 140px; padding: 0 4px 4px;
+  color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap;
+}
+.terminal-tab-group-label svg { flex: none; color: var(--group-color, currentColor); }
+.terminal-tab-group-name { overflow: hidden; text-overflow: ellipsis; }
 .terminal-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .terminal-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
 .terminal-host { flex: 1; min-height: 0; padding: 6px 0 0 8px; user-select: text; }

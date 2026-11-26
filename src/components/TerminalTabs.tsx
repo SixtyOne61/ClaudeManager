@@ -2,6 +2,8 @@
 // vue principale (projet ou hub sélectionné dans la barre latérale).
 // La barre d'onglets et les terminaux sont séparés : la barre s'affiche au-dessus de la
 // vue courante, les terminaux restent tous montés (seul l'onglet actif est visible).
+// Quand chaque onglet a un groupe (réglage « Regrouper les onglets », calculé dans App.tsx),
+// les onglets sont rangés sous le nom de leur hub ou de leur projet.
 
 import { FolderKanban, Network, SquareTerminal, X } from "lucide-react";
 import { TerminalView } from "./TerminalView";
@@ -22,8 +24,32 @@ export interface OpenTerminal {
   isNew?: boolean;
 }
 
+/** Groupe d'un onglet : le hub de la conversation, sinon son projet. */
+export interface TabGroup {
+  /** Clé stable (`hub:<id>` ou `project:<clé>`). */
+  key: string;
+  kind: "hub" | "project";
+  name: string;
+  color: string | null;
+}
+
+/** Onglet de la barre, avec son groupe quand les onglets sont regroupés (voir les réglages). */
+export type TabInfo = OpenTerminal & { group?: TabGroup };
+
+/** Onglets rangés par groupe, les groupes dans l'ordre d'ouverture de leur premier onglet. */
+function groupTabs(tabs: TabInfo[]): { group: TabGroup; tabs: TabInfo[] }[] {
+  const groups = new Map<string, { group: TabGroup; tabs: TabInfo[] }>();
+  for (const t of tabs) {
+    if (!t.group) continue;
+    const g = groups.get(t.group.key);
+    if (g) g.tabs.push(t);
+    else groups.set(t.group.key, { group: t.group, tabs: [t] });
+  }
+  return [...groups.values()];
+}
+
 interface BarProps {
-  terminals: OpenTerminal[];
+  terminals: TabInfo[];
   /** Vue principale vers laquelle ramène le premier onglet. */
   home?: "project" | "hub";
   /** Conversation affichée, ou null quand c'est la vue principale (projet, hub…) qui est affichée. */
@@ -36,6 +62,32 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
   // État de chaque conversation ouverte : pastille dans son onglet.
   const activities = useActivities();
   if (terminals.length === 0) return null;
+  const renderTab = (t: TabInfo) => (
+    <div
+      key={t.sessionId}
+      role="tab"
+      aria-selected={active === t.sessionId}
+      className={"terminal-tab" + (active === t.sessionId ? " active" : "")}
+      onClick={() => onSelect(t.sessionId)}
+      onAuxClick={(e) => e.button === 1 && onClose(t)}
+      title={`${t.title}\n${t.cwd}`}
+    >
+      <SquareTerminal size={14} />
+      <ActivityDot activity={activities.get(t.sessionId)} compact />
+      <span className="terminal-tab-title">{t.title}</span>
+      <button
+        className="icon-btn bare"
+        title={tr("common.close")}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose(t);
+        }}
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+  const grouped = terminals.every((t) => t.group) ? groupTabs(terminals) : null;
   return (
     <div className="terminal-tabs" role="tablist">
       <button
@@ -45,31 +97,26 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
       >
         {home === "hub" ? <Network size={14} /> : <FolderKanban size={14} />} {home === "hub" ? tr("conversation.tabs.hub") : tr("conversation.tabs.projects")}
       </button>
-      {terminals.map((t) => (
-        <div
-          key={t.sessionId}
-          role="tab"
-          aria-selected={active === t.sessionId}
-          className={"terminal-tab" + (active === t.sessionId ? " active" : "")}
-          onClick={() => onSelect(t.sessionId)}
-          onAuxClick={(e) => e.button === 1 && onClose(t)}
-          title={`${t.title}\n${t.cwd}`}
-        >
-          <SquareTerminal size={14} />
-          <ActivityDot activity={activities.get(t.sessionId)} compact />
-          <span className="terminal-tab-title">{t.title}</span>
-          <button
-            className="icon-btn bare"
-            title={tr("common.close")}
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose(t);
-            }}
-          >
-            <X size={12} />
-          </button>
-        </div>
-      ))}
+      {grouped
+        ? grouped.map(({ group, tabs }) => (
+            <div
+              key={group.key}
+              className="terminal-tab-group"
+              role="group"
+              aria-label={tr(group.kind === "hub" ? "conversation.tabs.groupHub" : "conversation.tabs.groupProject", { name: group.name })}
+              style={group.color ? ({ "--group-color": group.color } as React.CSSProperties) : undefined}
+            >
+              <span
+                className="terminal-tab-group-label"
+                title={tr(group.kind === "hub" ? "conversation.tabs.groupHub" : "conversation.tabs.groupProject", { name: group.name })}
+              >
+                {group.kind === "hub" ? <Network size={12} /> : <FolderKanban size={12} />}
+                <span className="terminal-tab-group-name">{group.name}</span>
+              </span>
+              {tabs.map(renderTab)}
+            </div>
+          ))
+        : terminals.map(renderTab)}
     </div>
   );
 }

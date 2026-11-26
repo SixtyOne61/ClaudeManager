@@ -116,6 +116,17 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
           </label>
           <small className="settings-rule-help">{t("settings.display.showTempProjectsHelp")}</small>
         </div>
+        <div className="settings-rule">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={config.groupTabs !== false}
+              onChange={(e) => onChange((c) => ({ ...c, groupTabs: e.target.checked }))}
+            />
+            {t("settings.display.groupTabs")}
+          </label>
+          <small className="settings-rule-help">{t("settings.display.groupTabsHelp")}</small>
+        </div>
       </>
     ),
     suggestions: (

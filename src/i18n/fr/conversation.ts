@@ -131,6 +131,8 @@ export default {
   "conversation.tabs.backToProject": "Revenir au projet",
   "conversation.tabs.hub": "Hub",
   "conversation.tabs.projects": "Projets",
+  "conversation.tabs.groupHub": "Hub « {name} »",
+  "conversation.tabs.groupProject": "Projet « {name} »",
 
   // Nom de worktree (src/pty.ts)
   "conversation.worktree.tooLong": "64 caractères au plus.",

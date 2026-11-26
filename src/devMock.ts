@@ -93,6 +93,7 @@ let config: Config = {
   conversations: { [site.sessions[1].id]: { color: "#dc2626" }, [site.sessions[2].id]: { color: "#fde68a" } },
   archives: [],
   showTempProjects: false,
+  groupTabs: true,
   // Hub fictif : deux conversations de « SiteVitrine » et une de « JeuDeCartes ».
   hubs: [
     {

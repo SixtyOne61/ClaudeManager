@@ -213,6 +213,8 @@ export interface Config {
   conversations: Record<string, ConversationPrefs>;
   archives: ArchiveEntry[];
   showTempProjects: boolean;
+  /** Onglets des conversations ouvertes regroupés par hub ou par projet (absent : oui). */
+  groupTabs?: boolean;
   /** Réglages des suggestions (absent dans un vieux fichier). */
   suggestions?: SuggestionSettings;
   /** Hand off : suite de chaque parente, par identifiant de la parente. Géré par le backend. */

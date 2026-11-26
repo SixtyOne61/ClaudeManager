@@ -8,6 +8,8 @@ export default {
   "settings.tab.handoff": "Hand off",
   "settings.display.showTempProjects": "Afficher les projets temporaires",
   "settings.display.showTempProjectsHelp": "Projets situés dans un dossier temporaire, masqués par défaut dans la barre latérale.",
+  "settings.display.groupTabs": "Regrouper les onglets par hub ou par projet",
+  "settings.display.groupTabsHelp": "Les onglets des conversations ouvertes, en haut de l'écran, sont rangés sous le nom de leur hub, sinon de leur projet.",
   "settings.suggestions.help": "L'app propose une bonne pratique quand elle repère une situation (icône 💡). Elle n'agit jamais d'elle-même.",
   "settings.suggestions.thresholdBefore": "Seuil :",
   "settings.suggestions.thresholdAfter": "% du contexte",
