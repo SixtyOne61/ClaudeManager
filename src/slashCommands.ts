@@ -57,12 +57,23 @@ export async function loadSlashCommands(cwd: string | null, sessionId: string | 
 }
 
 /**
- * Le texte saisi ouvre-t-il le menu ? Oui s'il commence par `/` suivi d'un nom en cours de
- * frappe (pas encore d'espace). Renvoie ce qui suit la barre oblique, sinon null.
+ * Le texte saisi ouvre-t-il le menu ? Oui si ce qui précède le curseur est `/` en début de
+ * texte suivi d'un nom en cours de frappe (pas encore d'espace) ; ce qui suit le curseur ne
+ * compte pas (`/` tapé devant un message déjà écrit). Renvoie le nom tapé, sinon null.
  */
-export function slashQuery(text: string): string | null {
-  const m = /^\/(\S*)$/.exec(text);
+export function slashQuery(text: string, caret: number = text.length): string | null {
+  const m = /^\/(\S*)$/.exec(text.slice(0, caret));
   return m ? m[1] : null;
+}
+
+/**
+ * Texte après le choix de `/name`, le curseur étant à `caret` : le nom tapé devient
+ * `/name `, la suite du message est gardée. Renvoie le texte et la nouvelle position du curseur.
+ */
+export function applySlashPick(text: string, caret: number, name: string): { text: string; caret: number } {
+  const head = `/${name} `;
+  const rest = text.slice(caret).replace(/^[ \t]+/, "");
+  return { text: head + rest, caret: head.length };
 }
 
 /** Les lettres de `q` apparaissent-elles dans l'ordre dans `s` ? Score : plus c'est serré, mieux c'est. */

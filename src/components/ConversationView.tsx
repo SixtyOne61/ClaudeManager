@@ -383,7 +383,7 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
   const [viewing, setViewing] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const slash = useSlashMenu({ text, setText, cwd, sessionId });
+  const slash = useSlashMenu({ text, setText, cwd, sessionId, inputRef: ref });
   /** Brouillon en cours quand la modification a commencé. */
   const draft = useRef<{ text: string; attachments: Attachment[] } | null>(null);
 
@@ -560,9 +560,11 @@ export function ConversationInput({ enabled, onSend, onStop, autoFocus, cwd = nu
         disabled={!enabled}
         onChange={(e) => {
           setText(e.target.value);
+          slash.onSelect(e);
           onTyping?.();
         }}
         onKeyDown={onKeyDown}
+        onSelect={slash.onSelect}
         onPaste={onPaste}
       />
       <button className="btn small" onClick={onStop} disabled={!enabled} title={t("conversation.input.stopTitle")}>

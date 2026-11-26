@@ -1,10 +1,11 @@
 // Menu des commandes `/…` au-dessus de la zone de saisie, comme dans Claude Code :
-// il s'ouvre quand le texte commence par `/`, se filtre pendant la frappe, se parcourt au
-// clavier (↑ ↓, Tab ou Entrée pour compléter, Échap pour fermer) ou à la souris.
-// Compléter remplace la saisie par `/nom ` sans envoyer le message.
+// il s'ouvre quand le texte avant le curseur est `/…` en début de saisie (même si un message
+// suit déjà), se filtre pendant la frappe, se parcourt au clavier (↑ ↓, Tab ou Entrée pour
+// compléter, Échap pour fermer) ou à la souris. Compléter remplace le nom tapé par `/nom `,
+// garde la suite du message et n'envoie rien.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { cachedSlashCommands, filterSlashCommands, loadSlashCommands, slashArgumentHint, slashDescription, slashQuery, sourceLabel, type SlashEntry } from "../slashCommands";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from "react";
+import { applySlashPick, cachedSlashCommands, filterSlashCommands, loadSlashCommands, slashArgumentHint, slashDescription, slashQuery, sourceLabel, type SlashEntry } from "../slashCommands";
 import { t } from "../i18n";
 
 /** Au-delà, la liste est coupée (le filtrage reste possible). */
@@ -15,14 +16,19 @@ interface Options {
   setText: (t: string) => void;
   cwd: string | null;
   sessionId: string | null;
+  /** Zone de saisie : position du curseur, replacé après un choix. */
+  inputRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 /**
  * État du menu pour une zone de saisie. `onKeyDown` est à appeler en premier dans le
  * gestionnaire de touches de la zone : il renvoie true quand le menu a consommé la touche.
+ * `onSelect` est à brancher sur la zone (suivi du curseur).
  */
-export function useSlashMenu({ text, setText, cwd, sessionId }: Options) {
-  const query = slashQuery(text);
+export function useSlashMenu({ text, setText, cwd, sessionId, inputRef }: Options) {
+  /** Position du curseur (null : sélection d'un bloc de texte, menu fermé). */
+  const [caret, setCaret] = useState<number | null>(text.length);
+  const query = caret === null ? null : slashQuery(text, Math.min(caret, text.length));
   const [dismissed, setDismissed] = useState(false);
   const [entries, setEntries] = useState<SlashEntry[]>(() => cachedSlashCommands(cwd, sessionId) ?? []);
   const [loading, setLoading] = useState(false);
@@ -57,7 +63,18 @@ export function useSlashMenu({ text, setText, cwd, sessionId }: Options) {
   // La sélection revient en tête quand le filtre change.
   useEffect(() => setSelected(0), [query]);
 
-  const pick = (e: SlashEntry) => setText(`/${e.name} `);
+  const onSelect = (e: SyntheticEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null);
+  };
+
+  const pick = (e: SlashEntry) => {
+    const at = Math.min(caret ?? text.length, text.length);
+    const next = applySlashPick(text, at, e.name);
+    setText(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => inputRef.current?.setSelectionRange(next.caret, next.caret));
+  };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (!open) return false;
@@ -95,7 +112,7 @@ export function useSlashMenu({ text, setText, cwd, sessionId }: Options) {
     <SlashMenu matches={matches} selected={Math.min(selected, Math.max(0, matches.length - 1))} loading={loading} onHover={setSelected} onPick={pick} />
   ) : null;
 
-  return { open, onKeyDown, menu };
+  return { open, onKeyDown, onSelect, menu };
 }
 
 interface MenuProps {
