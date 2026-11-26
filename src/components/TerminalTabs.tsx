@@ -3,7 +3,7 @@
 // La barre d'onglets et les terminaux sont séparés : la barre s'affiche au-dessus de la
 // vue courante, les terminaux restent tous montés (seul l'onglet actif est visible).
 // Quand chaque onglet a un groupe (réglage « Regrouper les onglets », calculé dans App.tsx),
-// les onglets sont rangés sous le nom de leur hub ou de leur projet.
+// les onglets sont rangés côte à côte par hub ou par projet, avec un liseré de sa couleur en haut.
 
 import { FolderKanban, Network, SquareTerminal, X } from "lucide-react";
 import { TerminalView } from "./TerminalView";
@@ -70,7 +70,11 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
       className={"terminal-tab" + (active === t.sessionId ? " active" : "")}
       onClick={() => onSelect(t.sessionId)}
       onAuxClick={(e) => e.button === 1 && onClose(t)}
-      title={`${t.title}\n${t.cwd}`}
+      title={
+        t.group
+          ? `${t.title}\n${tr(t.group.kind === "hub" ? "conversation.tabs.groupHub" : "conversation.tabs.groupProject", { name: t.group.name })}\n${t.cwd}`
+          : `${t.title}\n${t.cwd}`
+      }
     >
       <SquareTerminal size={14} />
       <ActivityDot activity={activities.get(t.sessionId)} compact />
@@ -106,13 +110,6 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
               aria-label={tr(group.kind === "hub" ? "conversation.tabs.groupHub" : "conversation.tabs.groupProject", { name: group.name })}
               style={group.color ? ({ "--group-color": group.color } as React.CSSProperties) : undefined}
             >
-              <span
-                className="terminal-tab-group-label"
-                title={tr(group.kind === "hub" ? "conversation.tabs.groupHub" : "conversation.tabs.groupProject", { name: group.name })}
-              >
-                {group.kind === "hub" ? <Network size={12} /> : <FolderKanban size={12} />}
-                <span className="terminal-tab-group-name">{group.name}</span>
-              </span>
               {tabs.map(renderTab)}
             </div>
           ))
