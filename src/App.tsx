@@ -500,8 +500,12 @@ export default function App() {
 
   /**
    * Onglets avec le titre à jour (le vrai titre remplace « Nouvelle conversation ») et, si le
-   * réglage est activé, leur groupe : le hub (non archivé) de la conversation, sinon son projet.
+   * réglage est activé, leur groupe : le hub (non archivé) de la conversation, sinon son projet
+   * (couleur du projet, sinon de sa catégorie).
    */
+  /** Couleur d'un projet pour le liseré de ses onglets : la sienne, sinon celle de sa catégorie. */
+  const projectColor = (key: string): string | null =>
+    config?.projects[key]?.color ?? config?.categories.find((c) => c.projectKeys.includes(key))?.color ?? null;
   const tabs: TabInfo[] = terminals.map((t) => {
     const p = [...projects.values()].find((x) => x.sessions.some((s) => s.id === t.sessionId));
     const title = p?.sessions.find((s) => s.id === t.sessionId)?.title;
@@ -509,7 +513,7 @@ export default function App() {
     if (config?.groupTabs === false) return tab;
     const hub = config ? hubOf(config, t.sessionId)?.hub : undefined;
     if (hub && !hub.archived) return { ...tab, group: { key: `hub:${hub.id}`, kind: "hub", name: hub.name, color: hub.color } };
-    if (p) return { ...tab, group: { key: `project:${p.key}`, kind: "project", name: projectName(p, config), color: config?.projects[p.key]?.color ?? null } };
+    if (p) return { ...tab, group: { key: `project:${p.key}`, kind: "project", name: projectName(p, config), color: projectColor(p.key) } };
     const folder = t.cwd.split(/[\\/]/).filter(Boolean).pop() ?? t.cwd;
     return { ...tab, group: { key: `cwd:${t.cwd}`, kind: "project", name: folder, color: null } };
   });
