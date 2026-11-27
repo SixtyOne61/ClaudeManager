@@ -6,6 +6,7 @@ export default {
   "settings.tab.display": "Affichage",
   "settings.tab.suggestions": "Suggestions",
   "settings.tab.handoff": "Hand off",
+  "settings.tab.skills": "Skills",
   "settings.display.showTempProjects": "Afficher les projets temporaires",
   "settings.display.showTempProjectsHelp": "Projets situés dans un dossier temporaire, masqués par défaut dans la barre latérale.",
   "settings.display.groupTabs": "Regrouper les onglets par hub ou par projet",

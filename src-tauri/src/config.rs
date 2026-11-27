@@ -145,6 +145,29 @@ impl Default for SuggestionSettings {
     }
 }
 
+/// Propositions de skills par défaut (voir skills.rs) : fenêtre et intervalle du rappel, en
+/// jours, et nombre d'occurrences pour proposer un skill.
+pub const DEFAULT_SKILL_WINDOW_DAYS: u32 = 7;
+pub const DEFAULT_SKILL_THRESHOLD: u32 = 3;
+
+/// Réglages des propositions de skills.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SkillSettings {
+    /// Analyse de fin de conversation quand on clique sur Terminer.
+    pub enabled: bool,
+    /// Fenêtre de comptage et intervalle minimal entre deux rappels, en jours.
+    pub window_days: u32,
+    /// Occurrences dans la fenêtre pour proposer un skill.
+    pub threshold: u32,
+}
+
+impl Default for SkillSettings {
+    fn default() -> Self {
+        Self { enabled: true, window_days: DEFAULT_SKILL_WINDOW_DAYS, threshold: DEFAULT_SKILL_THRESHOLD }
+    }
+}
+
 /// Lien d'un hand off, rangé sous l'identifiant de la parente (voir handoff.rs).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
@@ -251,6 +274,8 @@ pub struct Config {
     /// Langue de l'interface (code BCP 47) ; `None` : français, la langue intégrée. Les textes
     /// traduits sont dans `languages\<code>.json` (voir languages.rs).
     pub language: Option<String>,
+    /// Réglages des propositions de skills (voir skills.rs).
+    pub skills: SkillSettings,
 }
 
 impl Default for Config {
@@ -268,6 +293,7 @@ impl Default for Config {
             handoff_prompt: None,
             hubs: Vec::new(),
             language: None,
+            skills: SkillSettings::default(),
         }
     }
 }

@@ -3,7 +3,7 @@
 // src/suggestions.ts) — une case par règle pour la couper, le seuil de la règle
 // « Contexte rempli », l'inactivité et le contexte de la règle « Conversation ancienne » — et
 // la consigne du résumé de passation du hand off (voir
-// src/handoff.ts). Chaque changement est enregistré tout de suite dans config.json.
+// src/handoff.ts) — et les propositions de skills (voir src/skills.ts). Chaque changement est enregistré tout de suite dans config.json.
 
 import { useEffect, useRef, useState } from "react";
 import type { Config } from "../api";
@@ -24,6 +24,16 @@ import {
   suggestionSettings,
 } from "../suggestions";
 import { DEFAULT_HANDOFF_PROMPT, handoffPrompt, setHandoffPrompt } from "../handoff";
+import {
+  SKILL_THRESHOLD_MAX,
+  SKILL_THRESHOLD_MIN,
+  SKILL_WINDOW_MAX,
+  SKILL_WINDOW_MIN,
+  setSkillThreshold,
+  setSkillWindowDays,
+  setSkillsEnabled,
+  skillSettings,
+} from "../skills";
 import { Modal } from "./Dialogs";
 import { LanguageSettings } from "./LanguageSettings";
 import { t } from "../i18n";
@@ -33,6 +43,7 @@ const SETTINGS_TABS = [
   { id: "display", labelKey: "settings.tab.display" },
   { id: "suggestions", labelKey: "settings.tab.suggestions" },
   { id: "handoff", labelKey: "settings.tab.handoff" },
+  { id: "skills", labelKey: "settings.tab.skills" },
   { id: "language", labelKey: "settings.tab.language" },
 ] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -185,6 +196,39 @@ export function SettingsDialog(props: { config: Config; onChange: (change: (c: C
             </div>
           );
         })}
+      </>
+    ),
+    skills: (
+      <>
+        <h3 className="settings-heading">{t("settings.tab.skills")}</h3>
+        <p className="settings-help">{t("skills.settings.help")}</p>
+        <div className="settings-rule">
+          <label className="checkbox">
+            <input type="checkbox" checked={skillSettings(config).enabled} onChange={(e) => onChange((c) => setSkillsEnabled(c, e.target.checked))} />
+            {t("skills.settings.enabled")}
+          </label>
+          <small className="settings-rule-help">{t("skills.settings.enabledHelp")}</small>
+          <NumberSetting
+            before={t("skills.settings.windowBefore")}
+            after={t("skills.settings.windowAfter")}
+            min={SKILL_WINDOW_MIN}
+            max={SKILL_WINDOW_MAX}
+            step={1}
+            value={skillSettings(config).windowDays}
+            disabled={false}
+            onCommit={(n) => onChange((c) => setSkillWindowDays(c, n))}
+          />
+          <NumberSetting
+            before={t("skills.settings.thresholdBefore")}
+            after={t("skills.settings.thresholdAfter")}
+            min={SKILL_THRESHOLD_MIN}
+            max={SKILL_THRESHOLD_MAX}
+            step={1}
+            value={skillSettings(config).threshold}
+            disabled={false}
+            onCommit={(n) => onChange((c) => setSkillThreshold(c, n))}
+          />
+        </div>
       </>
     ),
     handoff: (

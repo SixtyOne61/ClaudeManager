@@ -872,3 +872,22 @@ button.conv-footer-item:disabled { cursor: default; opacity: .6; }
   resize: vertical; min-height: 90px; line-height: 1.45;
 }
 .field textarea:focus { border-color: var(--accent); }
+
+/* Propositions de skills (voir src/components/SkillProposals.tsx) */
+.terminal-tabs-extra { margin-left: auto; display: inline-flex; align-items: center; padding-bottom: 4px; }
+.skills-reminder {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.skills-reminder:hover { background: var(--bg-hover); }
+.analysing-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); white-space: nowrap; flex: none; }
+.skills-modal { width: min(680px, 92vw); max-height: 85vh; overflow-y: auto; }
+.skills-empty { color: var(--text-muted); }
+.skill-proposal { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.skill-proposal-head { display: flex; align-items: baseline; gap: 8px; }
+.skill-proposal-count { color: var(--text-muted); font-size: 12px; }
+.skill-proposal-desc { margin: 4px 0 6px; }
+.skill-proposal-occurrences { margin: 0 0 8px; padding-left: 18px; font-size: 12.5px; }
+.skill-proposal-meta { color: var(--text-muted); }
+.skill-proposal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.skill-proposal-buttons { margin-left: auto; display: inline-flex; gap: 6px; }

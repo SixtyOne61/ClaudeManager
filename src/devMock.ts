@@ -32,6 +32,10 @@ function session(key: string, n: number, title: string, hoursAgo: number, source
 
 let nextSessionNumber = 1;
 
+/** Propositions de skills fictives : revue faite, propositions créées ou refusées. */
+let skillsReviewed = false;
+const skillsDone = new Set<string>();
+
 function project(name: string, sessions: [string, number][], opts: Partial<ProjectInfo> = {}): ProjectInfo {
   const path = `C:\\Users\\moi\\Projets\\${name}`;
   const key = path.replace(/[^A-Za-z0-9]/g, "-");
@@ -816,6 +820,48 @@ export function installDevMock() {
         config = { ...config, archives: config.archives.filter((x) => x.sessionId !== a.sessionId) };
         return config;
       }
+      // Propositions de skills (voir skills.rs) : une au seuil, une en dessous.
+      case "skills_analysis_prompt":
+        return "[Analyse de fin de conversation] (question fictive)";
+      case "skills_record":
+        return true;
+      case "skills_list":
+        return {
+          due: !skillsReviewed,
+          threshold: 3,
+          proposals: [
+            {
+              id: "p1",
+              name: "notes-de-version",
+              description: "Rédige les notes de version depuis le dernier tag, au format du projet.",
+              status: "pending",
+              createdAt: now - 5 * 86_400_000,
+              count: 3,
+              projectScope: "C:\\Users\\moi\\Projets\\ClaudeManager",
+              latestProject: "C:\\Users\\moi\\Projets\\ClaudeManager",
+              occurrences: [5, 3, 1].map((d, i) => ({ at: now - d * 86_400_000, project: "C:\\Users\\moi\\Projets\\ClaudeManager", sessionId: `s${i}`, summary: `Préparer les notes de la version 0.${10 + i}` })),
+            },
+            {
+              id: "p2",
+              name: "revue-perf",
+              description: "Passe en revue les performances d'une page.",
+              status: "pending",
+              createdAt: now - 2 * 86_400_000,
+              count: 1,
+              projectScope: null,
+              latestProject: "C:\\Users\\moi\\Projets\\Site",
+              occurrences: [{ at: now - 2 * 86_400_000, project: "C:\\Users\\moi\\Projets\\Site", sessionId: "s9", summary: "Pourquoi la page d'accueil est lente" }],
+            },
+          ].filter((p) => !skillsDone.has(p.id)),
+        };
+      case "skills_mark_reviewed":
+        skillsReviewed = true;
+        return null;
+      case "skills_set_status":
+        skillsDone.add(String(a.id));
+        return null;
+      case "skills_creation_message":
+        return `/skill-creator Crée le skill ${a.id} (message fictif)`;
       case "handoff_summary": {
         // Même règle que handoff::last_reply : textes de l'agent après le dernier message de
         // l'utilisateur (et après sa dernière action).

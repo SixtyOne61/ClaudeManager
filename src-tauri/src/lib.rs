@@ -25,6 +25,7 @@ mod scanner;
 mod search;
 mod sessions;
 mod shell_env;
+mod skills;
 mod suggestions;
 mod ui_error;
 mod worktrees;
@@ -588,6 +589,78 @@ fn handoff_finish(app: AppHandle, state: State<AppState>, project_key: String, p
 }
 
 // ---------------------------------------------------------------------------
+// Propositions de skills (voir skills.rs et src/skills.ts)
+// ---------------------------------------------------------------------------
+
+/// Réglages des propositions de skills, bornés (fichier modifié à la main).
+fn skill_settings(state: &AppState) -> config::SkillSettings {
+    let mut s = state.config.lock().unwrap().skills.clone();
+    s.window_days = s.window_days.clamp(1, 60);
+    s.threshold = s.threshold.clamp(2, 20);
+    s
+}
+
+/// Question de l'analyse de fin de conversation pour cette conversation : skills et
+/// commandes disponibles dans son dossier (hors commandes intégrées) et propositions connues.
+#[tauri::command(async)]
+fn skills_analysis_prompt(state: State<AppState>, skills: State<skills::SkillStore>, cwd: String) -> String {
+    let settings = skill_settings(&state);
+    let _ = skills.update(|s| skills::purge(s, actions::now_ms(), settings.window_days));
+    let cwd_path = Some(Path::new(&cwd)).filter(|p| p.is_dir());
+    let mut names: Vec<String> = commands_list::discover(claude_dir(&state), cwd_path)
+        .into_iter()
+        .filter(|e| e.source != commands_list::Source::Builtin)
+        .map(|e| e.name)
+        .collect();
+    names.sort();
+    names.dedup();
+    skills::analysis_prompt(&names, &skills.get())
+}
+
+/// Lit la réponse de l'analyse dans le `.jsonl` et la rattache. `false` : pas encore de
+/// réponse lisible (l'interface relit quelques fois, puis abandonne).
+#[tauri::command(async)]
+fn skills_record(state: State<AppState>, skills: State<skills::SkillStore>, session_id: String, cwd: String, prompt: String) -> Result<bool, String> {
+    actions::validate_session_id(&session_id)?;
+    let Some(path) = conversation::locate(state.scanner.root(), &session_id, Some(&cwd)) else { return Ok(false) };
+    let Some(verdict) = skills::read_verdict(&path, &prompt) else { return Ok(false) };
+    let project = skills::project_of(&cwd);
+    skills.update(|s| skills::record(s, verdict, &project, &session_id, actions::now_ms()))?;
+    Ok(true)
+}
+
+/// Propositions en attente et rappel dû.
+#[tauri::command]
+fn skills_list(state: State<AppState>, skills: State<skills::SkillStore>) -> Result<skills::Listing, String> {
+    let settings = skill_settings(&state);
+    let now = actions::now_ms();
+    skills.update(|s| skills::purge(s, now, settings.window_days))?;
+    Ok(skills::listing(&skills.get(), now, &settings))
+}
+
+/// Ouverture de la fenêtre « Skills proposés » : date de la revue.
+#[tauri::command]
+fn skills_mark_reviewed(skills: State<skills::SkillStore>) -> Result<(), String> {
+    skills.update(|s| s.last_review = Some(actions::now_ms()))
+}
+
+/// Refuse une proposition (`refused`) ou la marque créée (`created`).
+#[tauri::command]
+fn skills_set_status(skills: State<skills::SkillStore>, id: String, status: skills::Status) -> Result<(), String> {
+    skills.update(|s| {
+        if let Some(p) = s.proposals.iter_mut().find(|p| p.id == id) {
+            p.status = status;
+        }
+    })
+}
+
+/// Premier message de la conversation qui crée le skill (`project_scope` : skill du projet).
+#[tauri::command]
+fn skills_creation_message(skills: State<skills::SkillStore>, id: String, project_scope: bool) -> Option<String> {
+    skills.get().proposals.iter().find(|p| p.id == id).map(|p| skills::creation_message(p, project_scope))
+}
+
+// ---------------------------------------------------------------------------
 // Hubs (voir hubs.rs et src/hubs.ts)
 // ---------------------------------------------------------------------------
 
@@ -884,6 +957,8 @@ pub fn run() {
         .manage(context::ContextStore::load(&app_dir))
         // Langues traduites et appels `claude -p` (voir languages.rs).
         .manage(languages::LanguageStore::new(&app_dir))
+        // Propositions de skills (voir skills.rs).
+        .manage(skills::SkillStore::load(&app_dir))
         .on_window_event(pty::on_window_event)
         .setup(|app| {
             // Restes d'une fermeture brutale (plantage, arrêt forcé).
@@ -920,6 +995,12 @@ pub fn run() {
             check_open_elsewhere,
             handoff_summary,
             handoff_finish,
+            skills_analysis_prompt,
+            skills_record,
+            skills_list,
+            skills_mark_reviewed,
+            skills_set_status,
+            skills_creation_message,
             hub_create,
             hub_update,
             hub_delete,

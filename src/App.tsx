@@ -18,6 +18,8 @@ import {
   type SessionInfo,
   type SearchHit,
   type SessionHits,
+  type SkillListing,
+  type SkillProposal,
   type WorktreeInfo,
 } from "./api";
 import { Sidebar, type Selection } from "./components/Sidebar";
@@ -57,6 +59,8 @@ import {
   successorOf,
   type HandoffLineage,
 } from "./handoff";
+import { cancelAnalysis, isAnalysing, onAnalysisDone, runAnalysis, skillSettings } from "./skills";
+import { SkillsDialog, SkillsReminder } from "./components/SkillProposals";
 import { t, useLanguage } from "./i18n";
 import { applyLanguage, pendingCount, startTranslation, translationRunning } from "./i18n/translate";
 
@@ -77,6 +81,7 @@ type DialogState =
   | { kind: "renameProject"; project: ProjectInfo }
   | { kind: "newProject" }
   | { kind: "settings" }
+  | { kind: "skills" }
   | { kind: "newHub" }
   | { kind: "renameHub"; hub: Hub }
   | { kind: "addToHub"; session: SessionInfo }
@@ -218,6 +223,26 @@ export default function App() {
     };
   }, []);
 
+  // Propositions de skills (voir src/skills.ts) : relues au démarrage, toutes les heures,
+  // après chaque analyse de fin de conversation et quand leurs réglages changent.
+  const [skillListing, setSkillListing] = useState<SkillListing | null>(null);
+  const refreshSkills = useCallback(() => {
+    api.skillsList().then(setSkillListing).catch(() => {});
+  }, []);
+  const skillWindow = config?.skills?.windowDays;
+  const skillThreshold = config?.skills?.threshold;
+  useEffect(() => {
+    refreshSkills();
+  }, [refreshSkills, skillWindow, skillThreshold]);
+  useEffect(() => {
+    const timer = setInterval(refreshSkills, 60 * 60_000);
+    const unsubscribe = onAnalysisDone(refreshSkills);
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }, [refreshSkills]);
+
   /** Identifiants des conversations qui ont un fichier. */
   const knownIds = useMemo(() => new Set((scan?.projects ?? []).flatMap((p) => p.sessions.map((s) => s.id))), [scan]);
 
@@ -341,6 +366,12 @@ export default function App() {
   const openInTerminal = async (s: SessionInfo, projectPath: string | null) => {
     const cwd = s.cwd ?? projectPath;
     if (!cwd) return;
+    // Rouverte pendant son analyse de fin : l'analyse est abandonnée, puis la conversation
+    // est relancée normalement.
+    if (isAnalysing(s.id)) {
+      await cancelAnalysis(s.id);
+      releasedAt.current.set(s.id, Date.now());
+    }
     if (terminals.some((t) => t.sessionId === s.id)) {
       setActiveTerminal(s.id);
       return;
@@ -496,6 +527,25 @@ export default function App() {
     setTerminals((ts) => ts.filter((x) => x.sessionId !== tab.sessionId));
     setActiveTerminal((a) => (a === tab.sessionId ? null : a));
     if (tab.isNew) await dropIfEmpty(tab.sessionId);
+  };
+
+  /**
+   * Terminer (barre d'outils de la conversation) : l'onglet se ferme et, si le réglage est
+   * actif, l'analyse de fin de conversation tourne dans son terminal, caché, avant de l'arrêter.
+   */
+  const finishTerminal = (tab: OpenTerminal) => {
+    if (!skillSettings(config).enabled || !isTerminalRunning(tab.sessionId)) {
+      closeTerminal(tab);
+      return;
+    }
+    const blocked = handoffBlocker(getActivity(tab.sessionId), null);
+    if (blocked) {
+      toast(blocked, true);
+      return;
+    }
+    setTerminals((ts) => ts.filter((x) => x.sessionId !== tab.sessionId));
+    setActiveTerminal((a) => (a === tab.sessionId ? null : a));
+    runAnalysis(tab.sessionId, tab.cwd).then(() => releasedAt.current.set(tab.sessionId, Date.now()));
   };
 
   /**
@@ -1001,6 +1051,47 @@ export default function App() {
     },
   };
 
+  // ---- Propositions de skills (voir src/skills.ts) ----------------------------------------
+
+  /** Fenêtre « Skills proposés » : son ouverture compte comme une revue (le rappel disparaît). */
+  const openSkills = () => {
+    setDialog({ kind: "skills" });
+    api.skillsMarkReviewed().catch(() => {}).finally(refreshSkills);
+  };
+
+  const normPath = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
+  const samePath = (a: string, b: string) => normPath(a) === normPath(b);
+  const projectAt = (path: string) => [...projects.values()].find((p) => p.path && samePath(p.path, path));
+
+  /**
+   * Créer : nouvelle conversation dans le projet visé (ou celui de la dernière demande pour un
+   * skill de l'utilisateur), qui reçoit la demande de création du skill comme premier message.
+   */
+  const createSkill = async (proposal: SkillProposal, projectScope: boolean) => {
+    const dir = (projectScope ? proposal.projectScope : null) ?? proposal.latestProject;
+    const p = dir ? projectAt(dir) : undefined;
+    if (!dir || !p?.path) {
+      toast(t("skills.noProject", { path: dir ?? "?" }), true);
+      return;
+    }
+    try {
+      const text = await api.skillsCreationMessage(proposal.id, projectScope);
+      if (!text) return;
+      setDialog(null);
+      const id = startNewConversation(p.key, p.path, null, undefined, { title: t("skills.conversationTitle", { name: proposal.name }) });
+      if (!id) return;
+      await api.skillsSetStatus(proposal.id, "created");
+      refreshSkills();
+      if (await sendWhenReady(id, text)) toast(t("skills.created", { name: proposal.name }));
+    } catch (e) {
+      toast(t("skills.createFailed", { error: errorMessage(e) }), true);
+    }
+  };
+
+  const refuseSkill = (proposal: SkillProposal) => {
+    api.skillsSetStatus(proposal.id, "refused").catch(showError).finally(refreshSkills);
+  };
+
   // ---- Recherche globale ------------------------------------------------------------------
 
   /** Ouvre une conversation trouvée : son projet (ou les archives) avec la conversation repérée. */
@@ -1062,6 +1153,7 @@ export default function App() {
         onDeleteCategory={deleteCategory}
         onAddProject={() => setDialog({ kind: "newProject" })}
         onSettings={() => setDialog({ kind: "settings" })}
+        onSkills={openSkills}
         onAddHub={() => setDialog({ kind: "newHub" })}
         hubActions={hubActions}
         onDropOnHub={dropOnHub}
@@ -1075,7 +1167,7 @@ export default function App() {
           setSelection({ kind: "project", key: activeProject.key });
         }
         setActiveTerminal(id);
-      }} onClose={closeTerminal} />
+      }} onClose={closeTerminal} extra={skillListing?.due ? <SkillsReminder onOpen={openSkills} /> : null} />
       <TerminalStack
         terminals={terminals}
         active={activeTerminal}
@@ -1086,6 +1178,7 @@ export default function App() {
         onTyping={(id) => noteTyping(id, config)}
         suggestionActions={{ [ACTION_HUB]: { run: acceptHubSuggestion } }}
         onHandoff={startHandoff}
+        onFinish={{ run: finishTerminal, analyse: skillSettings(config).enabled }}
         lineageOf={lineageOf}
         onOpenConversation={openConversationById}
       />
@@ -1290,6 +1383,19 @@ export default function App() {
             setDialog(null);
             createHubFromExchange(name, dialog.from, dialog.to);
           }}
+        />
+      )}
+      {dialog?.kind === "skills" && skillListing && (
+        <SkillsDialog
+          listing={skillListing}
+          windowDays={skillSettings(config).windowDays}
+          projectName={(path) => {
+            const p = projectAt(path);
+            return p ? projectName(p, config) : "";
+          }}
+          onCreate={createSkill}
+          onRefuse={refuseSkill}
+          onClose={() => setDialog(null)}
         />
       )}
       {dialog?.kind === "settings" && <SettingsDialog config={config} onChange={updateConfig} onClose={() => setDialog(null)} />}

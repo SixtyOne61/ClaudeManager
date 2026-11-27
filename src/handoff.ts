@@ -137,13 +137,13 @@ export type SummaryResult = { kind: "ok"; summary: HandoffSummary } | { kind: "c
 const READ_ATTEMPTS = 5;
 const READ_RETRY_MS = 400;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Attend la fin du tour lancé par la consigne : l'agent passe « en cours », puis « à toi ».
  * Une permission ou une question en cours de route se règle dans le terminal, comme d'habitude.
  */
-function waitForTurnEnd(sessionId: string, signal: AbortSignal): Promise<"done" | "error" | "closed" | "cancelled"> {
+export function waitForTurnEnd(sessionId: string, signal: AbortSignal): Promise<"done" | "error" | "closed" | "cancelled"> {
   return new Promise((resolve) => {
     let started = false;
     let unsubscribe = () => {};

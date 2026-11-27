@@ -48,6 +48,18 @@ _Éviter_ : compactage, `/compact`, passation (pour le nom de l'action), relais
 Le texte que la parente rédige pour sa suite lors d'un hand off : objectif, état actuel, décisions, fichiers touchés, prochaines étapes.
 _Éviter_ : résumé (seul), handoff doc
 
+**Terminer** :
+Fermer une conversation par le bouton de sa barre d'outils, ce qui lance l'analyse de fin de conversation. La croix de l'onglet la ferme sans analyse.
+_Éviter_ : clôturer, finir, archiver
+
+**Analyse de fin de conversation** :
+La dernière question que l'app pose à une conversation qu'on termine : peut-on tirer un skill de ce qui a été demandé ? La réponse est rattachée à une proposition de skill.
+_Éviter_ : analyse de skill, détection
+
+**Proposition de skill** :
+Un groupe de demandes semblables repérées par les analyses de fin de conversation, avec ses occurrences (date, projet, résumé) et son statut (en attente, refusée, créée). Proposée à l'utilisateur quand elle revient assez souvent sur la période choisie.
+_Éviter_ : candidat, suggestion de skill (une *Suggestion* est le 💡 d'une conversation)
+
 ## Hubs
 
 **Hub** :

@@ -125,6 +125,49 @@ export interface Dismissal {
   at: number;
 }
 
+/** Réglages des propositions de skills (voir src-tauri/src/skills.rs). */
+export interface SkillSettings {
+  /** Analyse de fin de conversation quand on clique sur Terminer. */
+  enabled: boolean;
+  /** Fenêtre de comptage et intervalle minimal entre deux rappels, en jours. */
+  windowDays: number;
+  /** Occurrences dans la fenêtre pour proposer un skill. */
+  threshold: number;
+}
+
+/** Demande repérée par une analyse de fin de conversation. */
+export interface SkillOccurrence {
+  at: number;
+  /** Dossier du projet (le parent pour un worktree). */
+  project: string;
+  sessionId: string;
+  summary: string;
+}
+
+/** Proposition de skill en attente (voir GLOSSARY.md). */
+export interface SkillProposal {
+  id: string;
+  name: string;
+  description: string;
+  status: "pending" | "refused" | "created";
+  createdAt: number;
+  occurrences: SkillOccurrence[];
+  /** Occurrences dans la fenêtre. */
+  count: number;
+  /** Projet proposé pour un skill de projet (toutes les occurrences y sont), sinon null. */
+  projectScope: string | null;
+  /** Projet de l'occurrence la plus récente. */
+  latestProject: string | null;
+}
+
+export interface SkillListing {
+  /** Propositions en attente, les plus fréquentes d'abord. */
+  proposals: SkillProposal[];
+  /** Rappel dû : icône 💡 dans la barre des onglets. */
+  due: boolean;
+  threshold: number;
+}
+
 /** Réglages des suggestions. */
 export interface SuggestionSettings {
   /** Règles coupées (identifiants de règle). */
@@ -217,6 +260,8 @@ export interface Config {
   groupTabs?: boolean;
   /** Réglages des suggestions (absent dans un vieux fichier). */
   suggestions?: SuggestionSettings;
+  /** Réglages des propositions de skills (absent dans un vieux fichier). */
+  skills?: SkillSettings;
   /** Hand off : suite de chaque parente, par identifiant de la parente. Géré par le backend. */
   handoffLinks?: Record<string, HandoffLink>;
   /** Consigne du résumé de passation choisie dans les réglages (absente : texte par défaut). */
@@ -354,6 +399,18 @@ export const api = {
    */
   handoffFinish: (projectKey: string, parentId: string, successorId: string) =>
     invoke<HandoffFinish>("handoff_finish", { projectKey, parentId, successorId }),
+  // Propositions de skills (voir src-tauri/src/skills.rs et src/skills.ts).
+  /** Question de l'analyse de fin de conversation pour une conversation de ce dossier. */
+  skillsAnalysisPrompt: (cwd: string) => invoke<string>("skills_analysis_prompt", { cwd }),
+  /** Lit la réponse à l'analyse et la rattache (false : pas encore de réponse lisible). */
+  skillsRecord: (sessionId: string, cwd: string, prompt: string) => invoke<boolean>("skills_record", { sessionId, cwd, prompt }),
+  /** Propositions en attente et rappel dû. */
+  skillsList: () => invoke<SkillListing>("skills_list"),
+  /** Ouverture de la fenêtre « Skills proposés ». */
+  skillsMarkReviewed: () => invoke<void>("skills_mark_reviewed"),
+  skillsSetStatus: (id: string, status: "refused" | "created") => invoke<void>("skills_set_status", { id, status }),
+  /** Premier message de la conversation qui crée le skill (null : proposition disparue). */
+  skillsCreationMessage: (id: string, projectScope: boolean) => invoke<string | null>("skills_creation_message", { id, projectScope }),
   // Hubs (voir src-tauri/src/hubs.rs) : gérés par le backend, `saveConfig` les ignore.
   /** Crée un hub vide, placé en dernier. */
   hubCreate: (name: string, color: string | null) => invoke<HubCreated>("hub_create", { name, color }),

@@ -13,6 +13,7 @@ import suggestions from "./fr/suggestions";
 import slash from "./fr/slash";
 import tools from "./fr/tools";
 import handoff from "./fr/handoff";
+import skills from "./fr/skills";
 import errors from "./fr/errors";
 
 export const FR = {
@@ -27,6 +28,7 @@ export const FR = {
   ...slash,
   ...tools,
   ...handoff,
+  ...skills,
   ...errors,
 } as const;
 

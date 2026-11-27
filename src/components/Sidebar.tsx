@@ -27,6 +27,7 @@ import {
   FolderPlus,
   FolderTree,
   GripVertical,
+  Lightbulb,
   ListPlus,
   MoreHorizontal,
   MessagesSquare,
@@ -70,6 +71,7 @@ import { countActivities, useActivities, type ActivityCount } from "../activity"
 import { hasSuggestion, useSuggestions } from "../suggestions";
 import { ConversationSuggestionIcon, SuggestionIcon } from "./Suggestions";
 import { HubLinkIcon, HubsPanel, type HubActions } from "./Hubs";
+import { AnalysingBadge } from "./SkillProposals";
 
 /** Identifiants des conversations d'une liste de projets (pour les compteurs d'activité). */
 const sessionIds = (list: ProjectInfo[]) => list.flatMap((p) => p.sessions.map((s) => s.id));
@@ -106,6 +108,8 @@ interface Props {
   onNewConversation: (project: ProjectInfo, sectionId: string | null) => void;
   /** Ouvre les réglages. */
   onSettings?: () => void;
+  /** Ouvre la fenêtre « Skills proposés ». */
+  onSkills?: () => void;
   /** « + Hub » : crée un hub. */
   onAddHub: () => void;
   /** Actions sur les hubs (onglet Hubs). */
@@ -344,6 +348,11 @@ export function Sidebar(props: Props) {
                 >
                   <Archive size={15} /> {t("sidebar.header.archives")} <span className="count">{config.archives.length}</span>
                 </button>
+                {props.onSkills && (
+                  <button className="nav-item" onClick={props.onSkills}>
+                    <Lightbulb size={15} /> {t("skills.menu")}
+                  </button>
+                )}
                 {props.onSettings && (
                   <button className="nav-item" onClick={props.onSettings}>
                     <Settings size={15} /> {t("sidebar.header.settings")}
@@ -735,6 +744,7 @@ function ConversationRow(props: {
     >
       <ActivityDot activity={props.activity} />
       <span className="project-name">{s.title}</span>
+      <AnalysingBadge sessionId={s.id} />
       <HubLinkIcon config={props.config} sessionId={s.id} />
       <ConversationSuggestionIcon sessionId={s.id} />
       <span className="project-meta">{s.provisional ? t("sidebar.conversations.new") : relativeDate(s.updatedAt)}</span>

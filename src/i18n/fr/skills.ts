@@ -1,0 +1,41 @@
+// Textes : skills — Terminer, analyse de fin de conversation et propositions de skills (voir
+// src/i18n/index.ts pour le format). La question de l'analyse et le premier message de la
+// conversation de création sont envoyés aux conversations : ils restent dans
+// src-tauri/src/skills.rs, non traduits.
+
+export default {
+  "skills.finish": "Terminer",
+  "skills.finishTitle": "Fermer la conversation et chercher si ce que tu as demandé pourrait devenir un skill",
+  "skills.finishTitleOff": "Fermer la conversation (analyse coupée dans les réglages)",
+  "skills.analysing": "analyse…",
+  "skills.analysingTitle": "Analyse de fin de conversation en cours : peut-on en tirer un skill ?",
+  "skills.reminder": "Skills proposés",
+  "skills.reminderTitle": "Des demandes reviennent souvent : en faire des skills ?",
+  "skills.menu": "Skills proposés",
+  "skills.dialog.title": "Skills proposés",
+  "skills.dialog.help": "Demandes repérées à la fin des conversations fermées avec Terminer, sur les {days, plural, one {# dernier jour} other {# derniers jours}}. Un skill est proposé à partir de {threshold} demandes.",
+  "skills.dialog.empty": "Aucune demande repérée pour l'instant. Ferme tes conversations avec Terminer pour qu'elles soient analysées.",
+  "skills.dialog.ready": "À transformer en skill",
+  "skills.dialog.below": "Sous le seuil",
+  "skills.dialog.count": "{count, plural, one {# demande} other {# demandes}}",
+  "skills.dialog.noSummary": "(sans résumé)",
+  "skills.dialog.scope": "Portée :",
+  "skills.dialog.scopeProject": "ce projet ({name})",
+  "skills.dialog.scopeUser": "tous mes projets",
+  "skills.dialog.create": "Créer",
+  "skills.dialog.createTitle": "Ouvre une nouvelle conversation qui crée ce skill avec toi",
+  "skills.dialog.refuse": "Refuser",
+  "skills.dialog.refuseTitle": "Ne plus jamais proposer ce skill",
+  "skills.dialog.later": "Plus tard",
+  "skills.created": "Conversation de création du skill « {name} » ouverte.",
+  "skills.createFailed": "Impossible d'ouvrir la conversation de création : {error}",
+  "skills.noProject": "Le dossier « {path} » n'est pas un projet connu de l'app.",
+  "skills.conversationTitle": "Skill : {name}",
+  "skills.settings.help": "Quand tu fermes une conversation avec Terminer, l'app lui demande si ce que tu as demandé pourrait devenir un skill. Quand une même demande revient assez souvent, une icône 💡 te le propose.",
+  "skills.settings.enabled": "Analyser la conversation quand je clique sur Terminer",
+  "skills.settings.enabledHelp": "Coupé, Terminer ferme simplement l'onglet.",
+  "skills.settings.windowBefore": "Sur les",
+  "skills.settings.windowAfter": "derniers jours (et au plus un rappel par période)",
+  "skills.settings.thresholdBefore": "Proposer un skill à partir de",
+  "skills.settings.thresholdAfter": "demandes",
+} as const satisfies Record<string, string>;

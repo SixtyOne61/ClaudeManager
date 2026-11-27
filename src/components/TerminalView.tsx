@@ -13,14 +13,15 @@
 // Il redescend dès que l'agent reprend son travail. L'app ne répond jamais elle-même à une
 // demande de permission : c'est l'utilisateur qui valide dans le terminal.
 //
-// La barre d'outils porte aussi le bouton Hand off (voir src/handoff.ts) et, après un hand
+// La barre d'outils porte aussi les boutons Hand off (voir src/handoff.ts) et Terminer (voir
+// src/skills.ts : ferme l'onglet et lance l'analyse de fin de conversation) et, après un hand
 // off, les liens « ← Suite de … » (vers la parente) et « Suite : … → » (vers la suite).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowLeft, ArrowRight, FolderOpen, Handshake, Loader2, MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, CircleCheck, FolderOpen, Handshake, Loader2, MessagesSquare, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { newSessionInTerminal, ptyApi, resumeInTerminal, subscribePty } from "../pty";
 import { getActivity, isAwaitingPermission, subscribeActivity, type Activity } from "../activity";
@@ -56,6 +57,8 @@ interface Props {
   suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
   /** Hand off de cette conversation (barre d'outils, bandeau « Contexte rempli »). */
   onHandoff?: () => void;
+  /** Terminer : ferme l'onglet et lance l'analyse de fin de conversation (`analyse` : réglage actif). */
+  onFinish?: { run: () => void; analyse: boolean };
   /** Parente et suite de cette conversation : liens « ← Suite de … » et « Suite : … → ». */
   lineage?: HandoffLineage;
   /** Ouvre une conversation par son identifiant (onglet, ou archives). */
@@ -118,6 +121,7 @@ export function TerminalView({
   onDismissSuggestion,
   suggestionActions,
   onHandoff,
+  onFinish,
   lineage,
   onOpenConversation,
   onTyping,
@@ -464,6 +468,17 @@ export function TerminalView({
             title={handoffReason ?? t("conversation.toolbar.handoffTitle")}
           >
             <Handshake size={13} /> {t("conversation.toolbar.handoff")}
+          </button>
+        )}
+        {onFinish && (
+          <button
+            className="btn small"
+            // Même règle que Hand off : la question ne doit pas tomber au milieu d'un tour.
+            disabled={!!handoffReason}
+            onClick={onFinish.run}
+            title={handoffReason ?? t(onFinish.analyse ? "skills.finishTitle" : "skills.finishTitleOff")}
+          >
+            <CircleCheck size={13} /> {t("skills.finish")}
           </button>
         )}
         {upReason(up) && <span className="conv-toolbar-reason">{upReason(up)}</span>}

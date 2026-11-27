@@ -56,12 +56,14 @@ interface BarProps {
   active: string | null;
   onSelect: (tab: string | null) => void;
   onClose: (t: OpenTerminal) => void;
+  /** Placé à droite des onglets (rappel « Skills proposés ») ; affiche la barre même sans onglet. */
+  extra?: React.ReactNode;
 }
 
-export function TerminalTabBar({ terminals, home = "project", active, onSelect, onClose }: BarProps) {
+export function TerminalTabBar({ terminals, home = "project", active, onSelect, onClose, extra }: BarProps) {
   // État de chaque conversation ouverte : pastille dans son onglet.
   const activities = useActivities();
-  if (terminals.length === 0) return null;
+  if (terminals.length === 0 && !extra) return null;
   const renderTab = (t: TabInfo) => (
     <div
       key={t.sessionId}
@@ -114,6 +116,7 @@ export function TerminalTabBar({ terminals, home = "project", active, onSelect, 
             </div>
           ))
         : terminals.map(renderTab)}
+      {extra && <span className="terminal-tabs-extra">{extra}</span>}
     </div>
   );
 }
@@ -132,6 +135,8 @@ interface StackProps {
   suggestionActions?: Partial<Record<string, SuggestionActionHandler>>;
   /** Hand off d'une conversation (bouton de la barre d'outils et du bandeau de suggestion). */
   onHandoff?: (sessionId: string) => void;
+  /** Terminer une conversation (`analyse` : l'analyse de fin de conversation est active). */
+  onFinish?: { run: (t: OpenTerminal) => void; analyse: boolean };
   /** Parente et suite d'une conversation (liens de hand off). */
   lineageOf?: (sessionId: string) => HandoffLineage;
   /** Ouvre une conversation par son identifiant (onglet, ou archives). */
@@ -140,7 +145,7 @@ interface StackProps {
   onTyping?: (sessionId: string) => void;
 }
 
-export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions, onHandoff, lineageOf, onOpenConversation, onTyping }: StackProps) {
+export function TerminalStack({ terminals, active, onClose, onStarted, focus, onDismissSuggestion, suggestionActions, onHandoff, onFinish, lineageOf, onOpenConversation, onTyping }: StackProps) {
   return (
     <div className="terminal-stack" style={{ display: active ? undefined : "none" }}>
       {terminals.map((t) => (
@@ -156,6 +161,7 @@ export function TerminalStack({ terminals, active, onClose, onStarted, focus, on
           onDismissSuggestion={onDismissSuggestion}
           suggestionActions={suggestionActions}
           onHandoff={onHandoff && (() => onHandoff(t.sessionId))}
+          onFinish={onFinish && { run: () => onFinish.run(t), analyse: onFinish.analyse }}
           lineage={lineageOf?.(t.sessionId)}
           onOpenConversation={onOpenConversation}
           onTyping={onTyping && (() => onTyping(t.sessionId))}

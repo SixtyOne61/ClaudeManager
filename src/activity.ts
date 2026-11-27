@@ -13,6 +13,10 @@
 // - activityDisplay(a)            "running" | "action" | "yours" | "closed", pour l'affichage
 // - isAwaitingPermission(a)       l'agent attend une permission ou la réponse à une question
 //                                 (pour faire remonter le terminal, ticket 05)
+// - setActivityHidden(id, h)      conversation affichée comme fermée alors que son terminal
+//                                 tourne encore (analyse de fin de conversation, src/skills.ts) :
+//                                 masquée de useActivities/getActivities, pas de getActivity
+//                                 ni subscribeActivity
 
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,6 +50,10 @@ export interface Activity {
 
 /** Conversations dont le terminal intégré tourne (les autres sont fermées). */
 let store: ReadonlyMap<string, Activity> = new Map();
+/** Conversations affichées comme fermées (voir setActivityHidden). */
+let hidden: ReadonlySet<string> = new Set();
+/** `store` sans les conversations masquées : ce que l'interface affiche. */
+let visible: ReadonlyMap<string, Activity> = store;
 const listeners = new Set<() => void>();
 const perSession = new Map<string, Set<(a: Activity | null) => void>>();
 let started = false;
@@ -55,8 +63,24 @@ function set(sessionId: string, a: Activity | null) {
   if (a && a.state !== "ended") next.set(sessionId, a);
   else next.delete(sessionId);
   store = next;
+  refreshVisible();
   listeners.forEach((f) => f());
   perSession.get(sessionId)?.forEach((f) => f(a && a.state !== "ended" ? a : null));
+}
+
+function refreshVisible() {
+  visible = hidden.size === 0 ? store : new Map([...store].filter(([id]) => !hidden.has(id)));
+}
+
+/** Affiche la conversation comme fermée (ou de nouveau selon son état), terminal ou pas. */
+export function setActivityHidden(sessionId: string, hide: boolean) {
+  if (hidden.has(sessionId) === hide) return;
+  const next = new Set(hidden);
+  if (hide) next.add(sessionId);
+  else next.delete(sessionId);
+  hidden = next;
+  refreshVisible();
+  listeners.forEach((f) => f());
 }
 
 function ensureStarted() {
@@ -79,7 +103,7 @@ function subscribeAll(f: () => void) {
 
 /** États de toutes les conversations actives ; le composant se redessine à chaque changement. */
 export function useActivities(): ReadonlyMap<string, Activity> {
-  return useSyncExternalStore(subscribeAll, () => store);
+  return useSyncExternalStore(subscribeAll, () => visible);
 }
 
 /** État actuel d'une conversation ; null : fermée (pas de terminal intégré qui tourne). */
@@ -103,7 +127,7 @@ export function subscribeActivity(sessionId: string, f: (a: Activity | null) => 
 /** États de toutes les conversations actives (hors React). */
 export function getActivities(): ReadonlyMap<string, Activity> {
   ensureStarted();
-  return store;
+  return visible;
 }
 
 /**
