@@ -121,16 +121,41 @@ export interface PendingRound {
  * Série de questions à laquelle l'utilisateur n'a pas encore répondu : la dernière réponse
  * de Claude, si c'est une série et qu'aucun message de l'utilisateur ne la suit (les
  * actions de Claude après elle ne comptent pas).
+ *
+ * Une série peut arriver en plusieurs fois dans le même tour, par exemple quand Claude ajoute
+ * une question au retour d'un agent en arrière-plan (« réponds à Q1–Q6 et Q7 ensemble ») :
+ * toutes les séries écrites depuis le dernier message de l'utilisateur sont alors réunies. Une
+ * question reposée sous le même numéro remplace la précédente. La clé est celle du premier
+ * message, pour garder les réponses déjà commencées quand la suite arrive.
  */
 export function pendingRound(entries: ConversationEntry[]): PendingRound | null {
+  const parts: { key: string; round: GrillRound }[] = [];
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.kind === "user") return null;
+    if (e.kind === "user") break;
     if (e.kind !== "assistant") continue;
     const round = parseGrill(e.text);
-    return round ? { key: e.uuid ?? `l${e.line}`, round } : null;
+    // La dernière réponse de Claude doit être une série ; les réponses intermédiaires sans
+    // question (commentaires entre deux parties) sont ignorées.
+    if (round) parts.unshift({ key: e.uuid ?? `l${e.line}`, round });
+    else if (parts.length === 0) return null;
   }
-  return null;
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+
+  const questions: GrillQuestion[] = [];
+  for (const p of parts) {
+    for (const q of p.round.questions) {
+      const same = questions.findIndex((x) => x.n === q.n);
+      if (same >= 0) questions[same] = q;
+      else questions.push(q);
+    }
+  }
+  const join = (texts: string[]) => texts.filter((s) => s).join("\n\n");
+  return {
+    key: parts[0].key,
+    round: { intro: join(parts.map((p) => p.round.intro)), questions, outro: join(parts.map((p) => p.round.outro)) },
+  };
 }
 
 // ---- Réponses ---------------------------------------------------------------------------
